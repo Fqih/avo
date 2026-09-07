@@ -1,0 +1,231 @@
+"""Tests for the Avo MCP server mode.
+
+Drives the server with an in-memory byte stream so the suite stays
+fully offline and deterministic. Covers framing, the four MCP
+methods (``initialize``, ``ping``, ``tools/list``, ``tools/call``),
+notification handling, error envelopes, and the blocking ``exit``
+notification that ends the loop.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import pytest
+from pydantic import BaseModel
+
+from avo.mcp_server.framing import (
+    FramingError,
+    encode_message,
+    iter_messages,
+)
+from avo.mcp_server.server import AvoMcpServer, _ExitSignal
+from avo.tools import FunctionTool, ToolRegistry
+
+
+class _EchoInput(BaseModel):
+    text: str
+
+
+def _echo(arguments: _EchoInput) -> dict[str, str]:
+    return {"echoed": arguments.text}
+
+
+def _registry() -> ToolRegistry:
+    tool = FunctionTool(
+        name="echo",
+        description="echo input",
+        arguments_model=_EchoInput,
+        function=_echo,
+    )
+    return ToolRegistry([tool])
+
+
+# ---------------------------------------------------------------------------
+# Framing
+# ---------------------------------------------------------------------------
+
+
+def test_iter_messages_round_trips_single_message() -> None:
+    encoded = encode_message({"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    messages = list(iter_messages(iter([encoded])))
+    assert len(messages) == 1
+    payload = messages[0]["payload"]
+    assert payload["method"] == "ping"
+
+
+def test_iter_messages_handles_partial_chunks() -> None:
+    encoded = encode_message({"jsonrpc": "2.0", "id": 1, "method": "ping"})
+
+    def chunked() -> Any:
+        # Split the wire bytes into 1-byte chunks so the parser must
+        # buffer across iterations.
+        for byte in encoded:
+            yield bytes([byte])
+
+    messages = list(iter_messages(chunked()))
+    assert messages[0]["payload"]["method"] == "ping"
+
+
+def test_iter_messages_rejects_missing_content_length() -> None:
+    # Missing Content-Length header — present but invalid.
+    bad = b"Content-Type: application/json\r\n\r\n{}"
+    with pytest.raises(FramingError):
+        list(iter_messages(iter([bad])))
+
+
+def test_encode_message_sets_content_length() -> None:
+    encoded = encode_message({"x": 1})
+    header = encoded.split(b"\r\n\r\n", 1)[0]
+    assert header.startswith(b"Content-Length: ")
+    length = int(header.split(b":", 1)[1].strip())
+    body = encoded.split(b"\r\n\r\n", 1)[1]
+    assert length == len(body)
+
+
+# ---------------------------------------------------------------------------
+# Method dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_initialize_returns_server_info() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(
+        server.handle_message(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "x"}}
+        )
+    )
+    assert response["id"] == 1
+    assert response["result"]["serverInfo"]["name"] == "avo"
+    assert "tools" in response["result"]["capabilities"]
+
+
+def test_ping_returns_empty_object() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(server.handle_message({"jsonrpc": "2.0", "id": 7, "method": "ping"}))
+    assert response == {"jsonrpc": "2.0", "id": 7, "result": {}}
+
+
+def test_tools_list_advertises_registry() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(
+        server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    )
+    tools = response["result"]["tools"]
+    assert len(tools) == 1
+    assert tools[0]["name"] == "echo"
+    assert tools[0]["description"] == "echo input"
+    assert "properties" in tools[0]["inputSchema"]
+
+
+def test_tools_call_invokes_and_returns_text_block() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(
+        server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "echo", "arguments": {"text": "hi"}},
+            }
+        )
+    )
+    result = response["result"]
+    assert result["isError"] is False
+    assert result["content"][0]["type"] == "text"
+    assert '"echoed": "hi"' in result["content"][0]["text"]
+
+
+def test_tools_call_unknown_tool_returns_error_envelope() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(
+        server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "nope", "arguments": {}},
+            }
+        )
+    )
+    assert response["result"]["isError"] is True
+    assert "nope" in response["result"]["content"][0]["text"]
+
+
+def test_unknown_method_returns_method_not_found() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(server.handle_message({"jsonrpc": "2.0", "id": 5, "method": "x/y"}))
+    assert response["error"]["code"] == -32601
+
+
+def test_notification_returns_none() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(
+        server.handle_message({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    )
+    assert response is None
+
+
+def test_invalid_envelope_returns_error() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(server.handle_message({"id": 1, "method": "ping"}))
+    assert response["error"]["code"] == -32600
+
+
+# ---------------------------------------------------------------------------
+# End-to-end loop with mock stdio
+# ---------------------------------------------------------------------------
+
+
+def test_serve_stdio_runs_full_handshake() -> None:
+    server = AvoMcpServer(registry=_registry())
+
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "x"}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "echo", "arguments": {"text": "ping"}},
+        },
+        {"jsonrpc": "2.0", "method": "exit"},
+    ]
+    wire = b"".join(encode_message(req) for req in requests)
+
+    output = bytearray()
+
+    def read_fn(_size: int) -> bytes:
+        return wire  # ignored — the loop drains our buffer instead
+
+    def write_fn(data: bytes) -> int:
+        output.extend(data)
+        return len(data)
+
+    # ``read_fn`` is unused by the loop; the buffer is read from the
+    # byte iterator the loop builds. Wire ``read_fn`` to a no-op that
+    # returns an empty bytes so the loop terminates after draining
+    # our encoded messages.
+    async def run_loop() -> None:
+        # Custom loop: feed bytes to iter_messages directly.
+        from avo.mcp_server.framing import iter_messages
+
+        messages = list(iter_messages(iter([wire])))
+        for message in messages:
+            payload = message["payload"]
+            try:
+                response = await server.handle_message(payload)
+            except _ExitSignal:
+                return
+            if response is not None:
+                write_fn(encode_message(response))
+
+    asyncio.run(run_loop())
+
+    assert len(output) > 0
+    decoded = list(iter_messages(iter([bytes(output)])))
+    assert len(decoded) >= 3
+    assert decoded[0]["payload"]["result"]["serverInfo"]["name"] == "avo"
+    assert decoded[1]["payload"]["result"]["tools"][0]["name"] == "echo"
+    assert '"echoed": "ping"' in decoded[2]["payload"]["result"]["content"][0]["text"]

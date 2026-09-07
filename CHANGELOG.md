@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `avo --version` — prints the package version (`avo 0.1.3`).
 - `.github/workflows/ci.yml` CycloneDX SBOM job — generates the SBOM
   on every push + PR and uploads it as an artifact.
+- `avo.mcp_server` — MCP (Model Context Protocol) stdio server exposing
+  a `ToolRegistry` over JSON-RPC 2.0 with LSP-style `Content-Length`
+  framing. Implements `initialize`, `ping`, `tools/list`, and
+  `tools/call`; notifications (`notifications/initialized`, `exit`)
+  are handled fire-and-forget. Transport-agnostic: tests inject
+  read/write callables, the CLI wires real stdio.
+- `avo serve-mcp` CLI — builds the default tool registry (file, glob,
+  grep, git tools) and serves it over stdio for MCP-compatible clients.
+- `SandboxExecutor(language=...)` / `SandboxExecutor.for_language()` —
+  resolves a Docker base image by language name (`python`, `node`,
+  `typescript`, `go`, `rust`, `ruby`, `java`, `bash`, `generic`), and
+  `language_from_path()` infers the language from a file extension.
+  Explicit `image=` still wins.
 
 ### Changed
 
