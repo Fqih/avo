@@ -1,10 +1,10 @@
 """Tests for the Avo MCP server mode.
 
 Drives the server with an in-memory byte stream so the suite stays
-fully offline and deterministic. Covers framing, the four MCP
-methods (``initialize``, ``ping``, ``tools/list``, ``tools/call``),
-notification handling, error envelopes, and the blocking ``exit``
-notification that ends the loop.
+fully offline and deterministic. Covers framing, the lifecycle
+(handshake gating, ``initialize``, ``ping``, ``shutdown``, ``exit``),
+the tool methods (``tools/list`` with derived annotations,
+``tools/call``), notification handling, and error envelopes.
 """
 
 from __future__ import annotations
@@ -40,6 +40,26 @@ def _registry() -> ToolRegistry:
         function=_echo,
     )
     return ToolRegistry([tool])
+
+
+def _registry_with(names: list[str]) -> ToolRegistry:
+    tools = [
+        FunctionTool(
+            name=name,
+            description=f"{name} tool",
+            arguments_model=_EchoInput,
+            function=_echo,
+        )
+        for name in names
+    ]
+    return ToolRegistry(tools)
+
+
+async def _initialize(server: AvoMcpServer) -> None:
+    response = await server.handle_message(
+        {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}}
+    )
+    assert "error" not in response
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +129,12 @@ def test_ping_returns_empty_object() -> None:
 
 def test_tools_list_advertises_registry() -> None:
     server = AvoMcpServer(registry=_registry())
-    response = asyncio.run(
-        server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-    )
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+
+    response = asyncio.run(run())
     tools = response["result"]["tools"]
     assert len(tools) == 1
     assert tools[0]["name"] == "echo"
@@ -121,8 +144,10 @@ def test_tools_list_advertises_registry() -> None:
 
 def test_tools_call_invokes_and_returns_text_block() -> None:
     server = AvoMcpServer(registry=_registry())
-    response = asyncio.run(
-        server.handle_message(
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
             {
                 "jsonrpc": "2.0",
                 "id": 3,
@@ -130,7 +155,8 @@ def test_tools_call_invokes_and_returns_text_block() -> None:
                 "params": {"name": "echo", "arguments": {"text": "hi"}},
             }
         )
-    )
+
+    response = asyncio.run(run())
     result = response["result"]
     assert result["isError"] is False
     assert result["content"][0]["type"] == "text"
@@ -139,8 +165,10 @@ def test_tools_call_invokes_and_returns_text_block() -> None:
 
 def test_tools_call_unknown_tool_returns_error_envelope() -> None:
     server = AvoMcpServer(registry=_registry())
-    response = asyncio.run(
-        server.handle_message(
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
             {
                 "jsonrpc": "2.0",
                 "id": 4,
@@ -148,14 +176,20 @@ def test_tools_call_unknown_tool_returns_error_envelope() -> None:
                 "params": {"name": "nope", "arguments": {}},
             }
         )
-    )
+
+    response = asyncio.run(run())
     assert response["result"]["isError"] is True
     assert "nope" in response["result"]["content"][0]["text"]
 
 
 def test_unknown_method_returns_method_not_found() -> None:
     server = AvoMcpServer(registry=_registry())
-    response = asyncio.run(server.handle_message({"jsonrpc": "2.0", "id": 5, "method": "x/y"}))
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message({"jsonrpc": "2.0", "id": 5, "method": "x/y"})
+
+    response = asyncio.run(run())
     assert response["error"]["code"] == -32601
 
 
@@ -171,6 +205,121 @@ def test_invalid_envelope_returns_error() -> None:
     server = AvoMcpServer(registry=_registry())
     response = asyncio.run(server.handle_message({"id": 1, "method": "ping"}))
     assert response["error"]["code"] == -32600
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle gating, shutdown, capabilities, annotations
+# ---------------------------------------------------------------------------
+
+
+def test_tools_list_before_initialize_is_rejected() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(
+        server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    )
+    assert response["error"]["code"] == -32002
+
+
+def test_double_initialize_is_tolerated() -> None:
+    server = AvoMcpServer(registry=_registry())
+
+    async def run() -> Any:
+        first = await server.handle_message(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        )
+        second = await server.handle_message(
+            {"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}}
+        )
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert "error" not in first
+    assert "error" not in second
+
+
+def test_initialize_advertises_full_capabilities() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(
+        server.handle_message({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    )
+    capabilities = response["result"]["capabilities"]
+    assert set(capabilities) >= {"tools", "resources", "prompts", "logging", "completions"}
+
+
+def test_shutdown_returns_empty_object_and_replay_tolerated() -> None:
+    server = AvoMcpServer(registry=_registry())
+
+    async def run() -> Any:
+        await _initialize(server)
+        first = await server.handle_message({"jsonrpc": "2.0", "id": 8, "method": "shutdown"})
+        second = await server.handle_message({"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first["result"] == {}
+    assert second["result"] == {}
+
+
+def test_shutdown_before_initialize_is_rejected() -> None:
+    server = AvoMcpServer(registry=_registry())
+    response = asyncio.run(server.handle_message({"jsonrpc": "2.0", "id": 8, "method": "shutdown"}))
+    assert response["error"]["code"] == -32002
+
+
+def test_after_shutdown_only_exempt_methods_survive() -> None:
+    server = AvoMcpServer(registry=_registry())
+
+    async def run() -> Any:
+        await _initialize(server)
+        await server.handle_message({"jsonrpc": "2.0", "id": 8, "method": "shutdown"})
+        call = await server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "tools/call",
+                "params": {"name": "echo", "arguments": {"text": "hi"}},
+            }
+        )
+        ping = await server.handle_message({"jsonrpc": "2.0", "id": 10, "method": "ping"})
+        return call, ping
+
+    call, ping = asyncio.run(run())
+    assert call["error"]["code"] == -32002
+    assert ping["result"] == {}
+
+
+def test_tool_annotations_reflect_tool_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AVO_TOOLS_REQUIRE_APPROVAL", "dangerous_tool")
+    server = AvoMcpServer(
+        registry=_registry_with(["read_notes", "glob", "plain_tool", "dangerous_tool"])
+    )
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+
+    response = asyncio.run(run())
+    by_name = {tool["name"]: tool["annotations"] for tool in response["result"]["tools"]}
+    read_flags = {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+    assert by_name["read_notes"] == read_flags
+    assert by_name["glob"] == read_flags
+    assert by_name["plain_tool"] == {
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    }
+    assert by_name["dangerous_tool"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    }
 
 
 # ---------------------------------------------------------------------------

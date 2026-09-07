@@ -1,9 +1,12 @@
 """Avo MCP server implementation.
 
-Speaks the MCP JSON-RPC methods the spec requires for a tools-only
-server: ``initialize``, ``ping``, ``tools/list``, ``tools/call``. The
-server is transport-agnostic — tests inject read/write callables; the
-CLI hands it the real ``sys.stdin.buffer`` / ``sys.stdout.buffer``.
+Speaks the MCP JSON-RPC lifecycle (``initialize``/``shutdown``/``exit``,
+handshake gating with ``-32002`` for pre-init or post-shutdown requests)
+and the tool methods (``tools/list`` with derived annotations,
+``tools/call``). Advertises the full capability surface; resources and
+prompts land in the same release line. The server is transport-agnostic
+— tests inject read/write callables; the CLI hands it the real
+``sys.stdin.buffer`` / ``sys.stdout.buffer``.
 """
 
 from __future__ import annotations
@@ -14,12 +17,47 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
+from avo.app_tools.approval import required_tool_names
 from avo.exceptions import ToolAlreadyCompletedError
 from avo.mcp_server.framing import FramingError, encode_message, iter_messages
 from avo.models import ToolCall
 from avo.tools import ToolRegistry
 
 _LOG = logging.getLogger("avo.mcp_server")
+
+# Tools whose names are known read-only regardless of prefix convention.
+_READ_ONLY_TOOLS = frozenset({"read_file", "glob", "grep", "git_status"})
+
+
+def _tool_annotations(name: str) -> dict[str, bool]:
+    """Derive MCP tool annotations from the tool name + approval policy.
+
+    Read-only tools (fixed set or ``read_`` prefix) are safe and
+    idempotent; tools listed in ``AVO_TOOLS_REQUIRE_APPROVAL`` are
+    treated as destructive/open-world; everything else is a plain
+    mutation hint set.
+    """
+
+    if name in _READ_ONLY_TOOLS or name.startswith("read_"):
+        return {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    if name in required_tool_names():
+        return {
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    return {
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    }
 
 
 class AvoMcpServer:
@@ -36,6 +74,7 @@ class AvoMcpServer:
         self._server_name = server_name
         self._server_version = server_version
         self._initialised = False
+        self._shutting_down = False
 
     @property
     def server_info(self) -> dict[str, Any]:
@@ -78,12 +117,25 @@ class AvoMcpServer:
         _LOG.debug("ignoring notification %r", method)
 
     async def _dispatch(self, method: str, params: dict[str, Any]) -> Any:
-        """Route a request to the matching MCP method handler."""
+        """Route a request to the matching MCP method handler.
+
+        Lifecycle gating: ``initialize`` and ``ping`` work pre-handshake;
+        every other request before ``initialize`` (and everything except
+        the exempt methods after ``shutdown``) fails with ``-32002``.
+        """
 
         if method == "initialize":
             return await self._initialize(params)
         if method == "ping":
             return {}
+        if method == "shutdown":
+            if not self._initialised:
+                raise _MethodError(-32002, "server not initialized")
+            return self._shutdown()
+        if not self._initialised:
+            raise _MethodError(-32002, "server not initialized")
+        if self._shutting_down:
+            raise _MethodError(-32002, "server is shutting down")
         if method == "tools/list":
             return await self._tools_list(params)
         if method == "tools/call":
@@ -94,9 +146,21 @@ class AvoMcpServer:
         self._initialised = True
         return {
             "protocolVersion": params.get("protocolVersion", "2025-06-18"),
-            "capabilities": {"tools": {"listChanged": False}},
+            "capabilities": {
+                "tools": {"listChanged": False},
+                "resources": {"subscribe": False, "listChanged": False},
+                "prompts": {"listChanged": False},
+                "logging": {},
+                "completions": {},
+            },
             "serverInfo": self.server_info,
         }
+
+    def _shutdown(self) -> dict[str, Any]:
+        """Mark the server as shutting down; replay is tolerated."""
+
+        self._shutting_down = True
+        return {}
 
     async def _tools_list(self, params: dict[str, Any]) -> dict[str, Any]:
         del params  # pagination not implemented; the default registry fits in one page
@@ -107,6 +171,7 @@ class AvoMcpServer:
                     "name": metadata.name,
                     "description": metadata.description,
                     "inputSchema": metadata.input_schema,
+                    "annotations": _tool_annotations(metadata.name),
                 }
             )
         return {"tools": tools}
