@@ -48,12 +48,8 @@ def test_cache_key_matches_between_python_and_native(messages: list[dict[str, st
 
 
 def test_cache_key_changes_when_input_changes() -> None:
-    base = cache_key_for_request(
-        run_id="r", step=1, messages=[{"role": "user", "content": "a"}]
-    )
-    other = cache_key_for_request(
-        run_id="r", step=1, messages=[{"role": "user", "content": "b"}]
-    )
+    base = cache_key_for_request(run_id="r", step=1, messages=[{"role": "user", "content": "a"}])
+    other = cache_key_for_request(run_id="r", step=1, messages=[{"role": "user", "content": "b"}])
     assert base != other
 
 
