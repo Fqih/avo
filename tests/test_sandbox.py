@@ -230,3 +230,127 @@ async def test_run_shell_passes_timeout_to_executor(tmp_path: Path) -> None:
     # Timeout override is passed to executor.run, not stored on the
     # container, so we just verify no exception is raised.
     assert container.removed is True
+
+
+# ---------------------------------------------------------------------------
+# Multi-language support
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("language", "expected_image"),
+    [
+        ("python", "python:3.12-slim"),
+        ("Python", "python:3.12-slim"),  # case-insensitive
+        ("node", "node:20-alpine"),
+        ("typescript", "node:20-alpine"),
+        ("go", "golang:1.22-alpine"),
+        ("rust", "rust:1.80-slim"),
+        ("ruby", "ruby:3.3-slim"),
+        ("java", "eclipse-temurin:21-jre-alpine"),
+        ("bash", "alpine:3.20"),
+        ("sh", "alpine:3.20"),
+        ("generic", "alpine:3.20"),
+    ],
+)
+def test_resolve_image_maps_known_languages(language: str, expected_image: str) -> None:
+    from avo.app_tools.sandbox import resolve_image
+
+    assert resolve_image(language) == expected_image
+
+
+def test_resolve_image_defaults_to_python_when_language_none() -> None:
+    from avo.app_tools.sandbox import _DEFAULT_IMAGE, resolve_image
+
+    assert resolve_image(None) == _DEFAULT_IMAGE
+    assert resolve_image(None, explicit_image="custom:1.0") == "custom:1.0"
+
+
+def test_resolve_image_rejects_unknown_language() -> None:
+    from avo.app_tools.sandbox import SandboxError, resolve_image
+
+    with pytest.raises(SandboxError, match="unknown language"):
+        resolve_image("cobol")
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_language"),
+    [
+        ("script.py", "python"),
+        ("module.pyi", "python"),
+        ("app.js", "node"),
+        ("module.mjs", "node"),
+        ("app.cjs", "node"),
+        ("app.ts", "typescript"),
+        ("App.tsx", "typescript"),
+        ("main.go", "go"),
+        ("lib.rs", "rust"),
+        ("Gemfile.rb", "ruby"),
+        ("Main.java", "java"),
+        ("deploy.sh", "bash"),
+        ("deploy.bash", "bash"),
+    ],
+)
+def test_language_from_path_recognizes_extensions(path: str, expected_language: str) -> None:
+    from avo.app_tools.sandbox import language_from_path
+
+    assert language_from_path(path) == expected_language
+
+
+def test_language_from_path_unknown_returns_none() -> None:
+    from avo.app_tools.sandbox import language_from_path
+
+    assert language_from_path("README.md") is None
+    assert language_from_path("data.csv") is None
+
+
+def test_sandbox_executor_uses_language_image(tmp_path: Path) -> None:
+    """``language=`` resolves the base image at construction time."""
+
+    container = FakeContainer()
+    client = FakeDockerClient(container)
+    executor = SandboxExecutor(client=client, language="node")
+
+    assert executor.image == "node:20-alpine"
+    assert executor.language == "node"
+
+
+def test_explicit_image_wins_over_language(tmp_path: Path) -> None:
+    """Passing both ``image`` and ``language`` keeps ``image`` (escape hatch)."""
+
+    container = FakeContainer()
+    client = FakeDockerClient(container)
+    executor = SandboxExecutor(client=client, image="custom-image:1.2.3", language="python")
+
+    assert executor.image == "custom-image:1.2.3"
+    # language still recorded for observability
+    assert executor.language == "python"
+
+
+def test_sandbox_executor_for_language_factory() -> None:
+    """``for_language`` reads as a clearer call site for tool wiring."""
+
+    container = FakeContainer()
+    client = FakeDockerClient(container)
+    executor = SandboxExecutor.for_language("rust", client=client)
+
+    assert executor.image == "rust:1.80-slim"
+    assert executor.language == "rust"
+
+
+@pytest.mark.asyncio
+async def test_run_uses_resolved_image_per_language(tmp_path: Path) -> None:
+    """End-to-end: ``run()`` passes the language-resolved image to docker."""
+
+    container = FakeContainer(stdout="1.22")
+    client = FakeDockerClient(container)
+    executor = SandboxExecutor.for_language("go", client=client)
+
+    result = await executor.run("go version", workspace_dir=tmp_path)
+
+    assert result.exit_code == 0
+    assert result.image == "golang:1.22-alpine"
+    assert container.removed is True
+    # network_mode + mem_limit still enforced per language
+    assert result.network_mode == "none"
+    assert result.mem_limit == "256m"

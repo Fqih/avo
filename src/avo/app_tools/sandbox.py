@@ -31,6 +31,72 @@ _DEFAULT_CPU_QUOTA = 50000  # 0.5 CPU
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _IN_CONTAINER_WORKDIR = "/workspace"
 
+# Multi-language image registry. Pin minor versions for reproducibility.
+# Slim/alpine base keep pull size + attack surface small.
+_LANGUAGE_IMAGES: dict[str, str] = {
+    "python": "python:3.12-slim",
+    "node": "node:20-alpine",
+    "typescript": "node:20-alpine",  # tsc + node runtime in same image
+    "go": "golang:1.22-alpine",
+    "rust": "rust:1.80-slim",
+    "ruby": "ruby:3.3-slim",
+    "java": "eclipse-temurin:21-jre-alpine",
+    "bash": "alpine:3.20",
+    "sh": "alpine:3.20",
+    "generic": "alpine:3.20",
+}
+
+# Extensions auto-detected by `language_from_path()`.
+_PATH_LANGUAGE_HINTS: dict[str, str] = {
+    ".py": "python",
+    ".pyi": "python",
+    ".js": "node",
+    ".mjs": "node",
+    ".cjs": "node",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".go": "go",
+    ".rs": "rust",
+    ".rb": "ruby",
+    ".java": "java",
+    ".sh": "bash",
+    ".bash": "bash",
+}
+
+
+def language_from_path(path: str | Path) -> str | None:
+    """Infer the language for a file path. Returns ``None`` if unknown."""
+
+    suffix = Path(path).suffix.lower()
+    return _PATH_LANGUAGE_HINTS.get(suffix)
+
+
+def resolve_image(language: str | None = None, *, explicit_image: str | None = None) -> str:
+    """Resolve the docker image for ``language`` or fall back to ``explicit_image``.
+
+    Args:
+        language: One of the keys in ``_LANGUAGE_IMAGES`` (``"python"``,
+            ``"node"``, ``"go"``, ``"rust"``, ``"ruby"``, ``"java"``,
+            ``"bash"``, ``"generic"``). Case-insensitive.
+        explicit_image: When ``language`` is None, use this image directly.
+
+    Raises:
+        SandboxError: when ``language`` is unknown.
+    """
+
+    if language is None:
+        if explicit_image is None:
+            return _DEFAULT_IMAGE
+        return explicit_image
+
+    key = language.lower()
+    image = _LANGUAGE_IMAGES.get(key)
+    if image is None:
+        raise SandboxError(
+            f"unknown language {language!r}; supported: {', '.join(sorted(_LANGUAGE_IMAGES))}"
+        )
+    return image
+
 
 class _Container(Protocol):
     """Subset of ``docker.models.containers.Container`` we depend on."""
@@ -84,7 +150,13 @@ class SandboxExecutor:
     Args:
         client: docker client (defaults to ``docker.from_env()``). Tests
             inject a fake client that records the container config.
-        image: Docker image used for the container.
+        image: Docker image used for the container. Overrides
+            ``language`` if both are supplied.
+        language: Shortcut for selecting a base image by language name
+            (e.g. ``"python"``, ``"node"``, ``"go"``, ``"rust"``,
+            ``"ruby"``, ``"java"``, ``"bash"``, ``"generic"``).
+            Resolved via ``resolve_image``. Ignored when ``image`` is
+            also given.
         mem_limit: Memory limit passed to docker (a string like ``"256m"``).
         cpu_quota: CPU quota (1.0 CPU = 100000). Default ``50000`` = 0.5 CPU.
         network_mode: Docker network mode. ``"none"`` keeps the container
@@ -99,7 +171,8 @@ class SandboxExecutor:
         self,
         *,
         client: _DockerClient | None = None,
-        image: str = _DEFAULT_IMAGE,
+        image: str | None = None,
+        language: str | None = None,
         mem_limit: str = _DEFAULT_MEM_LIMIT,
         cpu_quota: int = _DEFAULT_CPU_QUOTA,
         network_mode: str = "none",
@@ -107,11 +180,32 @@ class SandboxExecutor:
     ) -> None:
         self._explicit_client = client is not None
         self._client: _DockerClient | None = client
+        # When both are passed the explicit ``image`` wins; when only one
+        # is passed we resolve the other to keep backward compatibility.
+        if image is None:
+            image = resolve_image(language, explicit_image=None)
         self.image = image
+        self.language = (language or "").lower() or None
         self.mem_limit = mem_limit
         self.cpu_quota = cpu_quota
         self.network_mode = network_mode
         self.timeout_seconds = timeout_seconds
+
+    @classmethod
+    def for_language(
+        cls,
+        language: str,
+        *,
+        client: _DockerClient | None = None,
+        **kwargs: Any,
+    ) -> SandboxExecutor:
+        """Build an executor pre-configured for ``language``.
+
+        Equivalent to ``SandboxExecutor(language=language, ...)`` but
+        reads as a clearer call site for tool wiring.
+        """
+
+        return cls(client=client, language=language, **kwargs)
 
     def _resolve_client(self) -> _DockerClient:
         if self._client is not None:
@@ -227,4 +321,6 @@ __all__ = [
     "SandboxError",
     "SandboxExecutor",
     "SandboxResult",
+    "language_from_path",
+    "resolve_image",
 ]
