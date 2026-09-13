@@ -89,6 +89,15 @@ class AvoWebHandler(BaseHTTPRequestHandler):
             doc = run_doctor(os.environ)
             stored = load_all_tokens()
             masked_tokens = {k: _mask_secret(v) for k, v in stored.items()}
+            router_chain = (
+                os.environ.get("AVO_ROUTER_CHAIN", "").strip()
+                or os.environ.get("AVO_ROUTER_PROVIDERS", "").strip()
+            )
+            chain_list = (
+                [p.strip() for p in router_chain.split(",") if p.strip()]
+                if router_chain
+                else ["ollama", "openrouter"]
+            )
             self._send_json(
                 {
                     "version": AVO_VERSION,
@@ -101,7 +110,15 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                         "endpoint": doc.endpoint,
                         "missing": doc.missing_vars,
                     },
+                    "router": {
+                        "active": os.environ.get("AVO_PROVIDER") == "router",
+                        "chain": chain_list,
+                        "cooldown_seconds": float(
+                            os.environ.get("AVO_ROUTER_COOLDOWN_SECONDS", "30.0") or 30.0
+                        ),
+                    },
                     "env": {
+                        "AVO_ROUTER_CHAIN": router_chain,
                         "AVO_ROUTER_PROVIDERS": os.environ.get("AVO_ROUTER_PROVIDERS", ""),
                         "AVO_ROUTER_MODELS": os.environ.get("AVO_ROUTER_MODELS", ""),
                     },

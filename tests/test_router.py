@@ -160,8 +160,93 @@ def test_router_in_build_provider_from_env() -> None:
         "AVO_PROVIDER": "router",
         "AVO_ROUTER_CHAIN": "ollama",
         "AVO_OLLAMA_MODEL": "llama3.2",
+        "AVO_ROUTER_COOLDOWN_SECONDS": "45.0",
     }
     provider = build_provider_from_env(env)
     assert isinstance(provider, FallbackRouterProvider)
     assert len(provider.routes) == 1
     assert provider.routes[0][0] == "ollama"
+    assert provider.cooldown_seconds == 45.0
+
+
+def test_router_circuit_breaker_skips_cooling_route() -> None:
+    p1 = _MockProvider("ollama", error=ConnectionRefusedError("offline"))
+    p2 = _MockProvider("openrouter", response=ModelResponse(content="from openrouter"))
+
+    router = FallbackRouterProvider(
+        [("ollama", p1), ("openrouter", p2)],  # type: ignore[list-item]
+        cooldown_seconds=60.0,
+    )
+    req = ModelRequest(run_id="r-cb", step=1, messages=[])
+
+    # First request: p1 fails, enters cooldown, falls back to p2
+    resp1 = asyncio.run(router.generate(req))
+    assert resp1.content == "from openrouter"
+    assert p1.generate_called == 1
+    assert p2.generate_called == 1
+
+    # Second request: p1 is in cooldown, router skips p1 immediately to p2
+    resp2 = asyncio.run(router.generate(req))
+    assert resp2.content == "from openrouter"
+    assert p1.generate_called == 1  # p1 was NOT called again
+    assert p2.generate_called == 2
+
+    # Verify health status
+    status = router.get_health_status()
+    assert status["ollama"]["in_cooldown"] is True
+    assert status["ollama"]["healthy"] is False
+    assert status["ollama"]["consecutive_failures"] == 1
+    assert "offline" in status["ollama"]["last_error"]
+    assert status["openrouter"]["healthy"] is True
+    assert status["openrouter"]["in_cooldown"] is False
+
+
+def test_router_reset_health() -> None:
+    p1 = _MockProvider("ollama", error=ConnectionRefusedError("offline"))
+    p2 = _MockProvider("openrouter", response=ModelResponse(content="ok"))
+
+    router = FallbackRouterProvider(
+        [("ollama", p1), ("openrouter", p2)],  # type: ignore[list-item]
+        cooldown_seconds=60.0,
+    )
+    req = ModelRequest(run_id="r-reset", step=1, messages=[])
+    asyncio.run(router.generate(req))
+
+    assert router.get_health_status()["ollama"]["in_cooldown"] is True
+    router.reset_health("ollama")
+    assert router.get_health_status()["ollama"]["in_cooldown"] is False
+    assert router.get_health_status()["ollama"]["healthy"] is True
+
+
+def test_router_safety_fallback_when_all_in_cooldown() -> None:
+    p1 = _MockProvider("ollama", error=ConnectionRefusedError("err1"))
+    p2 = _MockProvider("openrouter", error=ProviderError("err2"))
+
+    router = FallbackRouterProvider(
+        [("ollama", p1), ("openrouter", p2)],  # type: ignore[list-item]
+        cooldown_seconds=60.0,
+    )
+    req = ModelRequest(run_id="r-all-cool", step=1, messages=[])
+
+    # First call puts both in cooldown
+    with pytest.raises(ProviderError):
+        asyncio.run(router.generate(req))
+
+    assert router.get_health_status()["ollama"]["in_cooldown"] is True
+    assert router.get_health_status()["openrouter"]["in_cooldown"] is True
+
+    # Next call: even though all are in cooldown, safety net tries routes instead of failing blindly
+    with pytest.raises(ProviderError):
+        asyncio.run(router.generate(req))
+
+    assert p1.generate_called == 2
+    assert p2.generate_called == 2
+
+
+def test_router_probe_all() -> None:
+    p1 = _MockProvider("p1")
+    p2 = _MockProvider("p2")
+    router = FallbackRouterProvider([("p1", p1), ("p2", p2)])  # type: ignore[list-item]
+
+    probes = asyncio.run(router.probe_all(timeout_seconds=1.0))
+    assert probes == {"p1": True, "p2": True}

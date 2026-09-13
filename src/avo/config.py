@@ -315,7 +315,13 @@ def _build_router_from_env(
         ollama_cfg = OllamaConfig.from_avo_env(env, fallback_model=default_model("ollama"))
         routes.append(("ollama", OllamaProvider(ollama_cfg)))
 
-    return FallbackRouterProvider(routes)
+    cooldown_str = env.get("AVO_ROUTER_COOLDOWN_SECONDS", "").strip()
+    try:
+        cooldown_seconds = float(cooldown_str) if cooldown_str else 30.0
+    except ValueError:
+        cooldown_seconds = 30.0
+
+    return FallbackRouterProvider(routes, cooldown_seconds=cooldown_seconds)
 
 
 def apply_runtime_overrides(policy_kwargs: dict[str, Any], environ: Mapping[str, str]) -> None:
