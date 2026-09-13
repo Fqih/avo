@@ -61,6 +61,10 @@ class GitStatus:
     def clean(self) -> bool:
         return not any(e.is_modified for e in self.entries)
 
+    @property
+    def is_clean(self) -> bool:
+        return len(self.entries) == 0
+
 
 def _run_git(
     cwd: Path,
@@ -201,6 +205,32 @@ class GitRepository:
             truncated.append(f"... diff truncated ({len(lines) - max_lines} more lines) ...")
             return "\n".join(truncated)
         return diff_text
+
+    def rollback(self, *, untracked: bool = True) -> list[str]:
+        """Revert uncommitted working tree changes back to HEAD.
+
+        Restores modified files and cleans untracked files if untracked is True.
+        Returns a list of reverted file paths.
+        """
+        if not self.is_repository():
+            raise GitError(f"{self._root} is not a git repository")
+
+        status = self.status()
+        if status.is_clean:
+            return []
+
+        affected = list(status.modified)
+        if untracked:
+            affected.extend(status.untracked)
+
+        proc = _run_git(self._root, ["checkout", "--", "."])
+        if proc.returncode != 0:
+            _run_git(self._root, ["restore", "."])
+
+        if untracked and status.untracked:
+            _run_git(self._root, ["clean", "-fd"])
+
+        return affected
 
 
 __all__ = [

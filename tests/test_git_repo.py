@@ -143,3 +143,19 @@ def test_git_repo_diff_unstaged_and_staged(git_repo: Path) -> None:
     # Now unstaged diff should be empty for tracked.txt
     diff_now_unstaged = repo.diff(path="tracked.txt", staged=False)
     assert diff_now_unstaged.strip() == ""
+
+
+def test_git_repo_rollback(git_repo: Path) -> None:
+    repo = GitRepository(git_repo)
+    assert not repo.status().is_clean
+    reverted = repo.rollback()
+    assert "tracked.txt" in reverted
+    assert "new.txt" in reverted
+
+    # Verify clean state restored
+    assert repo.status().is_clean
+    assert (git_repo / "tracked.txt").read_text(encoding="utf-8") == "hello"
+    assert not (git_repo / "new.txt").exists()
+
+    # Second rollback is a no-op
+    assert repo.rollback() == []

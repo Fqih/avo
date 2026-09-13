@@ -982,3 +982,47 @@ async def test_repl_model_provider_switching(
     assert code == 0
     out = stdout.getvalue()
     assert "Switched to provider 'ollama' and model 'qwen2.5-coder'" in out
+
+
+def test_repl_undo_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import subprocess
+
+    env = _environ_with_ollama(model="llama3.1")
+    monkeypatch.setattr("os.environ", env)
+
+    ws = chat_env["workspace"]
+    # Initialize git repo in workspace
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(ws), check=True)
+    subprocess.run(["git", "add", "."], cwd=str(ws), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(ws), check=True)
+
+    # Modify existing file and create new file
+    (ws / "README.md").write_text("corrupted", encoding="utf-8")
+    (ws / "bad.txt").write_text("bad", encoding="utf-8")
+
+    stdin = io.StringIO("/undo\n/undo\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = asyncio.run(
+        run_repl(
+            database_path=chat_env["db"],
+            workspace_root=ws,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            environ=env,
+        )
+    )
+    assert code == 0
+    out = stdout.getvalue()
+    assert "Rolled back changes in 2 file(s)" in out
+    assert "Working tree clean. Nothing to undo." in out
+    assert (ws / "README.md").read_text(encoding="utf-8") == "seed"
+    assert not (ws / "bad.txt").exists()

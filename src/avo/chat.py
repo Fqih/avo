@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 import uuid
@@ -195,7 +194,8 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/router", "show multi-provider fallback router live status"),
     ("/model [NAME]", "list known models, or switch to NAME or PROVIDER/MODEL"),
     ("/context", "display full context snapshot (session, model, workspace, skills)"),
-    ("/diff", "show git status and diff summary in active workspace"),
+    ("/diff [PATH]", "show git status, diff stat, or unified diff for PATH"),
+    ("/undo", "revert uncommitted workspace modifications"),
     ("/clear", "clear the terminal screen"),
     ("/export [PATH]", "export current chat session to Markdown file"),
     ("/sessions", "list past chat sessions"),
@@ -274,12 +274,33 @@ def _print_active_context(out: TextIO, ctx: ChatContext, environ: dict[str, str]
     out.flush()
 
 
-def _show_diff_summary(workspace_root: Path, out: TextIO, err: TextIO) -> None:
-    """Render workspace git status and diff summary without leaving the REPL."""
+def _show_diff_summary(
+    workspace_root: Path,
+    out: TextIO,
+    err: TextIO,
+    target_path: str | None = None,
+) -> None:
+    """Render workspace git status and diff summary or unified diff."""
+    from avo.workspace.git import GitError, GitRepository
 
-    if not shutil.which("git"):
-        err.write("git command not found on system PATH.\n")
+    repo = GitRepository(workspace_root)
+    if not repo.is_repository():
+        err.write(f"workspace {workspace_root} is not a git repository or git failed.\n")
         return
+
+    if target_path and target_path.lower() not in ("stat", "--stat"):
+        filter_path = None if target_path.lower() in ("full", "--full", "all") else target_path
+        try:
+            diff_text = repo.diff(path=filter_path)
+            if not diff_text.strip():
+                out.write("No modifications found in workspace.\n")
+            else:
+                out.write(diff_text + "\n")
+            out.flush()
+            return
+        except GitError as exc:
+            err.write(f"diff failed: {exc}\n")
+            return
 
     try:
         proc = subprocess.run(
@@ -289,10 +310,6 @@ def _show_diff_summary(workspace_root: Path, out: TextIO, err: TextIO) -> None:
             timeout=5,
             check=False,
         )
-        if proc.returncode != 0:
-            err.write(f"workspace {workspace_root} is not a git repository or git failed.\n")
-            return
-
         status_output = proc.stdout.strip()
         if not status_output:
             out.write("Working tree clean (no modified or staged files).\n")
@@ -319,6 +336,28 @@ def _show_diff_summary(workspace_root: Path, out: TextIO, err: TextIO) -> None:
         out.flush()
     except Exception as exc:
         err.write(f"could not inspect git status: {exc}\n")
+
+
+def _undo_workspace(workspace_root: Path, out: TextIO, err: TextIO) -> None:
+    """Revert uncommitted working tree modifications in the active workspace."""
+    from avo.workspace.git import GitError, GitRepository
+
+    repo = GitRepository(workspace_root)
+    if not repo.is_repository():
+        err.write(f"workspace {workspace_root} is not a git repository.\n")
+        return
+
+    try:
+        reverted = repo.rollback()
+        if not reverted:
+            out.write("Working tree clean. Nothing to undo.\n")
+        else:
+            out.write(f"Rolled back changes in {len(reverted)} file(s):\n")
+            for r_file in reverted:
+                out.write(f"  ↶ {r_file}\n")
+        out.flush()
+    except GitError as exc:
+        err.write(f"undo failed: {exc}\n")
 
 
 def _clear_screen(out: TextIO) -> None:
@@ -527,7 +566,12 @@ async def _run_slash(
         return False
 
     if cmd == "/diff":
-        _show_diff_summary(ctx.workspace.root, out, err)
+        target = args[1] if len(args) > 1 else None
+        _show_diff_summary(ctx.workspace.root, out, err, target)
+        return False
+
+    if cmd == "/undo":
+        _undo_workspace(ctx.workspace.root, out, err)
         return False
 
     if cmd == "/clear":
