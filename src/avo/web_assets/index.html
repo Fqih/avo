@@ -59,7 +59,7 @@
     <!-- OVERVIEW TAB -->
     <div id="view-overview" class="space-y-6">
       <!-- KPI Stats -->
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div class="glass p-5 rounded-xl">
           <p class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Active Provider</p>
           <p id="kpiProvider" class="text-2xl font-bold text-white mt-1">-</p>
@@ -80,12 +80,49 @@
           <p id="kpiTokens" class="text-2xl font-bold text-white mt-1">0</p>
           <p class="text-xs text-emerald-400 mt-0.5">~/.config/avo/auth.json (0600)</p>
         </div>
+        <div class="glass p-5 rounded-xl">
+          <p class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Total Spend &amp; Tokens</p>
+          <p id="kpiSpend" class="text-2xl font-bold text-white mt-1">$0.00</p>
+          <p id="kpiTokensCount" class="text-xs text-indigo-400 mt-0.5">0 tokens</p>
+        </div>
       </div>
 
       <!-- Quick Doctor Card -->
       <div class="glass rounded-xl p-6 border border-gray-800">
         <h3 class="text-base font-semibold text-white mb-3">System Diagnostics (Doctor)</h3>
         <div id="doctorDetails" class="text-sm text-gray-300 space-y-2">Loading diagnostics...</div>
+      </div>
+
+      <!-- Token Ledger & Cost Breakdown Card -->
+      <div class="glass rounded-xl p-6 border border-gray-800">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-base font-semibold text-white">Token Usage &amp; Spend Ledger</h3>
+            <p class="text-xs text-gray-400">Aggregated token consumption and USD spend from persistent ledger</p>
+          </div>
+          <div class="flex gap-2">
+            <span class="px-2.5 py-1 text-xs rounded-full bg-indigo-950/80 border border-indigo-800 text-indigo-300 font-mono" id="tokensInputBadge">In: 0</span>
+            <span class="px-2.5 py-1 text-xs rounded-full bg-purple-950/80 border border-purple-800 text-purple-300 font-mono" id="tokensOutputBadge">Out: 0</span>
+            <span class="px-2.5 py-1 text-xs rounded-full bg-emerald-950/80 border border-emerald-800 text-emerald-300 font-mono" id="tokensTotalBadge">Total: 0</span>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs text-gray-300">
+            <thead class="bg-gray-900/60 uppercase text-[10px] tracking-wider text-gray-400 border-b border-gray-800">
+              <tr>
+                <th class="px-4 py-2.5">Model</th>
+                <th class="px-4 py-2.5 text-right">Runs</th>
+                <th class="px-4 py-2.5 text-right">Input Tokens</th>
+                <th class="px-4 py-2.5 text-right">Output Tokens</th>
+                <th class="px-4 py-2.5 text-right">Total Tokens</th>
+                <th class="px-4 py-2.5 text-right">Estimated USD</th>
+              </tr>
+            </thead>
+            <tbody id="costModelsTableBody" class="divide-y divide-gray-800/60">
+              <tr><td colspan="6" class="px-4 py-4 text-center text-gray-500">No token ledger records found.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -217,14 +254,16 @@
 
     async function refreshData() {
       try {
-        const [statusData, runsData, sessionsData] = await Promise.all([
+        const [statusData, runsData, sessionsData, costData] = await Promise.all([
           fetchJson('/api/status'),
           fetchJson('/api/runs'),
-          fetchJson('/api/sessions')
+          fetchJson('/api/sessions'),
+          fetchJson('/api/cost').catch(() => null)
         ]);
         state.overview = statusData;
         state.runs = runsData.runs || [];
         state.sessions = sessionsData.sessions || [];
+        state.cost = costData;
 
         renderOverview();
         renderRuns();
@@ -245,6 +284,22 @@
       document.getElementById('kpiSessions').innerText = state.sessions.length;
       document.getElementById('kpiTokens').innerText = Object.keys(o.tokens || {}).length;
 
+      // Spend & Token Ledger
+      const cost = (state.cost && state.cost.total) ? state.cost : (o.cost || {});
+      const totalTokens = (cost.total && cost.total.total_tokens) || cost.total_tokens || 0;
+      const inTokens = (cost.total && cost.total.input_tokens) || cost.input_tokens || 0;
+      const outTokens = (cost.total && cost.total.output_tokens) || cost.output_tokens || 0;
+      const rawUsd = cost.cost_usd != null ? cost.cost_usd : (cost.cost_usd === 0 ? "0.00" : null);
+      const costUsd = rawUsd != null ? `$${parseFloat(rawUsd).toFixed(4)}` : '$0.00';
+
+      document.getElementById('kpiSpend').innerText = costUsd;
+      document.getElementById('kpiTokensCount').innerText = `${totalTokens.toLocaleString()} tokens`;
+      document.getElementById('tokensInputBadge').innerText = `In: ${inTokens.toLocaleString()}`;
+      document.getElementById('tokensOutputBadge').innerText = `Out: ${outTokens.toLocaleString()}`;
+      document.getElementById('tokensTotalBadge').innerText = `Total: ${totalTokens.toLocaleString()}`;
+
+      renderCostModels();
+
       const doc = o.doctor || {};
       const healthEl = document.getElementById('healthBadge');
       const healthText = document.getElementById('healthText');
@@ -263,6 +318,30 @@
         docHtml += `<p class="text-emerald-400">All required variables configured successfully.</p>`;
       }
       document.getElementById('doctorDetails').innerHTML = docHtml;
+    }
+
+    function renderCostModels() {
+      const tbody = document.getElementById('costModelsTableBody');
+      if (!tbody) return;
+      const models = (state.cost && state.cost.models) || [];
+      if (!models.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-4 text-center text-gray-500">No token ledger records found.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = models.map(m => {
+        const u = m.usage || {};
+        const usd = m.cost_usd != null ? `$${parseFloat(m.cost_usd).toFixed(4)}` : '-';
+        return `
+          <tr class="hover:bg-gray-900/40 transition">
+            <td class="px-4 py-2.5 font-mono text-gray-200">${m.model || '(unknown)'}</td>
+            <td class="px-4 py-2.5 text-right font-semibold text-gray-300">${m.runs || 0}</td>
+            <td class="px-4 py-2.5 text-right font-mono text-indigo-300">${(u.input_tokens || 0).toLocaleString()}</td>
+            <td class="px-4 py-2.5 text-right font-mono text-purple-300">${(u.output_tokens || 0).toLocaleString()}</td>
+            <td class="px-4 py-2.5 text-right font-mono text-emerald-300">${(u.total_tokens || 0).toLocaleString()}</td>
+            <td class="px-4 py-2.5 text-right font-mono text-amber-300">${usd}</td>
+          </tr>
+        `;
+      }).join('');
     }
 
     function renderRuns() {

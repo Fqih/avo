@@ -1033,3 +1033,49 @@ def test_repl_undo_command(
     assert "Working tree clean. Nothing to undo." in out
     assert (ws / "README.md").read_text(encoding="utf-8") == "seed"
     assert not (ws / "bad.txt").exists()
+
+
+def test_repl_cost_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    from decimal import Decimal
+
+    from avo.ledger import TokenLedger
+    from avo.models import TokenUsage
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    db = chat_env["db"]
+    ledger = TokenLedger(db)
+    ledger.record(
+        run_id="run-repl-cost-1",
+        step=1,
+        model="gpt-4o",
+        usage=TokenUsage(input_tokens=500, output_tokens=200),
+        cost_usd=Decimal("0.0075"),
+    )
+    ledger.close()
+
+    stdin = io.StringIO("/cost\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = asyncio.run(
+        run_repl(
+            database_path=db,
+            workspace_root=chat_env["workspace"],
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            environ=env,
+        )
+    )
+    assert code == 0
+    out = stdout.getvalue()
+    assert "Database:" in out
+    assert "Tokens: 700" in out
+    assert "$0.0075" in out
+    assert "gpt-4o" in out

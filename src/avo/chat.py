@@ -195,6 +195,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/router", "show multi-provider fallback router live status"),
     ("/model [NAME]", "list known models, or switch to NAME or PROVIDER/MODEL"),
     ("/context", "display full context snapshot (session, model, workspace, skills)"),
+    ("/cost", "show token usage and spend breakdown from ledger"),
     ("/diff [PATH]", "show git status, diff stat, or unified diff for PATH"),
     ("/undo", "revert uncommitted workspace modifications"),
     ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
@@ -276,6 +277,15 @@ def _print_active_context(out: TextIO, ctx: ChatContext, environ: dict[str, str]
     for k, v in rows:
         out.write(f"│ {k.ljust(label_w)} : {v}\n")
     out.write("╰─────────────────────────────────────────────────────────╯\n")
+    out.flush()
+
+
+def _show_cost_breakdown(database_path: Path, out: TextIO) -> None:
+    """Display aggregated token usage and USD spend from persistent ledger."""
+    from avo.cost import aggregate_costs
+
+    report = aggregate_costs(database_path)
+    out.write(report.to_text())
     out.flush()
 
 
@@ -688,6 +698,10 @@ async def _run_slash(
 
     if cmd == "/context":
         _print_active_context(out, ctx, environ)
+        return False
+
+    if cmd == "/cost":
+        _show_cost_breakdown(ctx.store.path, out)
         return False
 
     if cmd == "/diff":

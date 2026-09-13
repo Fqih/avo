@@ -25,6 +25,7 @@ from typing import Any
 from avo import __version__ as AVO_VERSION
 from avo.auth import load_all_tokens
 from avo.chat_session import SessionLifecycle
+from avo.cost import aggregate_costs, report_to_dict
 from avo.doctor import run_doctor
 from avo.storage.sqlite import SQLiteEventStore
 from avo.tracing import TraceInspector
@@ -90,6 +91,7 @@ class AvoWebHandler(BaseHTTPRequestHandler):
             doc = run_doctor(os.environ)
             stored = load_all_tokens()
             masked_tokens = {k: _mask_secret(v) for k, v in stored.items()}
+            cost_report = aggregate_costs(self.server.database_path)
             router_chain = (
                 os.environ.get("AVO_ROUTER_CHAIN", "").strip()
                 or os.environ.get("AVO_ROUTER_PROVIDERS", "").strip()
@@ -106,6 +108,15 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                     "model": os.environ.get("AVO_MODEL", "auto"),
                     "database": str(self.server.database_path),
                     "tokens": masked_tokens,
+                    "cost": {
+                        "run_count": cost_report.run_count,
+                        "total_tokens": cost_report.total.total_tokens,
+                        "input_tokens": cost_report.total.input_tokens,
+                        "output_tokens": cost_report.total.output_tokens,
+                        "cost_usd": (
+                            str(cost_report.cost_usd) if cost_report.cost_usd is not None else None
+                        ),
+                    },
                     "doctor": {
                         "ok": doc.ok,
                         "endpoint": doc.endpoint,
@@ -126,6 +137,11 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                     },
                 }
             )
+            return
+
+        if path == "/api/cost":
+            cost_report = aggregate_costs(self.server.database_path)
+            self._send_json(report_to_dict(cost_report))
             return
 
         if path == "/api/runs":

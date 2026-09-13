@@ -54,6 +54,8 @@ def test_web_ui_api_status(web_server: tuple[str, Path], monkeypatch: pytest.Mon
         assert data["provider"] == "ollama"
         assert data["model"] == "llama3.1"
         assert "doctor" in data
+        assert "cost" in data
+        assert "total_tokens" in data["cost"]
 
 
 def test_web_ui_api_runs_and_trace(web_server: tuple[str, Path]) -> None:
@@ -245,3 +247,33 @@ def test_web_ui_cli_help(capsys: pytest.CaptureFixture[str]) -> None:
         web_ui_main(["--help"])
     assert exc.value.code == 0
     assert "avo ui" in capsys.readouterr().out
+
+
+def test_web_ui_api_cost(web_server: tuple[str, Path]) -> None:
+    from decimal import Decimal
+
+    from avo.ledger import TokenLedger
+    from avo.models import TokenUsage
+
+    base_url, db_path = web_server
+    ledger = TokenLedger(db_path)
+    ledger.record(
+        run_id="run-cost-1",
+        step=1,
+        model="gpt-4o",
+        usage=TokenUsage(input_tokens=150, output_tokens=50),
+        cost_usd=Decimal("0.0050"),
+    )
+    ledger.close()
+
+    req = urllib.request.Request(f"{base_url}/api/cost")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["run_count"] == 1
+        assert data["total"]["total_tokens"] == 200
+        assert data["total"]["input_tokens"] == 150
+        assert data["total"]["output_tokens"] == 50
+        assert data["cost_usd"] == "0.0050"
+        assert len(data["models"]) == 1
+        assert data["models"][0]["model"] == "gpt-4o"

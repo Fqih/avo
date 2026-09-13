@@ -108,6 +108,11 @@ def _report_to_jsonable(report: CostReport) -> dict[str, Any]:
     return payload
 
 
+def report_to_dict(report: CostReport) -> dict[str, Any]:
+    """Convert a :class:`CostReport` to a JSON-serializable dictionary."""
+    return _report_to_jsonable(report)
+
+
 def _run_to_dict(run: RunCost) -> dict[str, Any]:
     return {
         "run_id": run.run_id,
@@ -284,6 +289,7 @@ __all__ = [
     "RunCost",
     "aggregate_costs",
     "main",
+    "report_to_dict",
 ]
 
 
