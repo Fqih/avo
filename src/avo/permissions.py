@@ -39,7 +39,7 @@ from avo.models import ToolCall
 from avo.runtime import ApprovalCallback
 
 _READ_ONLY_TOOLS: frozenset[str] = frozenset(
-    {"read_file", "git_diff", "lint", "test_runner", "grep", "glob"}
+    {"read_file", "git_diff", "lint", "test_runner", "grep", "glob", "symbols"}
 )
 _MUTATING_TOOLS: frozenset[str] = frozenset({"write_file", "edit_file", "git_commit"})
 _SHELL_TOOLS: frozenset[str] = frozenset({"run_shell"})

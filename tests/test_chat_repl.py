@@ -131,6 +131,7 @@ def test_build_chat_context_constructs_runtime_with_tools(
         "write_file",
         "grep",
         "glob",
+        "symbols",
         "lint",
         "test_runner",
         "git_diff",
@@ -1339,3 +1340,43 @@ async def test_repl_grep_and_find_commands(
     out = stdout.getvalue()
     assert "Matched 1 files" in out
     assert "doc.txt" in out
+
+
+@pytest.mark.asyncio
+async def test_repl_symbols_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+    ws = chat_env["workspace"]
+    code = (
+        "class RouterService:\n"
+        "    def route(self, req: str) -> bool: return True\n"
+        "\n"
+        "def helper_tool(): pass\n"
+    )
+    (ws / "service.py").write_text(code, encoding="utf-8")
+
+    # 1. /symbols on workspace
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    await _run_slash(ctx, ["/symbols", "service.py"], stdout, stderr, env)
+    out = stdout.getvalue()
+    assert "Symbols in 'service.py':" in out
+    assert "class RouterService" in out
+    assert "def route" in out
+    assert "def helper_tool" in out
+
+    # 2. /symbols empty/no symbols
+    stdout_empty = io.StringIO()
+    await _run_slash(ctx, ["/symbols", "nonexistent.py"], stdout_empty, stderr, env)
+    assert "symbols error" in stderr.getvalue()

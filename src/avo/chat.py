@@ -33,6 +33,7 @@ from avo.app_tools import (
     glob_tool,
     grep_tool,
     lint_tool,
+    symbols_tool,
     test_runner_tool,
 )
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
@@ -220,6 +221,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/undo", "revert uncommitted workspace modifications"),
     ("/grep PATTERN [GLOB]", "search workspace file contents for regex pattern"),
     ("/find [GLOB]", "find files in workspace matching glob pattern (alias: /search)"),
+    ("/symbols [PATH]", "extract code symbols (classes, methods, functions) from PATH"),
     ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
     ("/test [TARGET]", "run automated test suite on workspace files"),
     ("/commit [MSG]", "stage changes and create atomic git commit (auto-message if omitted)"),
@@ -883,6 +885,82 @@ async def _run_find_command(
     out.flush()
 
 
+async def _run_symbols_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Extract code symbols (classes, functions) using AST."""
+    target_path = args[1] if len(args) > 1 else "."
+    symbol_filter = args[2] if len(args) > 2 else None
+
+    from avo.app_tools.symbols import symbols_tool
+
+    tool = symbols_tool()
+    with bind_workspace(ctx.workspace):
+        try:
+            res = await tool.invoke(
+                {"path": target_path, "symbol_name": symbol_filter, "max_symbols": 100}
+            )
+        except Exception as exc:
+            err.write(f"symbols error: {exc}\n")
+            err.flush()
+            return
+
+    files_raw = res.get("files", []) if isinstance(res, dict) else []
+    files_list = files_raw if isinstance(files_raw, list) else []
+
+    if not files_list:
+        out.write(f"No symbols found in {target_path!r}.\n")
+        out.flush()
+        return
+
+    out.write(f"\nSymbols in {target_path!r}:\n")
+    for f in files_list:
+        if not isinstance(f, dict):
+            continue
+        rel_file = f.get("file", "")
+        err_msg = f.get("syntax_error")
+        if err_msg:
+            out.write(f"\n  {rel_file}: [Syntax Error: {err_msg}]\n")
+            continue
+
+        syms = f.get("symbols", [])
+        if not isinstance(syms, list) or not syms:
+            continue
+
+        out.write(f"\n  {rel_file}:\n")
+        for s in syms:
+            if not isinstance(s, dict):
+                continue
+            kind = s.get("kind", "")
+            name = s.get("name", "")
+            ls = s.get("line_start", 0)
+            le = s.get("line_end", 0)
+            sig = s.get("signature", "")
+            bases_raw = s.get("bases", [])
+            bases = bases_raw if isinstance(bases_raw, list) else []
+            base_str = f"({', '.join(str(b) for b in bases)})" if bases else ""
+
+            if kind == "class":
+                out.write(f"    class {name}{base_str} (L{ls}-L{le})\n")
+                children = s.get("children", [])
+                if isinstance(children, list):
+                    for c in children:
+                        if isinstance(c, dict):
+                            c_name = c.get("name", "")
+                            c_sig = c.get("signature", "()")
+                            c_ls = c.get("line_start", 0)
+                            c_kind = "async def" if c.get("kind") == "async_method" else "def"
+                            out.write(f"      {c_kind} {c_name}{c_sig} (L{c_ls})\n")
+            else:
+                fn_kind = "async def" if kind == "async_function" else "def"
+                out.write(f"    {fn_kind} {name}{sig} (L{ls}-L{le})\n")
+    out.write("\n")
+    out.flush()
+
+
 def _show_router_status(ctx: ChatContext, out: TextIO) -> None:
     """Display real-time router circuit breaker and health status."""
     from avo.providers.router import BaseRouterProvider
@@ -971,6 +1049,7 @@ def build_chat_context(
             write_file_tool(),
             grep_tool(),
             glob_tool(),
+            symbols_tool(),
             lint_tool(),
             test_runner_tool(),
             git_diff_tool(),
@@ -1119,6 +1198,10 @@ async def _run_slash(
 
     if cmd in ("/find", "/search"):
         await _run_find_command(ctx, args, out, err)
+        return False
+
+    if cmd == "/symbols":
+        await _run_symbols_command(ctx, args, out, err)
         return False
 
     if cmd == "/lint":

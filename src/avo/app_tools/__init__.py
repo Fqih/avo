@@ -18,6 +18,7 @@ from .git_status import git_status_tool
 from .glob_tool import glob_tool
 from .grep_tool import grep_tool
 from .linter import lint_tool
+from .symbols import symbols_tool
 from .test_runner import test_runner_tool
 from .workspace_map import workspace_map_tool
 
@@ -30,6 +31,7 @@ __all__ = [
     "grep_tool",
     "lint_tool",
     "read_file_tool",
+    "symbols_tool",
     "test_runner_tool",
     "workspace_map_tool",
     "write_file_tool",
