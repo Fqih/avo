@@ -159,3 +159,68 @@ def test_git_repo_rollback(git_repo: Path) -> None:
 
     # Second rollback is a no-op
     assert repo.rollback() == []
+
+
+def test_git_repo_list_and_switch_branches(git_repo: Path) -> None:
+    repo = GitRepository(git_repo)
+    branches = repo.list_branches()
+    assert len(branches) >= 1
+    assert any(b["name"] == "main" and b["current"] is True for b in branches)
+
+    # Create and switch to a new branch
+    repo.switch_branch("feat/experiment", create=True)
+    assert repo.current_branch() == "feat/experiment"
+
+    branches_after = repo.list_branches()
+    branch_names = [b["name"] for b in branches_after]
+    assert "feat/experiment" in branch_names
+    assert "main" in branch_names
+    current_entry = next(b for b in branches_after if b["name"] == "feat/experiment")
+    assert current_entry["current"] is True
+
+    # Switch back to main
+    repo.switch_branch("main", create=False)
+    assert repo.current_branch() == "main"
+
+    # Empty branch name raises GitError
+    with pytest.raises(GitError, match="branch name cannot be empty"):
+        repo.switch_branch("   ")
+
+    # Non-existent branch without create raises GitError
+    with pytest.raises(GitError, match="git switch failed"):
+        repo.switch_branch("non-existent-branch-12345")
+
+
+def test_git_repo_log(git_repo: Path) -> None:
+    repo = GitRepository(git_repo)
+    commits = repo.log(max_count=5)
+    assert len(commits) == 1
+    assert commits[0]["subject"] == "initial"
+    assert commits[0]["author"] == "Test"
+    assert "hash" in commits[0]
+    assert "date" in commits[0]
+
+    # Add a second commit
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-q", "-m", "second commit")
+
+    commits2 = repo.log(max_count=2)
+    assert len(commits2) == 2
+    assert commits2[0]["subject"] == "second commit"
+    assert commits2[1]["subject"] == "initial"
+
+    # Respect max_count=1
+    assert len(repo.log(max_count=1)) == 1
+
+    # max_count < 1 returns empty list
+    assert repo.log(max_count=0) == []
+
+
+def test_branch_and_log_outside_repo(tmp_path: Path) -> None:
+    repo = GitRepository(tmp_path)
+    with pytest.raises(GitError, match="not a git repository"):
+        repo.list_branches()
+    with pytest.raises(GitError, match="not a git repository"):
+        repo.switch_branch("main")
+    with pytest.raises(GitError, match="not a git repository"):
+        repo.log()

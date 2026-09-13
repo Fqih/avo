@@ -225,6 +225,8 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
     ("/test [TARGET]", "run automated test suite on workspace files"),
     ("/commit [MSG]", "stage changes and create atomic git commit (auto-message if omitted)"),
+    ("/branch [NAME]", "list git branches, or switch/create branch NAME"),
+    ("/log [N]", "show recent N git commits in the repository"),
     ("/bench [PROMPT]", "benchmark live routes and display speed ranking"),
     ("/clear", "clear the terminal screen"),
     ("/export [PATH]", "export current chat session to Markdown file"),
@@ -961,6 +963,89 @@ async def _run_symbols_command(
     out.flush()
 
 
+def _manage_branch(
+    workspace_root: Path,
+    branch_name: str | None,
+    out: TextIO,
+    err: TextIO,
+    *,
+    create: bool = False,
+) -> None:
+    """List local branches or switch to a branch."""
+    from avo.workspace.git import GitError, GitRepository
+
+    repo = GitRepository(workspace_root)
+    if not repo.is_repository():
+        err.write(f"Workspace {workspace_root} is not a git repository.\n")
+        err.flush()
+        return
+
+    if not branch_name:
+        try:
+            branches = repo.list_branches()
+        except GitError as exc:
+            err.write(f"git error: {exc}\n")
+            err.flush()
+            return
+
+        out.write("\nGit Branches:\n")
+        for b in branches:
+            marker = "* " if b["current"] else "  "
+            out.write(f"  {marker}{b['name']}\n")
+        out.write("\n")
+        out.flush()
+        return
+
+    try:
+        existing = [b["name"] for b in repo.list_branches()]
+        should_create = create or (branch_name not in existing)
+        repo.switch_branch(branch_name, create=should_create)
+        action = "Created and switched to" if should_create else "Switched to"
+        out.write(f"✓ {action} branch {branch_name!r}.\n")
+        out.flush()
+    except GitError as exc:
+        err.write(f"git error: {exc}\n")
+        err.flush()
+
+
+def _show_git_log(
+    workspace_root: Path,
+    out: TextIO,
+    err: TextIO,
+    max_count: int = 10,
+) -> None:
+    """Display recent git commits."""
+    from avo.workspace.git import GitError, GitRepository
+
+    repo = GitRepository(workspace_root)
+    if not repo.is_repository():
+        err.write(f"Workspace {workspace_root} is not a git repository.\n")
+        err.flush()
+        return
+
+    try:
+        commits = repo.log(max_count=max_count)
+    except GitError as exc:
+        err.write(f"git error: {exc}\n")
+        err.flush()
+        return
+
+    if not commits:
+        out.write("No commits found in repository.\n")
+        out.flush()
+        return
+
+    out.write(f"\nRecent Commits (last {len(commits)}):\n\n")
+    for c in commits:
+        h = c["hash"]
+        subj = c["subject"]
+        author = c["author"]
+        dt = c["date"][:10] if len(c.get("date", "")) >= 10 else ""
+        out.write(f"  {h} - {subj} ({author}, {dt})\n")
+    out.write("\n")
+    out.flush()
+
+
 def _show_router_status(ctx: ChatContext, out: TextIO) -> None:
     """Display real-time router circuit breaker and health status."""
     from avo.providers.router import BaseRouterProvider
@@ -1217,6 +1302,23 @@ async def _run_slash(
     if cmd == "/commit":
         msg = " ".join(args[1:]) if len(args) > 1 else None
         _run_workspace_commit(ctx.workspace.root, out, err, msg)
+        return False
+
+    if cmd == "/branch":
+        create_flag = False
+        target_branch = None
+        if len(args) > 1:
+            if args[1] in ("-c", "-b", "--create"):
+                create_flag = True
+                target_branch = args[2] if len(args) > 2 else None
+            else:
+                target_branch = args[1]
+        _manage_branch(ctx.workspace.root, target_branch, out, err, create=create_flag)
+        return False
+
+    if cmd == "/log":
+        count = int(args[1]) if len(args) > 1 and args[1].isdigit() else 10
+        _show_git_log(ctx.workspace.root, out, err, max_count=count)
         return False
 
     if cmd == "/bench":

@@ -17,6 +17,7 @@ import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from avo.exceptions import ToolExecutionError
 
@@ -301,6 +302,70 @@ class GitRepository:
         if rev_proc.returncode == 0 and rev_proc.stdout.strip():
             return rev_proc.stdout.strip()
         return "HEAD"
+
+    def list_branches(self) -> list[dict[str, Any]]:
+        """List local branches with the active branch indicated."""
+        if not self.is_repository():
+            raise GitError(f"{self._root} is not a git repository")
+
+        proc = _run_git(self._root, ["branch", "--no-color"])
+        if proc.returncode != 0:
+            raise GitError(f"git branch failed: {proc.stderr.strip()}")
+
+        branches: list[dict[str, Any]] = []
+        for raw_line in proc.stdout.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            is_current = line.startswith("*")
+            name = line.lstrip("*").strip()
+            branches.append({"name": name, "current": is_current})
+        return branches
+
+    def switch_branch(self, name: str, *, create: bool = False) -> None:
+        """Switch to branch ``name``, creating it if ``create`` is True."""
+        if not self.is_repository():
+            raise GitError(f"{self._root} is not a git repository")
+
+        clean_name = name.strip()
+        if not clean_name:
+            raise GitError("branch name cannot be empty")
+
+        args = ["checkout", "-b", clean_name] if create else ["checkout", clean_name]
+        proc = _run_git(self._root, args)
+        if proc.returncode != 0:
+            err_msg = proc.stderr.strip() or proc.stdout.strip()
+            raise GitError(f"git switch failed: {err_msg}")
+
+    def log(self, max_count: int = 10) -> list[dict[str, str]]:
+        """Return recent commits formatted with hash, author, subject, and date."""
+        if not self.is_repository():
+            raise GitError(f"{self._root} is not a git repository")
+
+        if max_count < 1:
+            return []
+
+        fmt = "%h%x00%an%x00%s%x00%cI"
+        proc = _run_git(
+            self._root,
+            ["log", f"-n{max_count}", f"--format={fmt}"],
+        )
+        if proc.returncode != 0:
+            return []
+
+        commits: list[dict[str, str]] = []
+        for line in proc.stdout.splitlines():
+            parts = line.split("\x00")
+            if len(parts) >= 4:
+                commits.append(
+                    {
+                        "hash": parts[0],
+                        "author": parts[1],
+                        "subject": parts[2],
+                        "date": parts[3],
+                    }
+                )
+        return commits
 
 
 def generate_commit_message_heuristic(status: GitStatus) -> str:

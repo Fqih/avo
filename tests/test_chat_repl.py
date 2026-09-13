@@ -10,6 +10,7 @@ in separate modules.
 from __future__ import annotations
 
 import io
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1380,3 +1381,66 @@ async def test_repl_symbols_command(
     stdout_empty = io.StringIO()
     await _run_slash(ctx, ["/symbols", "nonexistent.py"], stdout_empty, stderr, env)
     assert "symbols error" in stderr.getvalue()
+
+
+def test_repl_branch_and_log_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ws = chat_env["workspace"]
+    # Initialize a git repository in the workspace
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(ws), check=True)
+    (ws / "README.md").write_text("v1", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(ws), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "initial commit"], cwd=str(ws), check=True)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=ws,
+        environ=env,
+    )
+
+    # 1. /branch (list branches)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = asyncio.run(_run_slash(ctx, ["/branch"], stdout, stderr, env))
+    assert res is False
+    assert "Git Branches:" in stdout.getvalue()
+    assert "* main" in stdout.getvalue()
+
+    # 2. /branch new-feat (creates/switches to branch)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = asyncio.run(_run_slash(ctx, ["/branch", "new-feat"], stdout, stderr, env))
+    assert res is False
+    assert "branch 'new-feat'" in stdout.getvalue()
+
+    # 3. /branch -c another-feat (explicit create flag)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = asyncio.run(_run_slash(ctx, ["/branch", "-c", "another-feat"], stdout, stderr, env))
+    assert res is False
+    assert "branch 'another-feat'" in stdout.getvalue()
+
+    # 4. /log
+    (ws / "README.md").write_text("v2", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(ws), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "second commit"], cwd=str(ws), check=True)
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = asyncio.run(_run_slash(ctx, ["/log", "5"], stdout, stderr, env))
+    assert res is False
+    log_out = stdout.getvalue()
+    assert "Recent Commits" in log_out
+    assert "second commit" in log_out
+    assert "initial commit" in log_out
