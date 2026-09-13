@@ -19,11 +19,12 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from avo import __version__ as AVO_VERSION
 from avo import runtime as _runtime  # noqa: F401  (typing hook)
@@ -217,6 +218,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/bench [PROMPT]", "benchmark live routes and display speed ranking"),
     ("/clear", "clear the terminal screen"),
     ("/export [PATH]", "export current chat session to Markdown file"),
+    ("/compact [N]", "compact session context window, preserving first and last N turns"),
     ("/sessions", "list past chat sessions"),
     ("/resume [ID]", "resume a chat session (no arg = picker) or a recorded run"),
     ("/session", "show the current session id and turn count"),
@@ -704,6 +706,89 @@ def _export_session_markdown(
         err.flush()
 
 
+async def _compact_session_history(
+    ctx: ChatContext,
+    keep_last: int,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Compact chat session context by summarizing earlier turns."""
+    from pydantic import JsonValue
+
+    from avo.compact import compact_messages
+    from avo.models import ModelRequest
+
+    if keep_last < 1:
+        err.write("keep_last must be at least 1\n")
+        err.flush()
+        return
+
+    turns = ctx.session.turns(ctx.session_id)
+    if not turns:
+        out.write(f"Session {ctx.session_id} has no turns to compact.\n")
+        out.flush()
+        return
+
+    if len(turns) <= keep_last + 1:
+        out.write(
+            f"Session {ctx.session_id} has {len(turns)} turn(s); already compact "
+            f"(budget: {keep_last + 1}).\n"
+        )
+        out.flush()
+        return
+
+    out.write(f"Compacting session {ctx.session_id} ({len(turns)} turns)...\n")
+    out.flush()
+
+    messages: list[dict[str, JsonValue]] = [{"role": t.role, "content": t.content} for t in turns]
+
+    async def _summarizer(middle: list[dict[str, Any]]) -> str:
+        convo_snippet = "\n".join(f"{m.get('role')}: {m.get('content')}" for m in middle[:15])
+        prompt = (
+            "Summarize the key tasks, decisions, and technical context from these "
+            f"conversation turns in 2-4 concise bullet points:\n{convo_snippet}"
+        )
+        try:
+            req = ModelRequest(
+                run_id=f"compact-{ctx.session_id}-{int(time.time() * 1000)}",
+                step=1,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            resp = await ctx.runtime.provider.generate(req)
+            return (resp.content or "").strip()
+        except Exception:
+            return f"{len(middle)} earlier turn(s) covering: " + ", ".join(
+                str(m.get("content", ""))[:40] for m in middle[:3]
+            )
+
+    compacted = await compact_messages(
+        messages,
+        keep_last=keep_last,
+        keep_first_user=True,
+        summarize_callable=_summarizer,
+    )
+
+    preamble_lines = [
+        "You are continuing a compacted conversation. Summary of earlier context is below:",
+        "",
+    ]
+    for m in compacted:
+        role_label = (
+            "User"
+            if m.get("role") == "user"
+            else ("Assistant" if m.get("role") == "assistant" else "System")
+        )
+        preamble_lines.append(f"{role_label}: {m.get('content')}")
+
+    ctx.pending_preamble = "\n".join(preamble_lines)
+    out.write(
+        f"✓ Compacted session {ctx.session_id} from {len(turns)} turns to "
+        f"{len(compacted)} context entries (keep_last={keep_last}).\n"
+        "Summary of earlier conversation staged in active preamble for the next turn.\n"
+    )
+    out.flush()
+
+
 def _show_router_status(ctx: ChatContext, out: TextIO) -> None:
     """Display real-time router circuit breaker and health status."""
     from avo.providers.router import BaseRouterProvider
@@ -884,6 +969,11 @@ async def _run_slash(
     if cmd == "/export":
         target = args[1] if len(args) > 1 else None
         _export_session_markdown(ctx, target, out, err)
+        return False
+
+    if cmd == "/compact":
+        keep_last = int(args[1]) if len(args) > 1 and args[1].isdigit() else 6
+        await _compact_session_history(ctx, keep_last, out, err)
         return False
 
     if cmd == "/context":

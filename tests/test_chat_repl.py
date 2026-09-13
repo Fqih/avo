@@ -1197,3 +1197,72 @@ def test_repl_persona_and_instructions_commands(
     assert "Persona" in out
     assert "✓ Reset persona to default." in out
     assert "✓ Cleared workspace instructions." in out
+
+
+@pytest.mark.asyncio
+async def test_repl_compact_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash, _run_turn
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+    scripted = _ScriptedProvider(
+        [
+            ModelResponse(content="turn 1 reply"),
+            ModelResponse(content="turn 2 reply"),
+            ModelResponse(content="turn 3 reply"),
+            ModelResponse(content="Summary of earlier tasks: user requested initialization."),
+            ModelResponse(content="turn 4 reply"),
+        ]
+    )
+    ctx.runtime.provider = scripted
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    # 1. Reject invalid keep_last < 1
+    await _run_slash(ctx, ["/compact", "0"], stdout, stderr, env)
+    assert "keep_last must be at least 1" in stderr.getvalue()
+
+    # 2. Handle empty session
+    stdout_empty = io.StringIO()
+    await _run_slash(ctx, ["/compact", "2"], stdout_empty, stderr, env)
+    assert "has no turns to compact" in stdout_empty.getvalue()
+
+    # 3. Simulate 1 turn (user + assistant = 2 turns)
+    await _run_turn(ctx, "init project", stdout, stderr)
+
+    # Already compact check (2 turns <= 2 + 1)
+    stdout_small = io.StringIO()
+    await _run_slash(ctx, ["/compact", "2"], stdout_small, stderr, env)
+    assert "already compact" in stdout_small.getvalue()
+
+    # Add more turns to exceed threshold (total 3 prompts = 6 turns)
+    for prompt in ("add readme", "fix bug"):
+        await _run_turn(ctx, prompt, stdout, stderr)
+
+    # 4. Compact with keep_last=2
+    stdout_compact = io.StringIO()
+    await _run_slash(ctx, ["/compact", "2"], stdout_compact, stderr, env)
+    out_compact = stdout_compact.getvalue()
+    assert "Compacting session" in out_compact
+    assert "✓ Compacted session" in out_compact
+    assert ctx.pending_preamble is not None
+    assert "You are continuing a compacted conversation" in ctx.pending_preamble
+
+    # 5. Verify next turn consumes the preamble
+    stdout_turn = io.StringIO()
+    await _run_turn(ctx, "deploy now", stdout_turn, stderr)
+    assert ctx.pending_preamble is None
+    # Check that scripted provider saw preamble in task prompt
+    last_call = scripted.calls[-1]
+    assert "You are continuing a compacted conversation" in last_call
+    assert "deploy now" in last_call
