@@ -130,6 +130,8 @@ def test_build_chat_context_constructs_runtime_with_tools(
     assert tool_names == {
         "read_file",
         "write_file",
+        "edit_file",
+        "batch_replace",
         "grep",
         "glob",
         "symbols",

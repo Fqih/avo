@@ -11,6 +11,8 @@ The sandbox module is optional and lives behind the ``[sandbox]`` extra in
 
 from __future__ import annotations
 
+from .batch_replace import batch_replace_tool
+from .edit_file import edit_file_tool
 from .file_tools import bind_workspace, read_file_tool, write_file_tool
 from .git_commit import git_commit_tool
 from .git_diff import git_diff_tool
@@ -23,7 +25,9 @@ from .test_runner import test_runner_tool
 from .workspace_map import workspace_map_tool
 
 __all__ = [
+    "batch_replace_tool",
     "bind_workspace",
+    "edit_file_tool",
     "git_commit_tool",
     "git_diff_tool",
     "git_status_tool",

@@ -28,6 +28,8 @@ from typing import Any, TextIO
 
 from avo import __version__ as AVO_VERSION
 from avo.app_tools import (
+    batch_replace_tool,
+    edit_file_tool,
     git_commit_tool,
     git_diff_tool,
     glob_tool,
@@ -1132,6 +1134,8 @@ def build_chat_context(
         tools=[
             read_file_tool(),
             write_file_tool(),
+            edit_file_tool(),
+            batch_replace_tool(),
             grep_tool(),
             glob_tool(),
             symbols_tool(),
