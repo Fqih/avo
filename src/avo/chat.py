@@ -15,6 +15,7 @@ history and the chat thread.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shlex
 import subprocess
@@ -74,6 +75,7 @@ from avo.permissions import (
 )
 from avo.persona import PersonaManager
 from avo.providers.streaming import split_thinking
+from avo.repl_history import ReplHistoryManager
 from avo.runtime import AgentRuntime, ApprovalCallback
 from avo.skills import SkillRegistry
 from avo.storage.sqlite import SQLiteEventStore
@@ -120,6 +122,7 @@ class ChatContext:
     background: BackgroundJobManager = field(default_factory=BackgroundJobManager)
     permission_policy: PermissionPolicy = field(default_factory=PermissionPolicy)
     persona: PersonaManager = field(default_factory=PersonaManager)
+    history: ReplHistoryManager | None = None
 
 
 def _read_environ() -> dict[str, str]:
@@ -238,6 +241,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/export [PATH]", "export current chat session to Markdown file"),
     ("/compact [N]", "compact session context window, preserving first and last N turns"),
     ("/history [QUERY]", "view recent session turns or search past conversation history"),
+    ("/draft [show|save|clear]", "view, save, or discard persistent draft prompt"),
     ("/sessions", "list past chat sessions"),
     ("/resume [ID]", "resume a chat session (no arg = picker) or a recorded run"),
     ("/session", "show the current session id and turn count"),
@@ -408,6 +412,54 @@ def _manage_instructions(
     ctx.persona.set_custom_instructions(text_arg)
     out.write("✓ Updated custom workspace instructions for this session.\n")
     out.flush()
+
+
+def _manage_draft(
+    ctx: ChatContext,
+    subcommand: str | None,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """View, save, or clear persistent workspace draft prompt."""
+    if ctx.history is None:
+        err.write("draft manager is not initialized.\n")
+        return
+
+    sub = (subcommand or "show").lower()
+    if sub == "show":
+        draft = ctx.history.load_draft()
+        if not draft:
+            out.write("No saved draft prompt.\n")
+        else:
+            out.write("╭─ Saved Draft Prompt ────────────────────────────────╮\n")
+            for line in draft.splitlines():
+                out.write(f"│ {line}\n")
+            out.write("╰─────────────────────────────────────────────────────╯\n")
+            out.write("Tip: run '/draft clear' to discard.\n")
+        out.flush()
+        return
+
+    if sub == "save":
+        text = " ".join(args).strip()
+        if not text:
+            err.write("usage: /draft save PROMPT_TEXT\n")
+            return
+        ctx.history.save_draft(text)
+        out.write(f"✓ Saved draft ({len(text)} chars) to {ctx.history.draft_file.name}\n")
+        out.flush()
+        return
+
+    if sub in ("clear", "discard", "delete"):
+        cleared = ctx.history.clear_draft()
+        if cleared:
+            out.write("✓ Draft cleared.\n")
+        else:
+            out.write("No draft to clear.\n")
+        out.flush()
+        return
+
+    err.write(f"unknown draft subcommand {subcommand!r}; choose show, save, or clear\n")
 
 
 def _show_cost_breakdown(database_path: Path, out: TextIO) -> None:
@@ -1385,6 +1437,7 @@ def build_chat_context(
     skills = SkillRegistry(skills_root)
     session = SessionLifecycle.open(db_path)
     persona_mgr = PersonaManager(workspace_root=workspace.root)
+    history_mgr = ReplHistoryManager(workspace_root=workspace.root)
     if force_new_session or session_id is None:
         return ChatContext(
             runtime=runtime,
@@ -1397,6 +1450,7 @@ def build_chat_context(
             session_id=_new_session_id(),
             permission_policy=resolved_policy,
             persona=persona_mgr,
+            history=history_mgr,
         )
     if not session.session_exists(session_id):
         session.close()
@@ -1414,6 +1468,7 @@ def build_chat_context(
         pending_preamble=preamble,
         permission_policy=resolved_policy,
         persona=persona_mgr,
+        history=history_mgr,
     )
 
 
@@ -1467,6 +1522,12 @@ async def _run_slash(
 
     if cmd == "/history":
         _show_chat_history(ctx, args[1:], out)
+        return False
+
+    if cmd == "/draft":
+        sub = args[1] if len(args) > 1 else None
+        sub_args = args[2:] if len(args) > 2 else []
+        _manage_draft(ctx, sub, sub_args, out, err)
         return False
 
     if cmd == "/context":
@@ -2027,12 +2088,36 @@ async def run_repl(
     out_stream.write("\n")
     out_stream.flush()
 
+    is_interactive = (
+        (stdin is None or stdin is sys.stdin)
+        and hasattr(in_stream, "isatty")
+        and in_stream.isatty()
+    )
+    if ctx.history is not None:
+        slash_names = [cmd_tuple[0].split()[0] for cmd_tuple in SLASH_COMMANDS]
+        aliases = ["/search", "/tree", "/perm", "/prompt", "/exit"]
+        ctx.history.setup(commands=[*slash_names, *aliases])
+        draft = ctx.history.load_draft()
+        if draft:
+            draft_snippet = draft.splitlines()[0]
+            if len(draft_snippet) > 50:
+                draft_snippet = draft_snippet[:47] + "..."
+            out_stream.write(f"💡 Saved draft found: {draft_snippet!r} (type /draft to view)\n\n")
+            out_stream.flush()
+
     try:
         while True:
             try:
-                out_stream.write(_prompt_with_jobs(prompt, ctx.background))
-                out_stream.flush()
-                line = in_stream.readline()
+                prompt_text = _prompt_with_jobs(prompt, ctx.background)
+                if is_interactive:
+                    try:
+                        line = await asyncio.to_thread(input, prompt_text) + "\n"
+                    except EOFError:
+                        line = ""
+                else:
+                    out_stream.write(prompt_text)
+                    out_stream.flush()
+                    line = in_stream.readline()
             except KeyboardInterrupt:
                 out_stream.write("\n(interrupted - type /quit or Ctrl+D to exit)\n")
                 out_stream.flush()
@@ -2040,10 +2125,15 @@ async def run_repl(
 
             if not line:
                 out_stream.write("\n")
+                if ctx.history is not None:
+                    ctx.history.save_history()
                 return 0
             stripped = line.strip()
             if not stripped:
                 continue
+
+            if ctx.history is not None:
+                ctx.history.append_history(stripped)
 
             if stripped.startswith("!"):
                 cmd_text = stripped[1:].strip()
@@ -2076,7 +2166,11 @@ async def run_repl(
                 continue
 
             await _run_turn(ctx, stripped, out_stream, err_stream)
+            if ctx.history is not None and stripped == ctx.history.load_draft():
+                ctx.history.clear_draft()
     finally:
+        if ctx.history is not None:
+            ctx.history.save_history()
         await ctx.background.wait_all()
         await ctx.store.close()
         ctx.session.close()

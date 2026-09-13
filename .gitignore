@@ -232,3 +232,7 @@ NEXT-UPDATE.md
 
 # mkdocs build output
 /site/
+
+# Local Avo REPL history and drafts
+.avo/history*
+.avo/draft*

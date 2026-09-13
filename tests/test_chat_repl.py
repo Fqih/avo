@@ -1638,3 +1638,86 @@ async def test_repl_persona_custom_add(
     await _run_slash(ctx, ["/persona"], stdout_list, stderr, env)
     assert "security" in stdout_list.getvalue()
     assert "(active)" in stdout_list.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_repl_draft_slash(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    # 1. /draft with no draft
+    res = await _run_slash(ctx, ["/draft"], stdout, stderr, env)
+    assert res is False
+    assert "No saved draft prompt" in stdout.getvalue()
+
+    # 2. /draft save my WIP task
+    stdout_save = io.StringIO()
+    res = await _run_slash(
+        ctx,
+        ["/draft", "save", "Implement", "new", "feature"],
+        stdout_save,
+        stderr,
+        env,
+    )
+    assert res is False
+    assert "Saved draft" in stdout_save.getvalue()
+    assert ctx.history is not None
+    assert ctx.history.load_draft() == "Implement new feature"
+
+    # 3. /draft show
+    stdout_show = io.StringIO()
+    res = await _run_slash(ctx, ["/draft", "show"], stdout_show, stderr, env)
+    assert res is False
+    assert "Saved Draft Prompt" in stdout_show.getvalue()
+    assert "Implement new feature" in stdout_show.getvalue()
+
+    # 4. /draft clear
+    stdout_clear = io.StringIO()
+    res = await _run_slash(ctx, ["/draft", "clear"], stdout_clear, stderr, env)
+    assert res is False
+    assert "Draft cleared" in stdout_clear.getvalue()
+    assert ctx.history.load_draft() is None
+
+
+@pytest.mark.asyncio
+async def test_run_repl_records_history(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    stdin = io.StringIO("/draft save initial thought\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ=env,
+        force_new_session=True,
+    )
+    assert code == 0
+
+    history_file = chat_env["workspace"] / ".avo" / "history"
+    draft_file = chat_env["workspace"] / ".avo" / "draft.txt"
+    assert history_file.exists()
+    assert draft_file.exists()
+    assert "initial thought" in draft_file.read_text(encoding="utf-8")

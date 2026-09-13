@@ -110,6 +110,8 @@ def _parse_porcelain(output: str) -> tuple[GitStatusEntry, ...]:
         # Renames print "R  old -> new"; keep just the new name.
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
+        if path == ".avo" or path.startswith((".avo/", ".avo\\")):
+            continue
         entries.append(GitStatusEntry(path=path, status_code=code))
     return tuple(entries)
 
@@ -235,7 +237,7 @@ class GitRepository:
             _run_git(self._root, ["restore", "."])
 
         if untracked and status.untracked:
-            _run_git(self._root, ["clean", "-fd"])
+            _run_git(self._root, ["clean", "-fd", "-e", ".avo"])
 
         return affected
 
