@@ -193,6 +193,51 @@ class SessionLifecycle:
                 break
         return "\n".join(lines)
 
+    def export_markdown(
+        self,
+        session_id: str,
+        *,
+        title: str | None = None,
+    ) -> str:
+        """Render the complete conversation for ``session_id`` as Markdown."""
+        turns = self._store.turns(session_id)
+        header_title = title or f"Avo Chat Session: {session_id}"
+        lines: list[str] = [
+            f"# {header_title}\n",
+            f"- **Session ID:** `{session_id}`",
+            f"- **Total Turns:** {len(turns)}",
+        ]
+        if turns:
+            lines.append(
+                f"- **Started At:** {turns[0].created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+            )
+            lines.append(
+                f"- **Last Activity:** {turns[-1].created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+            )
+        lines.extend(["\n---\n"])
+
+        for index, turn in enumerate(turns, start=1):
+            role_emoji = "👤" if turn.role == "user" else "🤖"
+            role_title = turn.role.capitalize()
+            time_str = turn.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+            lines.append(f"### {role_emoji} {role_title} (Turn {index} • {time_str})\n")
+
+            if turn.metadata:
+                meta_items: list[str] = []
+                if "run_id" in turn.metadata:
+                    meta_items.append(f"Run ID: `{turn.metadata['run_id']}`")
+                if "status" in turn.metadata:
+                    meta_items.append(f"Status: `{turn.metadata['status']}`")
+                if "stop_reason" in turn.metadata:
+                    meta_items.append(f"Stop Reason: `{turn.metadata['stop_reason']}`")
+                if meta_items:
+                    lines.append(f"*{' • '.join(meta_items)}*\n")
+
+            lines.append(turn.content)
+            lines.append("\n---\n")
+
+        return "\n".join(lines).strip() + "\n"
+
 
 def _summarise(session_id: str, turns: Iterable[ConversationTurn]) -> SessionInfo:
     ordered = list(turns)

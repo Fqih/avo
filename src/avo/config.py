@@ -114,6 +114,11 @@ def _lookup_catalog(provider_name: str) -> tuple[str, ...]:
     return PROVIDER_MODELS.get(key, ())
 
 
+def supported_providers() -> tuple[str, ...]:
+    """Return every supported provider name."""
+    return tuple(_PROVIDER_NAMES)
+
+
 def default_model(provider_name: str) -> str:
     """Return the catalog's recommended default for ``provider_name``."""
 
@@ -374,4 +379,5 @@ __all__ = [
     "database_path_from_env",
     "default_model",
     "is_known_model",
+    "supported_providers",
 ]

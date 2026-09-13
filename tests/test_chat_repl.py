@@ -870,3 +870,115 @@ async def test_repl_diff_command_clean_or_non_git(
         or "clean" in combined.lower()
         or "git status" in combined.lower()
     )
+
+
+def test_session_export_markdown(tmp_path: Path) -> None:
+    from avo.chat_session import SessionLifecycle
+
+    db = tmp_path / "test_export.db"
+    session = SessionLifecycle.open(db)
+    session.record_user_turn("sess-1", "Write a fibonacci function")
+    session.record_assistant_turn(
+        "sess-1",
+        "```python\ndef fib(n):\n    return n\n```",
+        run_id="run-fib-1",
+        status="completed",
+        stop_reason="stop",
+    )
+
+    md = session.export_markdown("sess-1")
+    assert "# Avo Chat Session" in md
+    assert "sess-1" in md
+    assert "👤 User" in md
+    assert "Write a fibonacci function" in md
+    assert "🤖 Assistant" in md
+    assert "def fib(n):" in md
+    assert "run-fib-1" in md
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_repl_export_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _environ_with_ollama(model="llama3.1")
+    monkeypatch.setattr("os.environ", env)
+
+    from avo.chat_session import SessionLifecycle
+
+    session = SessionLifecycle.open(chat_env["db"])
+    session.record_user_turn("test-export-sess", "Hello world")
+    session.close()
+
+    stdin = io.StringIO("/export\n/export custom_export.md\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ=env,
+        session_id="test-export-sess",
+    )
+    assert code == 0
+    out = stdout.getvalue()
+    assert "Exported session test-export-sess" in out
+    assert "custom_export.md" in out
+
+    custom_path = chat_env["workspace"] / "custom_export.md"
+    assert custom_path.is_file()
+    assert "Hello world" in custom_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_repl_router_status_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _environ_with_ollama(model="llama3.1")
+    monkeypatch.setattr("os.environ", env)
+
+    stdin = io.StringIO("/router\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ=env,
+    )
+    assert code == 0
+    out = stdout.getvalue()
+    assert "Router is not active" in out
+
+
+@pytest.mark.asyncio
+async def test_repl_model_provider_switching(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _environ_with_ollama(model="llama3.1")
+    monkeypatch.setattr("os.environ", env)
+
+    stdin = io.StringIO("/model ollama/qwen2.5-coder\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ=env,
+    )
+    assert code == 0
+    out = stdout.getvalue()
+    assert "Switched to provider 'ollama' and model 'qwen2.5-coder'" in out

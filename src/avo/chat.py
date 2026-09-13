@@ -51,6 +51,7 @@ from avo.config import (
     build_provider_from_env,
     default_model,
     is_known_model,
+    supported_providers,
 )
 from avo.exceptions import AvoError
 from avo.runtime import AgentRuntime
@@ -190,10 +191,12 @@ def _print_header(
 SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/help", "show this command list"),
     ("/provider", "show provider/model/API-key status"),
-    ("/model [NAME]", "list known models, or switch to NAME"),
+    ("/router", "show multi-provider fallback router live status"),
+    ("/model [NAME]", "list known models, or switch to NAME or PROVIDER/MODEL"),
     ("/context", "display full context snapshot (session, model, workspace, skills)"),
     ("/diff", "show git status and diff summary in active workspace"),
     ("/clear", "clear the terminal screen"),
+    ("/export [PATH]", "export current chat session to Markdown file"),
     ("/sessions", "list past chat sessions"),
     ("/resume [ID]", "resume a chat session (no arg = picker) or a recorded run"),
     ("/session", "show the current session id and turn count"),
@@ -324,6 +327,86 @@ def _clear_screen(out: TextIO) -> None:
     out.flush()
 
 
+def _export_session_markdown(
+    ctx: ChatContext,
+    target_path_str: str | None,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Export the current session thread to a markdown file."""
+    turns = ctx.session.turns(ctx.session_id)
+    if not turns:
+        err.write(f"Session {ctx.session_id!r} has no turns to export.\n")
+        return
+
+    if target_path_str:
+        target = Path(target_path_str)
+        if not target.is_absolute():
+            target = ctx.workspace.root / target
+    else:
+        target = ctx.workspace.root / f"avo-session-{ctx.session_id}.md"
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        content = ctx.session.export_markdown(
+            ctx.session_id,
+            title=f"Avo Chat Session ({ctx.session_id})",
+        )
+        target.write_text(content, encoding="utf-8")
+        out.write(
+            f"Exported session {ctx.session_id} ({len(turns)} turns) to: {target.resolve()}\n"
+        )
+        out.flush()
+    except Exception as exc:
+        err.write(f"Failed to export session: {exc}\n")
+        err.flush()
+
+
+def _show_router_status(ctx: ChatContext, out: TextIO) -> None:
+    """Display real-time router circuit breaker and health status."""
+    from avo.providers.router import FallbackRouterProvider
+
+    provider = ctx.runtime.provider
+    if not isinstance(provider, FallbackRouterProvider):
+        out.write(
+            f"Router is not active (current provider: {ctx.provider_name!r}).\n"
+            "To use multi-provider fallback routing, start with:\n"
+            "  AVO_PROVIDER=router avo chat\n"
+        )
+        out.flush()
+        return
+
+    status = provider.get_health_status()
+    routes = provider.routes
+    out.write(
+        f"Multi-Provider Fallback Router Status (cooldown: {provider.cooldown_seconds}s):\n\n"
+    )
+    col_hdr = (
+        f"  {'Route':<12} {'Role':<8} {'Status':<9} {'Cooldown':<8} {'Latency':<8} {'Fails':<5}\n"
+    )
+    col_div = f"  {'-' * 12} {'-' * 8} {'-' * 9} {'-' * 8} {'-' * 8} {'-' * 5}\n"
+    out.write(col_hdr)
+    out.write(col_div)
+    for i, (name, _) in enumerate(routes):
+        role = "Primary" if i == 0 else "Fallback"
+        info = status.get(name, {})
+        healthy = info.get("healthy", True)
+        in_cooling = info.get("in_cooldown", False)
+        status_label = "COOLING" if in_cooling else ("HEALTHY" if healthy else "UNHEALTHY")
+        cooldown_rem = f"{info.get('cooldown_remaining_seconds', 0.0)}s" if in_cooling else "0s"
+        latency_val = info.get("last_latency_ms")
+        latency_str = f"{latency_val:.1f}ms" if latency_val is not None else "-"
+        fails = str(info.get("consecutive_failures", 0))
+
+        row = (
+            f"  {name:<12} {role:<8} {status_label:<9} "
+            f"{cooldown_rem:<8} {latency_str:<8} {fails:<5}\n"
+        )
+        out.write(row)
+    out.write("\n")
+    out.flush()
+
+
 def build_chat_context(
     *,
     database_path: Path,
@@ -420,6 +503,15 @@ async def _run_slash(
 
     if cmd == "/provider":
         _print_provider_summary(out, ctx, environ)
+        return False
+
+    if cmd == "/router":
+        _show_router_status(ctx, out)
+        return False
+
+    if cmd == "/export":
+        target = args[1] if len(args) > 1 else None
+        _export_session_markdown(ctx, target, out, err)
         return False
 
     if cmd == "/context":
@@ -609,8 +701,35 @@ async def _run_model_command(
     if len(args) == 2:
         target = args[1].strip()
         if not target:
-            err.write("usage: /model NAME\n")
+            err.write("usage: /model [NAME|PROVIDER/MODEL]\n")
             return False
+
+        if "/" in target:
+            new_prov, new_mod = target.split("/", 1)
+            new_prov = new_prov.strip().lower()
+            new_mod = new_mod.strip()
+            if new_prov not in supported_providers():
+                supported_list = ", ".join(supported_providers())
+                err.write(f"unknown provider {new_prov!r}. Supported: {supported_list}\n")
+                return False
+            environ["AVO_PROVIDER"] = new_prov
+            environ["AVO_MODEL"] = new_mod
+            os.environ["AVO_PROVIDER"] = new_prov
+            os.environ["AVO_MODEL"] = new_mod
+            try:
+                ctx.runtime.provider = build_provider_from_env(environ)
+            except Exception as exc:
+                err.write(f"provider switch failed: {exc}\n")
+                return False
+            ctx.provider_name = new_prov
+            ctx.model_name = new_mod
+            out.write(
+                f"Switched to provider {new_prov!r} and model {new_mod!r}. "
+                f"Next turn will use the new model.\n"
+            )
+            out.flush()
+            return False
+
         if not is_known_model(provider_name, target):
             err.write(
                 f"{target!r} is not in the {provider_name!r} catalog. "
