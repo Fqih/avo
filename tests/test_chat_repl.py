@@ -789,3 +789,84 @@ async def test_repl_model_command_usage_error_when_too_many_args(
     )
     assert code == 0
     assert "usage: /model" in stderr.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_repl_context_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _environ_with_ollama(model="llama3.1")
+    monkeypatch.setattr("os.environ", env)
+
+    stdin = io.StringIO("/context\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ=env,
+    )
+    assert code == 0
+    out = stdout.getvalue()
+    assert "Active Context" in out
+    assert "Provider" in out
+    assert "ollama" in out
+
+
+@pytest.mark.asyncio
+async def test_repl_clear_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _environ_with_ollama(model="llama3.1")
+    monkeypatch.setattr("os.environ", env)
+
+    stdin = io.StringIO("/clear\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ=env,
+    )
+    assert code == 0
+    assert "\033[2J\033[H" in stdout.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_repl_diff_command_clean_or_non_git(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _environ_with_ollama(model="llama3.1")
+    monkeypatch.setattr("os.environ", env)
+
+    stdin = io.StringIO("/diff\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ=env,
+    )
+    assert code == 0
+    combined = stdout.getvalue() + stderr.getvalue()
+    # Workspace is either non-git or clean
+    assert (
+        "not a git repository" in combined
+        or "clean" in combined.lower()
+        or "git status" in combined.lower()
+    )

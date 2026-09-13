@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
+import subprocess
 import sys
 import uuid
 from collections.abc import Callable
@@ -189,6 +191,9 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/help", "show this command list"),
     ("/provider", "show provider/model/API-key status"),
     ("/model [NAME]", "list known models, or switch to NAME"),
+    ("/context", "display full context snapshot (session, model, workspace, skills)"),
+    ("/diff", "show git status and diff summary in active workspace"),
+    ("/clear", "clear the terminal screen"),
     ("/sessions", "list past chat sessions"),
     ("/resume [ID]", "resume a chat session (no arg = picker) or a recorded run"),
     ("/session", "show the current session id and turn count"),
@@ -220,10 +225,102 @@ def _print_provider_summary(out: TextIO, ctx: ChatContext, environ: dict[str, st
 
     out.write(f"Provider: {ctx.provider_name}\n")
     out.write(f"Model: {ctx.model_name}\n")
+    if ctx.provider_name == "router":
+        chain = environ.get("AVO_ROUTER_PROVIDERS", "ollama,openrouter")
+        models = environ.get("AVO_ROUTER_MODELS", "default")
+        out.write(f"Router Fallback Chain: {chain}\n")
+        out.write(f"Router Models Chain:   {models}\n")
     base_url = environ.get(f"AVO_{ctx.provider_name.upper()}_BASE_URL", "") or "(default)"
     out.write(f"Base URL: {base_url}\n")
-    has_key = bool(environ.get(f"AVO_{ctx.provider_name.upper()}_API_KEY", "").strip())
+    has_key = bool(
+        environ.get(f"AVO_{ctx.provider_name.upper()}_API_KEY", "").strip()
+        or (ctx.provider_name == "openrouter" and environ.get("OPENROUTER_API_KEY", "").strip())
+    )
     out.write(f"API key configured: {'yes' if has_key else 'no'}\n")
+    out.flush()
+
+
+def _print_active_context(out: TextIO, ctx: ChatContext, environ: dict[str, str]) -> None:
+    """Render a comprehensive snapshot of the active chat context."""
+
+    turns = ctx.session.turns(ctx.session_id)
+    skills_list = ctx.skills.names()
+    running_jobs = ctx.background.running_count
+
+    rows: list[tuple[str, str]] = [
+        ("Session ID", ctx.session_id),
+        ("Turn Count", f"{len(turns)} turn(s) recorded"),
+        ("Provider", ctx.provider_name),
+        ("Model", ctx.model_name),
+        ("Workspace", str(ctx.workspace.root)),
+        (
+            "Skills Active",
+            f"{len(skills_list)} installed ({', '.join(skills_list[:3])})"
+            if skills_list
+            else "none",
+        ),
+        ("Background Jobs", f"{running_jobs} active running"),
+    ]
+
+    label_w = max(len(k) for k, _ in rows)
+    out.write("\n╭─ Active Context ────────────────────────────────────────╮\n")
+    for k, v in rows:
+        out.write(f"│ {k.ljust(label_w)} : {v}\n")
+    out.write("╰─────────────────────────────────────────────────────────╯\n")
+    out.flush()
+
+
+def _show_diff_summary(workspace_root: Path, out: TextIO, err: TextIO) -> None:
+    """Render workspace git status and diff summary without leaving the REPL."""
+
+    if not shutil.which("git"):
+        err.write("git command not found on system PATH.\n")
+        return
+
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(workspace_root), "status", "--short"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if proc.returncode != 0:
+            err.write(f"workspace {workspace_root} is not a git repository or git failed.\n")
+            return
+
+        status_output = proc.stdout.strip()
+        if not status_output:
+            out.write("Working tree clean (no modified or staged files).\n")
+            return
+
+        out.write(f"Workspace git status ({workspace_root}):\n")
+        lines = status_output.splitlines()
+        for line in lines[:20]:
+            out.write(f"  {line}\n")
+        if len(lines) > 20:
+            out.write(f"  ... and {len(lines) - 20} more file(s)\n")
+
+        diff_proc = subprocess.run(
+            ["git", "-C", str(workspace_root), "diff", "--stat"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if diff_proc.returncode == 0 and diff_proc.stdout.strip():
+            out.write("\nDiff stat:\n")
+            for diff_line in diff_proc.stdout.strip().splitlines():
+                out.write(f"  {diff_line}\n")
+        out.flush()
+    except Exception as exc:
+        err.write(f"could not inspect git status: {exc}\n")
+
+
+def _clear_screen(out: TextIO) -> None:
+    """Clear the terminal screen and reset cursor."""
+
+    out.write("\033[2J\033[H")
     out.flush()
 
 
@@ -323,6 +420,18 @@ async def _run_slash(
 
     if cmd == "/provider":
         _print_provider_summary(out, ctx, environ)
+        return False
+
+    if cmd == "/context":
+        _print_active_context(out, ctx, environ)
+        return False
+
+    if cmd == "/diff":
+        _show_diff_summary(ctx.workspace.root, out, err)
+        return False
+
+    if cmd == "/clear":
+        _clear_screen(out)
         return False
 
     if cmd == "/model":
