@@ -49,6 +49,7 @@
       <button onclick="switchTab('overview')" id="tab-overview" class="py-3 border-b-2 border-indigo-500 text-indigo-400 font-semibold transition">Overview</button>
       <button onclick="switchTab('chat')" id="tab-chat" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Live Chat</button>
       <button onclick="switchTab('git')" id="tab-git" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Git &amp; Changes</button>
+      <button onclick="switchTab('workspace')" id="tab-workspace" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Workspace Files</button>
       <button onclick="switchTab('runs')" id="tab-runs" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Runs Explorer</button>
       <button onclick="switchTab('sessions')" id="tab-sessions" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Chat Sessions</button>
       <button onclick="switchTab('router')" id="tab-router" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Router &amp; Credentials</button>
@@ -282,6 +283,69 @@
           <div id="gitDiffContainer" class="p-4 flex-1 overflow-auto max-h-[750px] font-mono text-xs leading-5">
             <p class="text-gray-500 italic">No uncommitted changes detected.</p>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WORKSPACE FILE EXPLORER & EDITOR TAB -->
+    <div id="view-workspace" class="hidden h-[calc(100vh-13rem)] flex gap-4">
+      <!-- Left: File Tree Explorer (320px) -->
+      <div class="w-80 glass rounded-xl border border-gray-800 flex flex-col p-3.5 space-y-3 shrink-0">
+        <div class="flex justify-between items-center pb-2 border-b border-gray-800/80">
+          <div class="truncate mr-2">
+            <div class="flex items-center gap-1.5">
+              <span class="text-sm">📁</span>
+              <h3 id="workspaceRootName" class="text-xs font-bold text-white truncate">Workspace</h3>
+            </div>
+            <p id="workspaceRootSubtext" class="text-[10px] text-gray-400 truncate mt-0.5">Loading tree...</p>
+          </div>
+          <button onclick="refreshWorkspaceTree()" title="Refresh Tree" class="p-1.5 text-xs text-gray-400 hover:text-white bg-gray-900 border border-gray-800 hover:border-gray-700 rounded-lg transition">
+            ↻
+          </button>
+        </div>
+
+        <!-- Filter / Search box -->
+        <div class="relative">
+          <input type="text" id="workspaceSearchInput" oninput="filterWorkspaceTree()" placeholder="Filter files (e.g. .py, test)..." class="w-full bg-gray-900 border border-gray-800 text-xs text-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500 font-mono text-[11px]">
+        </div>
+
+        <!-- Scrollable Tree Container -->
+        <div id="workspaceTreeContainer" class="flex-1 overflow-y-auto space-y-0.5 text-xs font-mono pr-1 select-none">
+          <div class="text-xs text-gray-500 italic p-2">Loading workspace files...</div>
+        </div>
+      </div>
+
+      <!-- Right: Live Code Viewer & Editor (flex-1) -->
+      <div class="flex-1 glass rounded-xl border border-gray-800 flex flex-col overflow-hidden">
+        <!-- Editor Header -->
+        <div class="px-5 py-3 border-b border-gray-800 bg-gray-950/50 flex justify-between items-center">
+          <div class="flex items-center gap-2.5 truncate mr-4">
+            <span id="editorFileIcon" class="text-sm">📄</span>
+            <div class="truncate">
+              <span id="editorActiveFilePath" class="font-mono text-xs font-bold text-white truncate">No file selected</span>
+              <span id="editorFileMeta" class="text-[10px] text-gray-400 ml-2"></span>
+            </div>
+            <span id="editorDirtyBadge" class="hidden px-1.5 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800 font-mono">Unsaved</span>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <span id="editorSaveFeedback" class="hidden text-xs font-mono"></span>
+            <button id="editorRevertBtn" onclick="revertWorkspaceFile()" class="hidden px-2.5 py-1 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-700 transition">Revert</button>
+            <button id="editorSaveBtn" onclick="saveWorkspaceFile()" class="hidden px-3.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
+              <span>💾 Save</span>
+              <span class="text-[10px] text-indigo-200 opacity-80">(Ctrl+S)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Editor Body -->
+        <div id="editorPlaceholder" class="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-500 space-y-3">
+          <div class="w-12 h-12 rounded-2xl bg-gray-900 border border-gray-800 flex items-center justify-center text-2xl text-gray-400">📂</div>
+          <h4 class="text-sm font-semibold text-gray-300">No File Selected</h4>
+          <p class="text-xs text-gray-500 max-w-sm">Click on any file in the workspace tree on the left to inspect its contents and make direct edits.</p>
+        </div>
+
+        <div id="editorWorkspaceArea" class="hidden flex-1 flex flex-col overflow-hidden relative">
+          <textarea id="editorTextarea" oninput="onEditorContentChange()" onkeydown="handleEditorKeyDown(event)" spellcheck="false" class="flex-1 w-full bg-gray-950/80 p-4 text-xs font-mono text-gray-200 leading-relaxed resize-none focus:outline-none focus:ring-0 border-none select-text overflow-auto"></textarea>
         </div>
       </div>
     </div>
@@ -548,7 +612,18 @@
   </div>
 
   <script>
-    let state = { overview: null, runs: [], sessions: [], activeSessionId: null, isGenerating: false, git: null, router: null };
+    let state = {
+      overview: null,
+      runs: [],
+      sessions: [],
+      activeSessionId: null,
+      isGenerating: false,
+      git: null,
+      router: null,
+      workspaceTree: null,
+      currentFile: null,
+      currentFileOriginalContent: null
+    };
 
     async function fetchJson(url) {
       const res = await fetch(url);
@@ -1035,7 +1110,7 @@
     }
 
     function switchTab(tabId) {
-      ['overview', 'chat', 'git', 'runs', 'sessions', 'router'].forEach(t => {
+      ['overview', 'chat', 'git', 'workspace', 'runs', 'sessions', 'router'].forEach(t => {
         const el = document.getElementById('view-' + t);
         const tab = document.getElementById('tab-' + t);
         if (el) el.classList.add('hidden');
@@ -1052,6 +1127,203 @@
         } else {
           startNewChatSession();
         }
+      }
+
+      if (tabId === 'workspace' && !state.workspaceTree) {
+        refreshWorkspaceTree();
+      }
+    }
+
+    async function refreshWorkspaceTree() {
+      const subtext = document.getElementById('workspaceRootSubtext');
+      if (subtext) subtext.innerText = 'Scanning files...';
+      try {
+        const data = await fetchJson('/api/workspace/tree');
+        state.workspaceTree = data;
+        const rootName = document.getElementById('workspaceRootName');
+        if (rootName) rootName.innerText = data.workspace_name || 'Workspace';
+        if (subtext) subtext.innerText = `${data.total_entries || 0} entries`;
+        renderWorkspaceTree();
+      } catch (err) {
+        if (subtext) subtext.innerText = 'Failed to load tree';
+        console.error('Failed to load workspace tree', err);
+      }
+    }
+
+    function renderWorkspaceTree() {
+      const container = document.getElementById('workspaceTreeContainer');
+      if (!container || !state.workspaceTree) return;
+      const tree = state.workspaceTree.tree || [];
+      if (!tree.length) {
+        container.innerHTML = '<p class="text-gray-500 italic p-2">Workspace is empty.</p>';
+        return;
+      }
+      container.innerHTML = renderTreeNodes(tree);
+    }
+
+    function renderTreeNodes(nodes, depth = 0) {
+      if (!nodes || !nodes.length) return '';
+      return nodes.map(node => {
+        if (node.type === 'directory') {
+          const childHtml = renderTreeNodes(node.children || [], depth + 1);
+          return `
+            <details open class="group">
+              <summary class="cursor-pointer list-none flex items-center justify-between px-1.5 py-1 rounded hover:bg-gray-900/70 text-gray-300 hover:text-white transition">
+                <div class="flex items-center gap-1.5 truncate">
+                  <span class="text-indigo-400 group-open:hidden text-[10px]">▶</span>
+                  <span class="text-indigo-400 hidden group-open:inline text-[10px]">▼</span>
+                  <span class="text-[12px]">📁</span>
+                  <span class="font-semibold truncate text-[11px]">${escapeHtml(node.name)}</span>
+                </div>
+                <span class="text-[10px] text-gray-500 opacity-60 font-mono">${(node.children || []).length}</span>
+              </summary>
+              <div class="pl-3.5 border-l border-gray-800/80 space-y-0.5 mt-0.5">
+                ${childHtml}
+              </div>
+            </details>
+          `;
+        } else {
+          const isActive = state.currentFile && state.currentFile.path === node.path;
+          const bgClass = isActive
+            ? 'bg-indigo-950/80 text-indigo-300 font-bold border-l-2 border-indigo-500 pl-1'
+            : 'text-gray-400 hover:text-gray-200 hover:bg-gray-900/60';
+          const sizeStr = node.size != null ? `${(node.size / 1024).toFixed(1)}K` : '';
+          return `
+            <div data-file-path="${escapeHtml(node.path)}" onclick="openWorkspaceFile('${escapeHtml(node.path)}')" class="tree-file-item cursor-pointer flex items-center justify-between px-1.5 py-1 rounded transition text-[11px] ${bgClass} group">
+              <div class="flex items-center gap-1.5 truncate mr-1">
+                <span class="text-[11px]">📄</span>
+                <span class="truncate">${escapeHtml(node.name)}</span>
+              </div>
+              <span class="text-[9px] text-gray-600 group-hover:text-gray-400 shrink-0 font-mono">${sizeStr}</span>
+            </div>
+          `;
+        }
+      }).join('');
+    }
+
+    function filterWorkspaceTree() {
+      const q = (document.getElementById('workspaceSearchInput').value || '').toLowerCase().trim();
+      const fileItems = document.querySelectorAll('.tree-file-item');
+      fileItems.forEach(item => {
+        const path = (item.getAttribute('data-file-path') || '').toLowerCase();
+        if (!q || path.includes(q)) {
+          item.style.display = '';
+        } else {
+          item.style.display = 'none';
+        }
+      });
+    }
+
+    async function openWorkspaceFile(filePath) {
+      try {
+        const data = await fetchJson('/api/workspace/file?path=' + encodeURIComponent(filePath));
+        if (data.error) {
+          alert('Could not open file: ' + data.error);
+          return;
+        }
+        state.currentFile = data;
+        state.currentFileOriginalContent = data.content;
+
+        document.getElementById('editorActiveFilePath').innerText = data.path;
+        document.getElementById('editorActiveFilePath').title = data.path;
+        document.getElementById('editorFileMeta').innerText = `${data.line_count} lines • ${(data.size / 1024).toFixed(1)} KB`;
+        document.getElementById('editorPlaceholder').classList.add('hidden');
+        document.getElementById('editorWorkspaceArea').classList.remove('hidden');
+        document.getElementById('editorSaveBtn').classList.remove('hidden');
+        document.getElementById('editorRevertBtn').classList.remove('hidden');
+        document.getElementById('editorDirtyBadge').classList.add('hidden');
+
+        const ta = document.getElementById('editorTextarea');
+        ta.value = data.content;
+        renderWorkspaceTree();
+      } catch (err) {
+        alert('Failed to load file: ' + err.message);
+      }
+    }
+
+    function onEditorContentChange() {
+      const ta = document.getElementById('editorTextarea');
+      const isDirty = ta.value !== state.currentFileOriginalContent;
+      const dirtyBadge = document.getElementById('editorDirtyBadge');
+      if (dirtyBadge) {
+        if (isDirty) {
+          dirtyBadge.classList.remove('hidden');
+        } else {
+          dirtyBadge.classList.add('hidden');
+        }
+      }
+    }
+
+    function revertWorkspaceFile() {
+      if (state.currentFileOriginalContent == null) return;
+      const ta = document.getElementById('editorTextarea');
+      ta.value = state.currentFileOriginalContent;
+      onEditorContentChange();
+    }
+
+    async function saveWorkspaceFile() {
+      if (!state.currentFile) return;
+      const ta = document.getElementById('editorTextarea');
+      const content = ta.value;
+      const saveBtn = document.getElementById('editorSaveBtn');
+      const feedback = document.getElementById('editorSaveFeedback');
+
+      if (saveBtn) saveBtn.disabled = true;
+      if (feedback) {
+        feedback.innerText = 'Saving...';
+        feedback.className = 'text-xs font-mono text-gray-400';
+        feedback.classList.remove('hidden');
+      }
+
+      try {
+        const res = await fetch('/api/workspace/file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: state.currentFile.path, content })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          state.currentFileOriginalContent = content;
+          state.currentFile.size = data.size;
+          state.currentFile.line_count = data.line_count;
+          document.getElementById('editorFileMeta').innerText = `${data.line_count} lines • ${(data.size / 1024).toFixed(1)} KB`;
+          onEditorContentChange();
+          if (feedback) {
+            feedback.innerText = '✓ Saved';
+            feedback.className = 'text-xs font-mono text-emerald-400';
+            setTimeout(() => feedback.classList.add('hidden'), 2500);
+          }
+          refreshGit();
+        } else {
+          if (feedback) {
+            feedback.innerText = 'Error: ' + (data.error || 'save failed');
+            feedback.className = 'text-xs font-mono text-rose-400';
+          }
+        }
+      } catch (err) {
+        if (feedback) {
+          feedback.innerText = 'Network error: ' + err.message;
+          feedback.className = 'text-xs font-mono text-rose-400';
+        }
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    }
+
+    function handleEditorKeyDown(event) {
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        const ta = event.target;
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        ta.value = ta.value.substring(0, start) + '    ' + ta.value.substring(end);
+        ta.selectionStart = ta.selectionEnd = start + 4;
+        onEditorContentChange();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        saveWorkspaceFile();
       }
     }
 

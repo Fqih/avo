@@ -214,6 +214,32 @@ class AvoWebHandler(BaseHTTPRequestHandler):
             self._send_json(report_to_dict(cost_report))
             return
 
+        if path == "/api/workspace/tree":
+            tree_params = urllib.parse.parse_qs(parsed.query)
+            subpath = tree_params.get("path", [""])[0].strip()
+            depth_str = tree_params.get("depth", ["8"])[0].strip()
+            max_depth = int(depth_str) if depth_str.isdigit() else 8
+            max_depth = max(1, min(max_depth, 16))
+            try:
+                tree = self.server.get_sync_workspace_tree(subpath=subpath, max_depth=max_depth)
+                self._send_json(tree)
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if path == "/api/workspace/file":
+            file_params = urllib.parse.parse_qs(parsed.query)
+            file_path = file_params.get("path", [""])[0].strip()
+            if not file_path:
+                self._send_json({"error": "Query parameter 'path' is required"}, status=400)
+                return
+            try:
+                file_info = self.server.get_sync_workspace_file(file_path)
+                self._send_json(file_info)
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
         if path == "/api/router":
             self._send_json(self.server.get_sync_router_status())
             return
@@ -577,6 +603,33 @@ class AvoWebHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "provider": provider, "model": current_model})
             return
 
+        if path == "/api/workspace/file":
+            content_len = int(self.headers.get("Content-Length", 0))
+            if content_len <= 0:
+                self._send_json({"error": "empty body"}, status=400)
+                return
+            try:
+                data = json.loads(self.rfile.read(content_len).decode("utf-8"))
+            except Exception:
+                self._send_json({"error": "invalid JSON body"}, status=400)
+                return
+
+            file_path = str(data.get("path", "")).strip()
+            content = data.get("content")
+            if not file_path:
+                self._send_json({"error": "Field 'path' is required"}, status=400)
+                return
+            if content is None or not isinstance(content, str):
+                self._send_json({"error": "Field 'content' must be a string"}, status=400)
+                return
+
+            try:
+                saved_result = self.server.save_sync_workspace_file(file_path, content)
+                self._send_json(saved_result)
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
         self._send_json({"error": "Not Found"}, status=404)
 
 
@@ -593,7 +646,9 @@ class AvoWebServer(ThreadingHTTPServer):
     ) -> None:
         super().__init__(server_address, AvoWebHandler)
         self.database_path = database_path
-        self.workspace_root = workspace_root if workspace_root is not None else Path.cwd()
+        self.workspace_root = (
+            Path(workspace_root).resolve() if workspace_root is not None else Path.cwd().resolve()
+        )
         self.persona_manager = (
             persona_manager if persona_manager is not None else PersonaManager(database_path.parent)
         )
@@ -778,6 +833,185 @@ class AvoWebServer(ThreadingHTTPServer):
             }
         except Exception as exc:
             return {"ok": False, "error": str(exc), "results": []}
+
+    def get_sync_workspace_tree(
+        self, subpath: str = "", max_depth: int = 8, max_entries: int = 1500
+    ) -> dict[str, Any]:
+        """Scan the workspace and return a structured file tree."""
+        from avo.app_tools.workspace import Workspace
+
+        ws = Workspace(self.workspace_root)
+        target_dir = ws.validate_path(subpath, must_exist=True) if subpath else self.workspace_root
+        if not target_dir.is_dir():
+            raise ValueError(f"Path is not a directory: {subpath}")
+
+        ignored_dir_names = {
+            ".git",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "node_modules",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".avo",
+            ".eggs",
+            "dist",
+            "build",
+            ".tox",
+        }
+
+        entry_count = 0
+
+        def _scan_dir(current: Path, depth: int) -> list[dict[str, Any]]:
+            nonlocal entry_count
+            if depth > max_depth or entry_count >= max_entries:
+                return []
+
+            nodes: list[dict[str, Any]] = []
+            try:
+                entries = list(os.scandir(current))
+            except OSError:
+                return []
+
+            entries.sort(key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower()))
+
+            for entry in entries:
+                if entry_count >= max_entries:
+                    break
+                name = entry.name
+                if (
+                    name.startswith(".") and name in ignored_dir_names
+                ) or name in ignored_dir_names:
+                    continue
+                if name.endswith(".egg-info") or name.endswith(".pyc"):
+                    continue
+
+                entry_path = Path(entry.path)
+                try:
+                    rel = entry_path.resolve().relative_to(self.workspace_root)
+                except ValueError:
+                    continue
+
+                if entry.is_dir(follow_symlinks=False):
+                    entry_count += 1
+                    child_nodes = _scan_dir(entry_path, depth + 1)
+                    nodes.append(
+                        {
+                            "name": name,
+                            "path": rel.as_posix(),
+                            "type": "directory",
+                            "children": child_nodes,
+                        }
+                    )
+                elif entry.is_file(follow_symlinks=False):
+                    entry_count += 1
+                    try:
+                        stat = entry.stat()
+                        size = stat.st_size
+                        mtime = int(stat.st_mtime)
+                    except OSError:
+                        size = 0
+                        mtime = 0
+                    nodes.append(
+                        {
+                            "name": name,
+                            "path": rel.as_posix(),
+                            "type": "file",
+                            "size": size,
+                            "mtime": mtime,
+                        }
+                    )
+            return nodes
+
+        tree = _scan_dir(target_dir, 1)
+        rel_root = ""
+        with contextlib.suppress(ValueError):
+            rel_root = target_dir.relative_to(self.workspace_root).as_posix()
+
+        return {
+            "root": str(self.workspace_root),
+            "workspace_name": self.workspace_root.name,
+            "subpath": rel_root,
+            "tree": tree,
+            "total_entries": entry_count,
+            "truncated": entry_count >= max_entries,
+        }
+
+    def get_sync_workspace_file(self, file_path_str: str) -> dict[str, Any]:
+        """Read a file from workspace safely and return metadata and text content."""
+        from avo.app_tools.workspace import Workspace
+
+        ws = Workspace(self.workspace_root)
+        resolved = ws.validate_path(file_path_str, must_exist=True)
+        if resolved.is_dir():
+            raise ValueError(f"Path is a directory, not a file: {file_path_str}")
+
+        stat = resolved.stat()
+        if stat.st_size > 2 * 1024 * 1024:
+            raise ValueError(f"File exceeds maximum viewable size of 2MB ({stat.st_size} bytes)")
+
+        raw_bytes = resolved.read_bytes()
+        if b"\x00" in raw_bytes[:4096]:
+            raise ValueError("Binary files cannot be displayed or edited")
+
+        try:
+            content = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            content = raw_bytes.decode("latin-1")
+
+        rel_path = resolved.relative_to(self.workspace_root).as_posix()
+        return {
+            "ok": True,
+            "path": rel_path,
+            "filename": resolved.name,
+            "content": content,
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "line_count": len(content.splitlines()),
+        }
+
+    def save_sync_workspace_file(self, file_path_str: str, content: str) -> dict[str, Any]:
+        """Save text content to a file inside the workspace safely."""
+        from avo.app_tools.workspace import Workspace, WorkspacePathError
+
+        if "\x00" in file_path_str:
+            raise WorkspacePathError("path contains a null byte")
+        if not file_path_str.strip():
+            raise WorkspacePathError("path is empty")
+
+        candidate_path = Path(file_path_str)
+        base = self.workspace_root if not candidate_path.is_absolute() else None
+        target = (
+            (base / candidate_path).resolve(strict=False)
+            if base
+            else candidate_path.resolve(strict=False)
+        )
+        try:
+            target.relative_to(self.workspace_root)
+        except ValueError as exc:
+            raise WorkspacePathError(f"path escapes workspace root: {file_path_str}") from exc
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        ws = Workspace(self.workspace_root)
+        resolved = ws.validate_for_write(file_path_str)
+        if resolved.is_dir():
+            raise ValueError(f"Cannot overwrite directory with file: {file_path_str}")
+
+        resolved.write_text(content, encoding="utf-8")
+        stat = resolved.stat()
+        rel_path = resolved.relative_to(self.workspace_root).as_posix()
+
+        return {
+            "ok": True,
+            "path": rel_path,
+            "filename": resolved.name,
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "line_count": len(content.splitlines()),
+            "message": f"Saved {rel_path}",
+        }
 
     def get_sync_runs(self) -> list[dict[str, Any]]:
         """Query runs from SQLite synchronously."""

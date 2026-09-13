@@ -845,3 +845,163 @@ def test_web_ui_api_router_and_bench(tmp_path: Path, monkeypatch: pytest.MonkeyP
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_web_ui_api_workspace_tree_and_editor(tmp_path: Path) -> None:
+    ws = tmp_path / "workspace"
+    (ws / "src" / "pkg").mkdir(parents=True)
+    (ws / "src" / "pkg" / "module.py").write_text(
+        "def add(a, b):\n    return a + b\n", encoding="utf-8"
+    )
+    (ws / "README.md").write_text("# Test Workspace\n", encoding="utf-8")
+
+    # Ignored folders
+    (ws / ".git").mkdir()
+    (ws / ".git" / "config").write_text("git config", encoding="utf-8")
+    (ws / "__pycache__").mkdir()
+    (ws / "__pycache__" / "cached.pyc").write_text("pyc", encoding="utf-8")
+
+    db_path = tmp_path / "workspace_test.db"
+    server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=ws)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        # 1. GET /api/workspace/tree
+        req_tree = urllib.request.Request(f"{base_url}/api/workspace/tree")
+        with urllib.request.urlopen(req_tree, timeout=5) as resp:
+            assert resp.status == 200
+            tree_data = json.loads(resp.read().decode("utf-8"))
+            assert tree_data["workspace_name"] == "workspace"
+            assert tree_data["total_entries"] >= 3
+            names = [node["name"] for node in tree_data["tree"]]
+            assert "src" in names
+            assert "README.md" in names
+            assert ".git" not in names
+            assert "__pycache__" not in names
+
+            # Check nested structure
+            src_node = next(n for n in tree_data["tree"] if n["name"] == "src")
+            assert src_node["type"] == "directory"
+            assert len(src_node["children"]) == 1
+            assert src_node["children"][0]["name"] == "pkg"
+
+        # 2. GET /api/workspace/file - valid read
+        req_file = urllib.request.Request(f"{base_url}/api/workspace/file?path=src/pkg/module.py")
+        with urllib.request.urlopen(req_file, timeout=5) as resp:
+            assert resp.status == 200
+            file_data = json.loads(resp.read().decode("utf-8"))
+            assert file_data["ok"] is True
+            assert file_data["path"] == "src/pkg/module.py"
+            assert "def add(a, b):" in file_data["content"]
+            assert file_data["line_count"] == 2
+
+        # 3. GET /api/workspace/file - error cases
+        # 3a. missing path query param
+        with pytest.raises(urllib.error.HTTPError) as exc_missing:
+            urllib.request.urlopen(f"{base_url}/api/workspace/file", timeout=5)
+        assert exc_missing.value.code == 400
+
+        # 3b. nonexistent file
+        with pytest.raises(urllib.error.HTTPError) as exc_nonexistent:
+            urllib.request.urlopen(f"{base_url}/api/workspace/file?path=nonexistent.txt", timeout=5)
+        assert exc_nonexistent.value.code == 400
+
+        # 3c. path traversal escape attempt
+        with pytest.raises(urllib.error.HTTPError) as exc_escape:
+            urllib.request.urlopen(
+                f"{base_url}/api/workspace/file?path=../../secret.txt", timeout=5
+            )
+        assert exc_escape.value.code == 400
+
+        # 3d. directory requested instead of file
+        with pytest.raises(urllib.error.HTTPError) as exc_dir:
+            urllib.request.urlopen(f"{base_url}/api/workspace/file?path=src", timeout=5)
+        assert exc_dir.value.code == 400
+
+        # 4. POST /api/workspace/file - valid edit of existing file
+        req_save = urllib.request.Request(
+            f"{base_url}/api/workspace/file",
+            data=json.dumps(
+                {
+                    "path": "src/pkg/module.py",
+                    "content": "def add(a, b):\n    return a + b + 1\n",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_save, timeout=5) as resp:
+            assert resp.status == 200
+            save_res = json.loads(resp.read().decode("utf-8"))
+            assert save_res["ok"] is True
+            assert save_res["path"] == "src/pkg/module.py"
+
+        # Verify disk updated
+        disk_content = (ws / "src" / "pkg" / "module.py").read_text(encoding="utf-8")
+        assert "return a + b + 1" in disk_content
+
+        # 5. POST /api/workspace/file - create brand new file in new subfolder
+        req_create = urllib.request.Request(
+            f"{base_url}/api/workspace/file",
+            data=json.dumps(
+                {
+                    "path": "docs/guide.md",
+                    "content": "# User Guide\n\nWelcome to Avo.\n",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_create, timeout=5) as resp:
+            assert resp.status == 200
+            create_res = json.loads(resp.read().decode("utf-8"))
+            assert create_res["ok"] is True
+            assert create_res["path"] == "docs/guide.md"
+
+        saved_guide = (ws / "docs" / "guide.md").read_text(encoding="utf-8")
+        assert saved_guide == "# User Guide\n\nWelcome to Avo.\n"
+
+        # 6. POST /api/workspace/file - error handling
+        # 6a. empty body
+        req_empty = urllib.request.Request(
+            f"{base_url}/api/workspace/file",
+            data=b"",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_p_empty:
+            urllib.request.urlopen(req_empty, timeout=5)
+        assert exc_p_empty.value.code == 400
+
+        # 6b. escaping root
+        req_bad_path = urllib.request.Request(
+            f"{base_url}/api/workspace/file",
+            data=json.dumps(
+                {
+                    "path": "../outside.txt",
+                    "content": "escape attempt",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_p_bad:
+            urllib.request.urlopen(req_bad_path, timeout=5)
+        assert exc_p_bad.value.code == 400
+
+        # 7. Verify HTML contains workspace tab & explorer elements
+        req_html = urllib.request.Request(base_url)
+        with urllib.request.urlopen(req_html, timeout=5) as resp:
+            html = resp.read().decode("utf-8")
+            assert "tab-workspace" in html
+            assert "view-workspace" in html
+            assert "workspaceTreeContainer" in html
+            assert "editorTextarea" in html
+            assert "refreshWorkspaceTree" in html
+            assert "saveWorkspaceFile" in html
+    finally:
+        server.shutdown()
+        server.server_close()
