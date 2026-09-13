@@ -1,9 +1,9 @@
 """Fallback and load-balancing multi-provider router.
 
-Enables resilience across multiple model providers (e.g. prioritizing a free
-local Ollama instance and falling back to OpenRouter, Groq, or Anthropic when
-the local provider is unreachable, overloaded, or rate-limited). Includes
-circuit-breaker cooldowns, active health probing, and latency monitoring.
+Enables resilience and high performance across multiple model providers (e.g.
+prioritizing a free local Ollama instance and falling back to OpenRouter, Groq,
+or Anthropic; or racing them concurrently for fastest time-to-first-token).
+Includes circuit-breaker cooldowns, active health probing, and latency metrics.
 """
 
 from __future__ import annotations
@@ -46,28 +46,21 @@ class RouteHealth:
         return max(0.0, self.cooldown_until - time.monotonic())
 
 
-class FallbackRouterProvider:
-    """An async provider that queries a chain of providers in priority order.
-
-    If a provider fails (network disconnect, rate limit, HTTP 5xx, timeout, etc.),
-    it is temporarily placed in circuit-breaker cooldown and the router falls back
-    to the next functional provider in the chain until a response succeeds or all
-    providers are exhausted.
-    """
+class BaseRouterProvider:
+    """Base router managing route catalog, health tracking, and circuit breaker."""
 
     name = "router"
+    strategy: str = "base"
 
     def __init__(
         self,
         routes: Sequence[tuple[str, ModelProvider]],
         *,
-        on_fallback: FallbackNotifier | None = None,
         cooldown_seconds: float = 30.0,
     ) -> None:
         if not routes:
-            raise ValueError("FallbackRouterProvider requires at least one route")
+            raise ValueError(f"{self.__class__.__name__} requires at least one route")
         self._routes = list(routes)
-        self._on_fallback = on_fallback
         self._cooldown_seconds = max(0.0, float(cooldown_seconds))
         self._health: dict[str, RouteHealth] = {
             name: RouteHealth(name=name) for name, _ in self._routes
@@ -113,7 +106,7 @@ class FallbackRouterProvider:
                 self._health[r_name] = RouteHealth(name=r_name)
 
     def _select_candidate_routes(self) -> list[tuple[str, ModelProvider]]:
-        """Return ordered routes to attempt, prioritizing active non-cooldown routes."""
+        """Return routes to attempt, prioritizing active non-cooldown routes."""
         if self._cooldown_seconds <= 0:
             return list(self._routes)
 
@@ -143,6 +136,69 @@ class FallbackRouterProvider:
         if self._cooldown_seconds > 0:
             h.cooldown_until = time.monotonic() + self._cooldown_seconds
         h.last_error = str(exc)
+
+    async def probe_route(self, name: str, *, timeout_seconds: float = 3.0) -> bool:
+        """Probe an individual route for health."""
+        provider = next((p for n, p in self._routes if n == name), None)
+        if provider is None:
+            return False
+
+        probe_fn = getattr(provider, "probe_health", None) or getattr(provider, "ping", None)
+        if callable(probe_fn):
+            try:
+                res = await asyncio.wait_for(probe_fn(), timeout=timeout_seconds)
+                is_ok = bool(res)
+                if is_ok:
+                    self.reset_health(name)
+                return is_ok
+            except Exception:
+                return False
+
+        h = self._health.get(name)
+        return bool(h and not h.is_cooling_down)
+
+    async def probe_all(self, *, timeout_seconds: float = 3.0) -> dict[str, bool]:
+        """Probe all routes concurrently and return health status."""
+        results: dict[str, bool] = {}
+        tasks = [
+            self.probe_route(name, timeout_seconds=timeout_seconds) for name, _ in self._routes
+        ]
+        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+        for (name, _), outcome in zip(self._routes, outcomes, strict=True):
+            results[name] = outcome is True
+        return results
+
+    async def aclose(self) -> None:
+        """Close client sessions for all underlying providers."""
+        for _, provider in self._routes:
+            aclose_fn = getattr(provider, "aclose", None)
+            if callable(aclose_fn):
+                try:
+                    await aclose_fn()
+                except Exception as exc:  # pragma: no cover
+                    _LOG.debug("error closing provider %r: %s", provider, exc)
+
+
+class FallbackRouterProvider(BaseRouterProvider):
+    """An async provider that queries a chain of providers in priority order.
+
+    If a provider fails (network disconnect, rate limit, HTTP 5xx, timeout, etc.),
+    it is temporarily placed in circuit-breaker cooldown and the router falls back
+    to the next functional provider in the chain until a response succeeds or all
+    providers are exhausted.
+    """
+
+    strategy: str = "fallback"
+
+    def __init__(
+        self,
+        routes: Sequence[tuple[str, ModelProvider]],
+        *,
+        on_fallback: FallbackNotifier | None = None,
+        cooldown_seconds: float = 30.0,
+    ) -> None:
+        super().__init__(routes, cooldown_seconds=cooldown_seconds)
+        self._on_fallback = on_fallback
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         """Attempt generate on candidate routes sequentially until one succeeds."""
@@ -192,7 +248,6 @@ class FallbackRouterProvider:
                 errors.append(f"[{name}] {exc!s}")
                 _LOG.warning("streaming from provider %r failed (%s)", name, exc)
                 if yielded_any:
-                    # Chunks were already delivered to caller; cannot safely restart stream
                     raise ProviderError(
                         f"streaming error on {name} after partial output: {exc!s}"
                     ) from exc
@@ -202,46 +257,161 @@ class FallbackRouterProvider:
 
         raise ProviderError(f"all routed providers failed: {'; '.join(errors)}")
 
-    async def probe_route(self, name: str, *, timeout_seconds: float = 3.0) -> bool:
-        """Probe an individual route for health."""
-        provider = next((p for n, p in self._routes if n == name), None)
-        if provider is None:
-            return False
 
-        probe_fn = getattr(provider, "probe_health", None) or getattr(provider, "ping", None)
-        if callable(probe_fn):
+class RaceRouterProvider(BaseRouterProvider):
+    """An async provider that queries multiple providers concurrently in parallel.
+
+    Returns the fastest successful response or first chunk from whichever provider
+    replies first, then cancels the remaining requests to maximize speed.
+    """
+
+    strategy: str = "race"
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        """Query candidate routes in parallel and return the first successful response."""
+        candidates = self._select_candidate_routes()
+        if not candidates:
+            raise ProviderError("no routes configured for race router")
+
+        if len(candidates) == 1:
+            name, provider = candidates[0]
+            t0 = time.monotonic()
             try:
-                res = await asyncio.wait_for(probe_fn(), timeout=timeout_seconds)
-                is_ok = bool(res)
-                if is_ok:
-                    self.reset_health(name)
-                return is_ok
-            except Exception:
-                return False
+                resp = await provider.generate(request)
+                self._record_success(name, t0)
+                return resp
+            except Exception as exc:
+                self._record_failure(name, exc)
+                raise ProviderError(f"race provider {name!r} failed: {exc}") from exc
 
-        h = self._health.get(name)
-        return bool(h and not h.is_cooling_down)
+        tasks: dict[asyncio.Task[ModelResponse], tuple[str, float]] = {}
+        for name, provider in candidates:
+            t0 = time.monotonic()
+            task = asyncio.create_task(provider.generate(request), name=f"race-{name}")
+            tasks[task] = (name, t0)
 
-    async def probe_all(self, *, timeout_seconds: float = 3.0) -> dict[str, bool]:
-        """Probe all routes concurrently and return health status."""
-        results: dict[str, bool] = {}
+        errors: list[str] = []
+        pending: set[asyncio.Task[ModelResponse]] = set(tasks.keys())
+
+        try:
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for completed_task in done:
+                    name, start_time = tasks[completed_task]
+                    try:
+                        resp = completed_task.result()
+                        self._record_success(name, start_time)
+                        _LOG.info(
+                            "race won by provider %r in %.1fms",
+                            name,
+                            (time.monotonic() - start_time) * 1000,
+                        )
+                        for other_task in pending:
+                            other_task.cancel()
+                        return resp
+                    except Exception as exc:
+                        self._record_failure(name, exc)
+                        errors.append(f"[{name}] {exc!s}")
+                        _LOG.warning("race candidate %r failed: %s", name, exc)
+        finally:
+            for t in pending:
+                t.cancel()
+
+        raise ProviderError(f"all raced providers failed: {'; '.join(errors)}")
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
+        """Stream chunks from whichever provider emits the first token fastest."""
+        candidates = self._select_candidate_routes()
+        if not candidates:
+            raise ProviderError("no routes configured for race router")
+
+        if len(candidates) == 1:
+            name, provider = candidates[0]
+            t0 = time.monotonic()
+            try:
+                if isinstance(provider, StreamingModelProvider):
+                    async for chunk in provider.stream(request):
+                        yield chunk
+                else:
+                    resp = await provider.generate(request)
+                    yield ModelChunk(text=resp.content or "")
+                self._record_success(name, t0)
+                return
+            except Exception as exc:
+                self._record_failure(name, exc)
+                raise ProviderError(f"race provider {name!r} failed: {exc}") from exc
+
+        queue: asyncio.Queue[tuple[str, ModelChunk | None, Any, Exception | None]] = asyncio.Queue()
+
+        async def _worker(r_name: str, r_prov: ModelProvider) -> None:
+            try:
+                if isinstance(r_prov, StreamingModelProvider):
+                    it = r_prov.stream(request).__aiter__()
+                    first = await it.__anext__()
+                    await queue.put((r_name, first, it, None))
+                else:
+                    r_resp = await r_prov.generate(request)
+                    await queue.put((r_name, ModelChunk(text=r_resp.content or ""), None, None))
+            except StopAsyncIteration:
+                await queue.put((r_name, ModelChunk(text=""), None, None))
+            except Exception as worker_exc:
+                await queue.put((r_name, None, None, worker_exc))
+
         tasks = [
-            self.probe_route(name, timeout_seconds=timeout_seconds) for name, _ in self._routes
+            asyncio.create_task(_worker(name, prov), name=f"race-stream-{name}")
+            for name, prov in candidates
         ]
-        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
-        for (name, _), outcome in zip(self._routes, outcomes, strict=True):
-            results[name] = outcome is True
-        return results
 
-    async def aclose(self) -> None:
-        """Close client sessions for all underlying providers."""
-        for _, provider in self._routes:
-            aclose_fn = getattr(provider, "aclose", None)
-            if callable(aclose_fn):
+        winner_name: str | None = None
+        winner_iter: Any = None
+        first_chunk: ModelChunk | None = None
+        errors: list[str] = []
+        t0 = time.monotonic()
+
+        try:
+            completed_workers = 0
+            while completed_workers < len(candidates):
+                res_name, res_chunk, res_iter, res_err = await queue.get()
+                completed_workers += 1
+                if res_err is not None:
+                    self._record_failure(res_name, res_err)
+                    errors.append(f"[{res_name}] {res_err!s}")
+                    _LOG.warning("streaming race candidate %r failed: %s", res_name, res_err)
+                else:
+                    winner_name = res_name
+                    first_chunk = res_chunk
+                    winner_iter = res_iter
+                    self._record_success(res_name, t0)
+                    _LOG.info("streaming race won by provider %r", res_name)
+                    break
+
+            if winner_name is None:
+                raise ProviderError(f"all raced streaming providers failed: {'; '.join(errors)}")
+
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
+            if first_chunk and first_chunk.text:
+                yield first_chunk
+
+            if winner_iter is not None:
                 try:
-                    await aclose_fn()
-                except Exception as exc:  # pragma: no cover
-                    _LOG.debug("error closing provider %r: %s", provider, exc)
+                    while True:
+                        next_chunk = await winner_iter.__anext__()
+                        yield next_chunk
+                except StopAsyncIteration:
+                    pass
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
 
 
-__all__ = ["FallbackNotifier", "FallbackRouterProvider", "RouteHealth"]
+__all__ = [
+    "BaseRouterProvider",
+    "FallbackNotifier",
+    "FallbackRouterProvider",
+    "RaceRouterProvider",
+    "RouteHealth",
+]

@@ -112,6 +112,7 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                     },
                     "router": {
                         "active": os.environ.get("AVO_PROVIDER") == "router",
+                        "strategy": os.environ.get("AVO_ROUTER_STRATEGY", "fallback").lower(),
                         "chain": chain_list,
                         "cooldown_seconds": float(
                             os.environ.get("AVO_ROUTER_COOLDOWN_SECONDS", "30.0") or 30.0

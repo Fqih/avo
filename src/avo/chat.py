@@ -364,13 +364,13 @@ def _export_session_markdown(
 
 def _show_router_status(ctx: ChatContext, out: TextIO) -> None:
     """Display real-time router circuit breaker and health status."""
-    from avo.providers.router import FallbackRouterProvider
+    from avo.providers.router import BaseRouterProvider
 
     provider = ctx.runtime.provider
-    if not isinstance(provider, FallbackRouterProvider):
+    if not isinstance(provider, BaseRouterProvider):
         out.write(
             f"Router is not active (current provider: {ctx.provider_name!r}).\n"
-            "To use multi-provider fallback routing, start with:\n"
+            "To use multi-provider fallback or race routing, start with:\n"
             "  AVO_PROVIDER=router avo chat\n"
         )
         out.flush()
@@ -378,8 +378,10 @@ def _show_router_status(ctx: ChatContext, out: TextIO) -> None:
 
     status = provider.get_health_status()
     routes = provider.routes
+    strategy_label = provider.strategy.capitalize()
     out.write(
-        f"Multi-Provider Fallback Router Status (cooldown: {provider.cooldown_seconds}s):\n\n"
+        f"Multi-Provider {strategy_label} Router Status "
+        f"(cooldown: {provider.cooldown_seconds}s):\n\n"
     )
     col_hdr = (
         f"  {'Route':<12} {'Role':<8} {'Status':<9} {'Cooldown':<8} {'Latency':<8} {'Fails':<5}\n"
@@ -388,7 +390,12 @@ def _show_router_status(ctx: ChatContext, out: TextIO) -> None:
     out.write(col_hdr)
     out.write(col_div)
     for i, (name, _) in enumerate(routes):
-        role = "Primary" if i == 0 else "Fallback"
+        if provider.strategy == "race":
+            role = "Racer"
+        elif i == 0:
+            role = "Primary"
+        else:
+            role = "Fallback"
         info = status.get(name, {})
         healthy = info.get("healthy", True)
         in_cooling = info.get("in_cooldown", False)

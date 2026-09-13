@@ -10,7 +10,7 @@ import pytest
 from avo import ModelRequest, ModelResponse
 from avo.config import build_provider_from_env
 from avo.exceptions import ProviderError
-from avo.providers.router import FallbackRouterProvider
+from avo.providers.router import FallbackRouterProvider, RaceRouterProvider
 from avo.providers.streaming import ModelChunk
 
 
@@ -22,6 +22,7 @@ class _MockProvider:
         error: Exception | None = None,
         chunks: list[str] | None = None,
         stream_error_before: Exception | None = None,
+        delay: float = 0.0,
     ) -> None:
         self.name = name
         self.model = f"mock-{name}"
@@ -29,16 +30,21 @@ class _MockProvider:
         self.error = error
         self.chunks = chunks
         self.stream_error_before = stream_error_before
+        self.delay = delay
         self.generate_called = 0
         self.closed = False
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         self.generate_called += 1
+        if self.delay > 0:
+            await asyncio.sleep(self.delay)
         if self.error:
             raise self.error
         return self.response or ModelResponse(content=f"from {self.name}")
 
     async def stream(self, request: ModelRequest) -> Any:
+        if self.delay > 0:
+            await asyncio.sleep(self.delay)
         if self.stream_error_before:
             raise self.stream_error_before
         for chunk in self.chunks or []:
@@ -250,3 +256,97 @@ def test_router_probe_all() -> None:
 
     probes = asyncio.run(router.probe_all(timeout_seconds=1.0))
     assert probes == {"p1": True, "p2": True}
+
+
+def test_race_router_requires_routes() -> None:
+    with pytest.raises(ValueError, match="requires at least one route"):
+        RaceRouterProvider([])
+
+
+def test_race_router_returns_fastest() -> None:
+    p_slow = _MockProvider(
+        "slow-cloud",
+        response=ModelResponse(content="slow response"),
+        delay=0.1,
+    )
+    p_fast = _MockProvider(
+        "fast-local",
+        response=ModelResponse(content="fast response"),
+        delay=0.01,
+    )
+
+    router = RaceRouterProvider(
+        [("slow-cloud", p_slow), ("fast-local", p_fast)],  # type: ignore[list-item]
+    )
+    req = ModelRequest(run_id="r-race-1", step=1, messages=[])
+
+    resp = asyncio.run(router.generate(req))
+    assert resp.content == "fast response"
+    status = router.get_health_status()
+    assert status["fast-local"]["healthy"] is True
+
+
+def test_race_router_ignores_failed_candidate() -> None:
+    p_failing_fast = _MockProvider(
+        "broken-fast",
+        error=ConnectionRefusedError("fast connection refused"),
+        delay=0.005,
+    )
+    p_ok_slower = _MockProvider(
+        "ok-slower",
+        response=ModelResponse(content="slower but valid"),
+        delay=0.03,
+    )
+
+    router = RaceRouterProvider(
+        [("broken-fast", p_failing_fast), ("ok-slower", p_ok_slower)],  # type: ignore[list-item]
+    )
+    req = ModelRequest(run_id="r-race-2", step=1, messages=[])
+
+    resp = asyncio.run(router.generate(req))
+    assert resp.content == "slower but valid"
+    status = router.get_health_status()
+    assert status["broken-fast"]["healthy"] is False
+    assert status["broken-fast"]["in_cooldown"] is True
+    assert status["ok-slower"]["healthy"] is True
+
+
+def test_race_router_raises_when_all_fail() -> None:
+    p1 = _MockProvider("p1", error=ConnectionRefusedError("err1"), delay=0.01)
+    p2 = _MockProvider("p2", error=ProviderError("err2"), delay=0.01)
+
+    router = RaceRouterProvider([("p1", p1), ("p2", p2)])  # type: ignore[list-item]
+    req = ModelRequest(run_id="r-race-fail", step=1, messages=[])
+
+    with pytest.raises(ProviderError, match="all raced providers failed:"):
+        asyncio.run(router.generate(req))
+
+
+def test_race_router_streaming_returns_fastest_chunk() -> None:
+    p_slow = _MockProvider("slow", chunks=["slow chunk"], delay=0.1)
+    p_fast = _MockProvider("fast", chunks=["fast 1", "fast 2"], delay=0.01)
+
+    router = RaceRouterProvider([("slow", p_slow), ("fast", p_fast)])  # type: ignore[list-item]
+    req = ModelRequest(run_id="r-race-stream", step=1, messages=[])
+
+    async def run_stream() -> list[str]:
+        out = []
+        async for chunk in router.stream(req):
+            if chunk.text:
+                out.append(chunk.text)
+        return out
+
+    result = asyncio.run(run_stream())
+    assert result == ["fast 1", "fast 2"]
+
+
+def test_race_router_strategy_in_build_provider_from_env() -> None:
+    env = {
+        "AVO_PROVIDER": "router",
+        "AVO_ROUTER_STRATEGY": "race",
+        "AVO_ROUTER_CHAIN": "ollama",
+        "AVO_OLLAMA_MODEL": "llama3.2",
+    }
+    provider = build_provider_from_env(env)
+    assert isinstance(provider, RaceRouterProvider)
+    assert provider.strategy == "race"

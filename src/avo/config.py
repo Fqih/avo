@@ -326,6 +326,16 @@ def _build_router_from_env(
     except ValueError:
         cooldown_seconds = 30.0
 
+    strategy = (
+        env.get("AVO_ROUTER_STRATEGY", "").strip().lower()
+        or env.get("AVO_ROUTER_MODE", "").strip().lower()
+        or "fallback"
+    )
+    if strategy in ("race", "fastest", "parallel"):
+        from avo.providers.router import RaceRouterProvider
+
+        return RaceRouterProvider(routes, cooldown_seconds=cooldown_seconds)
+
     return FallbackRouterProvider(routes, cooldown_seconds=cooldown_seconds)
 
 
