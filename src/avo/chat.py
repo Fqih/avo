@@ -54,6 +54,7 @@ from avo.config import (
     supported_providers,
 )
 from avo.exceptions import AvoError
+from avo.providers.streaming import split_thinking
 from avo.runtime import AgentRuntime
 from avo.skills import SkillRegistry
 from avo.storage.sqlite import SQLiteEventStore
@@ -827,9 +828,11 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
             return
 
     assistant_content = result.output or ""
+    thought, clean_answer = split_thinking(assistant_content)
+
     ctx.session.record_assistant_turn(
         ctx.session_id,
-        assistant_content,
+        clean_answer or assistant_content,
         run_id=result.run_id,
         status=result.status.value,
         stop_reason=result.stop_reason.value,
@@ -841,7 +844,14 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
     )
     if result.error:
         out.write(f"error: {result.error}\n")
-    if result.output:
+    if thought:
+        out.write("\n💭 Thought process:\n")
+        for thought_line in thought.splitlines():
+            out.write(f"  │ {thought_line}\n")
+        out.write("\n")
+    if clean_answer:
+        out.write(f"Avo> {clean_answer}\n")
+    elif result.output:
         out.write(f"Avo> {result.output}\n")
     out.flush()
 
