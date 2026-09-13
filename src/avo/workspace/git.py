@@ -167,6 +167,41 @@ class GitRepository:
             lines.append(f"Untracked:\n{names}{extra}")
         return "\n".join(lines)
 
+    def diff(
+        self,
+        path: str | None = None,
+        *,
+        staged: bool = False,
+        max_lines: int = 500,
+    ) -> str:
+        """Return the unified git diff.
+
+        When ``staged`` is True, compares staged changes to HEAD.
+        ``path`` optionally restricts the diff to a single workspace-relative path.
+        Output is truncated to ``max_lines`` to protect context windows.
+        """
+
+        if not self.is_repository():
+            raise GitError(f"{self._root} is not a git repository")
+
+        args = ["diff"]
+        if staged:
+            args.append("--cached")
+        if path:
+            args.extend(["--", path])
+
+        proc = _run_git(self._root, args)
+        if proc.returncode != 0:
+            raise GitError(f"git diff failed: {proc.stderr.strip()}")
+
+        diff_text = proc.stdout
+        lines = diff_text.splitlines()
+        if len(lines) > max_lines:
+            truncated = lines[:max_lines]
+            truncated.append(f"... diff truncated ({len(lines) - max_lines} more lines) ...")
+            return "\n".join(truncated)
+        return diff_text
+
 
 __all__ = [
     "GitError",

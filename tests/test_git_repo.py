@@ -122,3 +122,24 @@ def test_run_git_handles_missing_executable(
     )
     with pytest.raises(GitError, match="git executable not found"):
         GitRepository(tmp_path).is_repository()
+
+
+def test_git_repo_diff_unstaged_and_staged(git_repo: Path) -> None:
+    repo = GitRepository(git_repo)
+    # tracked.txt was modified in fixture: hello -> hello world
+    diff_unstaged = repo.diff()
+    assert "-hello" in diff_unstaged
+    assert "+hello world" in diff_unstaged
+
+    # Filter by specific path
+    diff_specific = repo.diff(path="tracked.txt")
+    assert "+hello world" in diff_specific
+
+    # Stage the change and check staged diff
+    _git(git_repo, "add", "tracked.txt")
+    diff_staged = repo.diff(staged=True)
+    assert "+hello world" in diff_staged
+
+    # Now unstaged diff should be empty for tracked.txt
+    diff_now_unstaged = repo.diff(path="tracked.txt", staged=False)
+    assert diff_now_unstaged.strip() == ""
