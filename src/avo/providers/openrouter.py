@@ -67,6 +67,11 @@ class OpenRouterConfig(BaseModel):
             or environ.get("OPENROUTER_API_KEY", "").strip()
         )
         if not api_key:
+            from avo.auth import get_stored_token
+
+            api_key = get_stored_token("openrouter") or ""
+
+        if not api_key:
             raise ValueError(
                 "AVO_OPENROUTER_API_KEY or OPENROUTER_API_KEY is required "
                 "when AVO_PROVIDER=openrouter"

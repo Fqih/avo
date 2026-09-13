@@ -150,10 +150,22 @@ def _parser() -> argparse.ArgumentParser:
         help="Workspace directory exposed via MCP resources (default: current working directory).",
     )
 
+    commands.add_parser(
+        "login",
+        add_help=False,
+        help="Manage OAuth and API credentials (see `avo login --help`).",
+    )
+
     return parser
 
 
-async def _execute(args: argparse.Namespace) -> int:
+async def _execute(args: argparse.Namespace, rest: list[str] | None = None) -> int:
+    tail = rest if rest is not None else []
+    if args.command == "login":
+        from avo.auth import main_login
+
+        return main_login(tail or _tail_argv("login"))
+
     if args.command == "doctor":
         # ``doctor_main`` has already-consumed argv; pass an empty list
         # so the inner argparse does not re-read sys.argv and complain
@@ -275,9 +287,22 @@ async def _execute(args: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the Avo CLI and return a process exit status."""
 
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    effective_argv = list(sys.argv[1:] if argv is None else argv)
+    args, rest = parser.parse_known_args(effective_argv)
+    if rest and args.command not in {
+        "login",
+        "plugin",
+        "mcp",
+        "skill",
+        "init",
+        "bench",
+        "sandbox",
+        "cost",
+    }:
+        parser.error(f"unrecognized arguments: {' '.join(rest)}")
     try:
-        return asyncio.run(_execute(args))
+        return asyncio.run(_execute(args, rest=rest))
     except (AvoError, OSError) as exc:
         print(f"avo: {exc}", file=sys.stderr)
         return 2

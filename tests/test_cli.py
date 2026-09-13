@@ -85,3 +85,10 @@ def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
     assert exc.value.code == 0
     out = capsys.readouterr().out.strip()
     assert out == "avo 0.1.3"
+
+
+def test_cli_login_status(capsys: pytest.CaptureFixture[str]) -> None:
+    from avo.cli import main as cli_main
+
+    assert cli_main(["login", "--status"]) == 0
+    assert "authenticated" in capsys.readouterr().out.lower()

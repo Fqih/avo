@@ -172,9 +172,13 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
         missing.append("AVO_PROVIDER")
         missing.extend(_REQUIRED_BY_PROVIDER["ollama"][1:])
     else:
+        from avo.auth import get_stored_token
+
         required = _REQUIRED_BY_PROVIDER[provider]
         for var in required:
-            if var == "AVO_OPENROUTER_API_KEY" and env.get("OPENROUTER_API_KEY", "").strip():
+            if var == "AVO_OPENROUTER_API_KEY" and (
+                env.get("OPENROUTER_API_KEY", "").strip() or get_stored_token("openrouter")
+            ):
                 continue
             if not env.get(var, "").strip():
                 missing.append(var)
@@ -183,6 +187,7 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
         has_api_key = bool(
             env.get(api_key_var, "").strip()
             or (provider == "openrouter" and env.get("OPENROUTER_API_KEY", "").strip())
+            or (provider == "openrouter" and get_stored_token("openrouter"))
         )
 
         base_url_key = f"AVO_{provider.upper()}_BASE_URL"
