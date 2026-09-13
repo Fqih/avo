@@ -214,6 +214,10 @@ class AvoWebHandler(BaseHTTPRequestHandler):
             self._send_json(report_to_dict(cost_report))
             return
 
+        if path == "/api/router":
+            self._send_json(self.server.get_sync_router_status())
+            return
+
         if path == "/api/runs":
             runs = self.server.get_sync_runs()
             self._send_json({"runs": runs})
@@ -533,6 +537,46 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)}, status=400)
                 return
 
+        if path == "/api/router/probe":
+            self._send_json(self.server.sync_probe_router())
+            return
+
+        if path == "/api/router/bench":
+            content_len = int(self.headers.get("Content-Length", 0))
+            bench_prompt = "Explain recursion in 10 words."
+            if content_len > 0:
+                with contextlib.suppress(Exception):
+                    loaded = json.loads(self.rfile.read(content_len).decode("utf-8"))
+                    if isinstance(loaded, dict) and loaded.get("prompt"):
+                        bench_prompt = str(loaded["prompt"]).strip() or bench_prompt
+            res = self.server.sync_bench_routes(prompt=bench_prompt)
+            self._send_json(res)
+            return
+
+        if path == "/api/provider":
+            content_len = int(self.headers.get("Content-Length", 0))
+            if content_len <= 0:
+                self._send_json({"error": "empty body"}, status=400)
+                return
+            try:
+                data = json.loads(self.rfile.read(content_len).decode("utf-8"))
+            except Exception:
+                self._send_json({"error": "invalid JSON body"}, status=400)
+                return
+
+            provider = str(data.get("provider", "")).strip()
+            model = str(data.get("model", "")).strip()
+            if not provider:
+                self._send_json({"error": "provider is required"}, status=400)
+                return
+
+            os.environ["AVO_PROVIDER"] = provider
+            if model:
+                os.environ["AVO_MODEL"] = model
+            current_model = model or os.environ.get("AVO_MODEL", "")
+            self._send_json({"ok": True, "provider": provider, "model": current_model})
+            return
+
         self._send_json({"error": "Not Found"}, status=404)
 
 
@@ -627,6 +671,113 @@ class AvoWebServer(ThreadingHTTPServer):
                 "diff": "",
                 "recent_commits": [],
             }
+
+    def get_sync_router_status(self) -> dict[str, Any]:
+        """Query router routes, health status, and fallback chains."""
+        from avo.config import build_provider_from_env
+        from avo.providers.router import BaseRouterProvider
+
+        provider_name = os.environ.get("AVO_PROVIDER", "ollama")
+        model_name = os.environ.get("AVO_MODEL", "default")
+        router_chain = os.environ.get("AVO_ROUTER_CHAIN", "")
+        router_providers = os.environ.get("AVO_ROUTER_PROVIDERS", "")
+        router_models = os.environ.get("AVO_ROUTER_MODELS", "")
+
+        routes_info: list[dict[str, Any]] = []
+        is_router = False
+        health_status: dict[str, Any] = {}
+
+        try:
+            prov = build_provider_from_env(dict(os.environ))
+            if isinstance(prov, BaseRouterProvider):
+                is_router = True
+                health_status = prov.get_health_status()
+                for name, p in prov.routes:
+                    h = health_status.get(name, {})
+                    routes_info.append(
+                        {
+                            "name": name,
+                            "provider": getattr(p, "name", name),
+                            "model": getattr(p, "model", "default"),
+                            "healthy": h.get("healthy", True),
+                            "in_cooldown": h.get("in_cooldown", False),
+                            "cooldown_remaining_seconds": h.get("cooldown_remaining_seconds", 0.0),
+                            "consecutive_failures": h.get("consecutive_failures", 0),
+                            "last_error": h.get("last_error"),
+                            "last_latency_ms": h.get("last_latency_ms"),
+                        }
+                    )
+            else:
+                routes_info.append(
+                    {
+                        "name": provider_name,
+                        "provider": getattr(prov, "name", provider_name),
+                        "model": getattr(prov, "model", model_name),
+                        "healthy": True,
+                        "in_cooldown": False,
+                        "cooldown_remaining_seconds": 0.0,
+                        "consecutive_failures": 0,
+                        "last_error": None,
+                        "last_latency_ms": None,
+                    }
+                )
+        except Exception as exc:
+            _LOG.warning("Could not build provider for router status: %s", exc)
+
+        return {
+            "is_router": is_router,
+            "active_provider": provider_name,
+            "active_model": model_name,
+            "router_chain": router_chain,
+            "router_providers": router_providers,
+            "router_models": router_models,
+            "routes": routes_info,
+            "health": health_status,
+        }
+
+    def sync_probe_router(self) -> dict[str, Any]:
+        """Run health probe on router endpoints synchronously."""
+        import asyncio
+
+        from avo.config import build_provider_from_env
+        from avo.providers.router import BaseRouterProvider
+
+        try:
+            prov = build_provider_from_env(dict(os.environ))
+            if isinstance(prov, BaseRouterProvider):
+                outcomes = asyncio.run(prov.probe_all())
+                return {"ok": True, "outcomes": outcomes, "health": prov.get_health_status()}
+            active_p = os.environ.get("AVO_PROVIDER", "ollama")
+            return {"ok": True, "outcomes": {active_p: True}, "health": {}}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def sync_bench_routes(self, prompt: str = "Explain recursion in 10 words.") -> dict[str, Any]:
+        """Run speed and latency benchmark on configured routes."""
+        import asyncio
+
+        from avo.bench import benchmark_all_routes, benchmark_route
+        from avo.config import build_provider_from_env
+        from avo.providers.router import BaseRouterProvider
+
+        try:
+            prov = build_provider_from_env(dict(os.environ))
+            if isinstance(prov, BaseRouterProvider):
+                results = asyncio.run(benchmark_all_routes(prov.routes, prompt=prompt))
+                return {
+                    "ok": True,
+                    "prompt": prompt,
+                    "results": [r.as_dict() for r in results],
+                }
+            active_p = os.environ.get("AVO_PROVIDER", "ollama")
+            res = asyncio.run(benchmark_route(active_p, prov, prompt=prompt))
+            return {
+                "ok": True,
+                "prompt": prompt,
+                "results": [res.as_dict()],
+            }
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "results": []}
 
     def get_sync_runs(self) -> list[dict[str, Any]]:
         """Query runs from SQLite synchronously."""

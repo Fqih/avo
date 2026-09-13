@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -667,6 +669,179 @@ def test_web_ui_api_git_commit_show(tmp_path: Path) -> None:
             assert "gitStashesList" in html
             assert "handleStashPop" in html
             assert "handleStashDrop" in html
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_web_ui_api_router_and_bench(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AVO_PROVIDER", "ollama")
+    monkeypatch.setenv("AVO_MODEL", "llama3.1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-mock-test-key")
+
+    db_path = tmp_path / "router_test.db"
+    server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=tmp_path)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        # 1. GET /api/router
+        req_get = urllib.request.Request(f"{base_url}/api/router")
+        with urllib.request.urlopen(req_get, timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["active_provider"] == "ollama"
+            assert data["active_model"] == "llama3.1"
+            assert data["is_router"] is False
+            assert len(data["routes"]) == 1
+            assert data["routes"][0]["name"] == "ollama"
+
+        # 2. POST /api/provider - valid switch
+        req_prov = urllib.request.Request(
+            f"{base_url}/api/provider",
+            data=json.dumps(
+                {
+                    "provider": "openrouter",
+                    "model": "anthropic/claude-3-haiku",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_prov, timeout=5) as resp:
+            assert resp.status == 200
+            prov_data = json.loads(resp.read().decode("utf-8"))
+            assert prov_data["ok"] is True
+            assert prov_data["provider"] == "openrouter"
+            assert prov_data["model"] == "anthropic/claude-3-haiku"
+            assert os.environ["AVO_PROVIDER"] == "openrouter"
+            assert os.environ["AVO_MODEL"] == "anthropic/claude-3-haiku"
+
+        # 3. POST /api/provider - invalid payload returns 400
+        req_prov_bad = urllib.request.Request(
+            f"{base_url}/api/provider",
+            data=json.dumps({"provider": ""}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_bad:
+            urllib.request.urlopen(req_prov_bad, timeout=5)
+        assert exc_bad.value.code == 400
+
+        # 4. POST /api/router/probe
+        req_probe = urllib.request.Request(
+            f"{base_url}/api/router/probe",
+            data=b"",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_probe, timeout=5) as resp:
+            assert resp.status == 200
+            probe_data = json.loads(resp.read().decode("utf-8"))
+            assert probe_data["ok"] is True
+            assert "outcomes" in probe_data
+
+        # 5. POST /api/router/bench - with mocked bench functions
+        from avo.bench import RouteBenchResult
+
+        async def _mock_bench_route(
+            name: str, provider: Any, prompt: str = "", **kwargs: Any
+        ) -> RouteBenchResult:
+            return RouteBenchResult(
+                route=name,
+                provider_name=getattr(provider, "name", name),
+                model=getattr(provider, "model", "default"),
+                success=True,
+                latency_ms=42.0,
+                ttft_ms=15.0,
+                output="ok",
+                error=None,
+            )
+
+        async def _mock_bench_all(
+            routes: Any, prompt: str = "", **kwargs: Any
+        ) -> list[RouteBenchResult]:
+            return [
+                RouteBenchResult(
+                    route=name,
+                    provider_name=getattr(p, "name", name),
+                    model=getattr(p, "model", "default"),
+                    success=True,
+                    latency_ms=30.0 + idx * 10,
+                    ttft_ms=10.0,
+                    output="ok",
+                    error=None,
+                )
+                for idx, (name, p) in enumerate(routes)
+            ]
+
+        monkeypatch.setattr("avo.bench.benchmark_route", _mock_bench_route)
+        monkeypatch.setattr("avo.bench.benchmark_all_routes", _mock_bench_all)
+
+        req_bench = urllib.request.Request(
+            f"{base_url}/api/router/bench",
+            data=json.dumps({"prompt": "speed test"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_bench, timeout=5) as resp:
+            assert resp.status == 200
+            bench_data = json.loads(resp.read().decode("utf-8"))
+            assert bench_data["ok"] is True
+            assert bench_data["prompt"] == "speed test"
+            assert len(bench_data["results"]) == 1
+            assert bench_data["results"][0]["route"] == "openrouter"
+            assert bench_data["results"][0]["latency_ms"] == 42.0
+
+        # 6. Verify HTML contains router playground elements
+        req_html = urllib.request.Request(base_url)
+        with urllib.request.urlopen(req_html, timeout=5) as resp:
+            html = resp.read().decode("utf-8")
+            assert "routerRoutesTableBody" in html
+            assert "probeRouterHealth" in html
+            assert "routerBenchResultsContainer" in html
+            assert "runRouterBenchmark" in html
+            assert "handleSwitchProvider" in html
+
+        # 7. Test router provider branch directly in server methods
+        from avo.providers.fake import FakeProvider
+        from avo.providers.router import BaseRouterProvider
+
+        class MockRouter(BaseRouterProvider):
+            def __init__(self) -> None:
+                p1 = FakeProvider([])
+                p1.name = "fake1"
+                p1.model = "m1"
+                p2 = FakeProvider([])
+                p2.name = "fake2"
+                p2.model = "m2"
+                super().__init__([("r1", p1), ("r2", p2)])
+
+            async def generate(self, request: Any) -> Any:
+                raise NotImplementedError
+
+        mock_router = MockRouter()
+        monkeypatch.setattr(
+            "avo.config.build_provider_from_env",
+            lambda env: mock_router,
+        )
+
+        status = server.get_sync_router_status()
+        assert status["is_router"] is True
+        assert len(status["routes"]) == 2
+        assert status["routes"][0]["name"] == "r1"
+        assert status["routes"][1]["name"] == "r2"
+
+        probe = server.sync_probe_router()
+        assert probe["ok"] is True
+        assert "outcomes" in probe
+
+        bench = server.sync_bench_routes(prompt="bench prompt")
+        assert bench["ok"] is True
+        assert len(bench["results"]) == 2
+        assert bench["results"][0]["route"] in {"r1", "r2"}
     finally:
         server.shutdown()
         server.server_close()

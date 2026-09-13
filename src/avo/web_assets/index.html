@@ -400,14 +400,108 @@
 
     <!-- ROUTER TAB -->
     <div id="view-router" class="hidden space-y-6">
+      <!-- Active Provider & Switcher Card -->
       <div class="glass rounded-xl p-6 border border-gray-800 space-y-4">
-        <h3 class="text-base font-semibold text-white">Multi-Provider Router &amp; Failover</h3>
-        <p class="text-sm text-gray-400">Avo acts like an intelligent model router. Requests are routed sequentially across providers until an answer is produced.</p>
+        <div class="flex justify-between items-center">
+          <div>
+            <h3 class="text-base font-semibold text-white">Active Provider &amp; Model Routing</h3>
+            <p class="text-sm text-gray-400">Configure or switch the active inference provider and model mapping.</p>
+          </div>
+          <span id="routerActiveBadge" class="font-mono text-xs font-bold text-indigo-400 bg-indigo-950/80 px-2.5 py-1 rounded border border-indigo-800/60">ollama</span>
+        </div>
+        
         <div class="p-4 rounded-lg bg-gray-900/60 border border-gray-800 text-sm space-y-2">
-          <div class="flex justify-between"><span class="text-gray-400">Router Providers:</span><code id="routerChain" class="text-indigo-300">ollama,openrouter</code></div>
+          <div class="flex justify-between"><span class="text-gray-400">Router Chain:</span><code id="routerChain" class="text-indigo-300">ollama,openrouter</code></div>
           <div class="flex justify-between"><span class="text-gray-400">Model Mapping:</span><code id="routerModels" class="text-indigo-300">llama3.1,meta-llama/llama-3.3-70b-instruct:free</code></div>
         </div>
+
+        <div class="flex flex-wrap items-center gap-3 pt-2">
+          <div class="flex items-center gap-1.5">
+            <label for="switchProviderSelect" class="text-xs text-gray-400">Provider:</label>
+            <select id="switchProviderSelect" class="bg-gray-900 border border-gray-700 text-xs text-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500">
+              <option value="ollama">Ollama (local)</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="router">Router (Fallback)</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="minimax">MiniMax</option>
+              <option value="groq">Groq</option>
+              <option value="cerebras">Cerebras</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-1.5 flex-1 min-w-[200px]">
+            <label for="switchModelInput" class="text-xs text-gray-400">Model:</label>
+            <input type="text" id="switchModelInput" placeholder="Model name (e.g. llama3.1, claude-3-5-sonnet)..." class="flex-1 bg-gray-900 border border-gray-700 text-xs text-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500">
+          </div>
+          <button onclick="handleSwitchProvider()" class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow transition">Apply Provider</button>
+        </div>
       </div>
+
+      <!-- Route Health & Circuit Breakers Card -->
+      <div class="glass rounded-xl p-6 border border-gray-800 space-y-4">
+        <div class="flex justify-between items-center">
+          <div>
+            <h3 class="text-base font-semibold text-white">Route Health &amp; Circuit-Breakers</h3>
+            <p class="text-sm text-gray-400">Real-time route connectivity, failure metrics, and cooldown state.</p>
+          </div>
+          <button onclick="probeRouterHealth()" id="probeHealthBtn" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs font-semibold border border-gray-700 transition flex items-center gap-1.5">
+            <span>↻ Probe Health</span>
+          </button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-gray-900/80 text-gray-400 uppercase tracking-wider border-b border-gray-800">
+              <tr>
+                <th class="px-4 py-2.5">Route</th>
+                <th class="px-4 py-2.5">Provider</th>
+                <th class="px-4 py-2.5">Model</th>
+                <th class="px-4 py-2.5">Status</th>
+                <th class="px-4 py-2.5 text-right">Failures</th>
+                <th class="px-4 py-2.5 text-right">Last Latency</th>
+              </tr>
+            </thead>
+            <tbody id="routerRoutesTableBody" class="divide-y divide-gray-800/60">
+              <tr><td colspan="6" class="px-4 py-4 text-center text-gray-500">Loading routes...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Live Route Latency & Speed Benchmarker Playground -->
+      <div class="glass rounded-xl p-6 border border-gray-800 space-y-4">
+        <div class="flex justify-between items-center">
+          <div>
+            <h3 class="text-base font-semibold text-white">Live Route Benchmark &amp; Ping Playground</h3>
+            <p class="text-sm text-gray-400">Execute concurrent latency pings against active routes and rank them by speed.</p>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <input type="text" id="routerBenchPrompt" value="Explain recursion in 10 words." placeholder="Prompt to benchmark..." class="flex-1 bg-gray-900 border border-gray-700 text-xs text-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 font-mono">
+          <button id="runBenchBtn" onclick="runRouterBenchmark()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 shrink-0">
+            <span>⚡ Run Benchmark</span>
+          </button>
+        </div>
+        <div id="routerBenchResultsContainer" class="hidden overflow-x-auto rounded-lg border border-gray-800">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-gray-900/80 text-gray-400 uppercase tracking-wider border-b border-gray-800">
+              <tr>
+                <th class="px-4 py-2.5">Rank</th>
+                <th class="px-4 py-2.5">Route</th>
+                <th class="px-4 py-2.5">Provider</th>
+                <th class="px-4 py-2.5">Model</th>
+                <th class="px-4 py-2.5 text-right">TTFT</th>
+                <th class="px-4 py-2.5 text-right">Total Latency</th>
+                <th class="px-4 py-2.5">Status</th>
+                <th class="px-4 py-2.5">Sample Output</th>
+              </tr>
+            </thead>
+            <tbody id="routerBenchTableBody" class="divide-y divide-gray-800/60 font-mono">
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Stored Authentication Tokens -->
       <div class="glass rounded-xl p-6 border border-gray-800 space-y-4">
         <h3 class="text-base font-semibold text-white">Stored Authentication Tokens</h3>
         <div id="tokensList" class="text-sm text-gray-300 space-y-2">Loading stored tokens...</div>
@@ -454,7 +548,7 @@
   </div>
 
   <script>
-    let state = { overview: null, runs: [], sessions: [], activeSessionId: null, isGenerating: false, git: null };
+    let state = { overview: null, runs: [], sessions: [], activeSessionId: null, isGenerating: false, git: null, router: null };
 
     async function fetchJson(url) {
       const res = await fetch(url);
@@ -463,18 +557,20 @@
 
     async function refreshData() {
       try {
-        const [statusData, runsData, sessionsData, costData, gitData] = await Promise.all([
+        const [statusData, runsData, sessionsData, costData, gitData, routerData] = await Promise.all([
           fetchJson('/api/status'),
           fetchJson('/api/runs'),
           fetchJson('/api/sessions'),
           fetchJson('/api/cost').catch(() => null),
-          fetchJson('/api/git').catch(() => null)
+          fetchJson('/api/git').catch(() => null),
+          fetchJson('/api/router').catch(() => null)
         ]);
         state.overview = statusData;
         state.runs = runsData.runs || [];
         state.sessions = sessionsData.sessions || [];
         state.cost = costData;
         state.git = gitData;
+        state.router = routerData;
 
         renderOverview();
         renderRuns();
@@ -727,22 +823,198 @@
     function renderRouter() {
       if (!state.overview) return;
       const env = state.overview.env || {};
-      document.getElementById('routerChain').innerText = env.AVO_ROUTER_PROVIDERS || 'ollama,openrouter';
-      document.getElementById('routerModels').innerText = env.AVO_ROUTER_MODELS || 'llama3.1,meta-llama/llama-3.3-70b-instruct:free';
+      const r = state.router || {};
+
+      const activeBadge = document.getElementById('routerActiveBadge');
+      if (activeBadge) {
+        const activeProv = r.active_provider || env.AVO_PROVIDER || 'ollama';
+        const activeMod = r.active_model || env.AVO_MODEL || '';
+        activeBadge.innerText = activeMod && activeMod !== 'default' ? `${activeProv} (${activeMod})` : activeProv;
+      }
+
+      const chainEl = document.getElementById('routerChain');
+      if (chainEl) {
+        chainEl.innerText = r.router_providers || r.router_chain || env.AVO_ROUTER_PROVIDERS || env.AVO_ROUTER_CHAIN || 'ollama,openrouter';
+      }
+
+      const modelsEl = document.getElementById('routerModels');
+      if (modelsEl) {
+        modelsEl.innerText = r.router_models || env.AVO_ROUTER_MODELS || 'llama3.1,meta-llama/llama-3.3-70b-instruct:free';
+      }
+
+      const provSelect = document.getElementById('switchProviderSelect');
+      if (provSelect && r.active_provider) {
+        provSelect.value = r.active_provider;
+      }
+      const modelInput = document.getElementById('switchModelInput');
+      if (modelInput && r.active_model && !modelInput.value) {
+        modelInput.value = r.active_model === 'default' ? '' : r.active_model;
+      }
+
+      const tbody = document.getElementById('routerRoutesTableBody');
+      if (tbody) {
+        const routes = r.routes || [];
+        if (!routes.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-4 text-center text-gray-500 font-sans">No active routes detected.</td></tr>';
+        } else {
+          tbody.innerHTML = routes.map(rt => {
+            const isHealthy = rt.healthy !== false && !rt.in_cooldown;
+            let statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/70 text-emerald-300 border border-emerald-800">Healthy</span>';
+            if (rt.in_cooldown) {
+              const secs = Math.ceil(rt.cooldown_remaining_seconds || 0);
+              statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-950/70 text-amber-300 border border-amber-800">Cooldown (${secs}s)</span>`;
+            } else if (!isHealthy) {
+              statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950/70 text-rose-300 border border-rose-800">Unhealthy</span>';
+            }
+            const latencyStr = rt.last_latency_ms != null ? `${Number(rt.last_latency_ms).toFixed(1)} ms` : '-';
+            const failCount = rt.consecutive_failures || 0;
+            const failClass = failCount > 0 ? 'text-amber-400 font-semibold' : 'text-gray-400';
+
+            return `
+              <tr class="hover:bg-gray-900/40 transition font-mono">
+                <td class="px-4 py-2.5 font-bold text-white">${escapeHtml(rt.name)}</td>
+                <td class="px-4 py-2.5 text-gray-300">${escapeHtml(rt.provider)}</td>
+                <td class="px-4 py-2.5 text-indigo-300 truncate max-w-[180px]">${escapeHtml(rt.model)}</td>
+                <td class="px-4 py-2.5">${statusBadge}</td>
+                <td class="px-4 py-2.5 text-right ${failClass}">${failCount}</td>
+                <td class="px-4 py-2.5 text-right text-gray-300">${latencyStr}</td>
+              </tr>
+            `;
+          }).join('');
+        }
+      }
 
       const tokens = state.overview.tokens || {};
       const container = document.getElementById('tokensList');
-      const keys = Object.keys(tokens);
-      if (!keys.length) {
-        container.innerHTML = '<p class="text-gray-500">No stored tokens found. Run <code>avo login</code> to add credentials.</p>';
-        return;
+      if (container) {
+        const keys = Object.keys(tokens);
+        if (!keys.length) {
+          container.innerHTML = '<p class="text-gray-500">No stored tokens found. Run <code>avo login</code> to add credentials.</p>';
+        } else {
+          container.innerHTML = keys.map(k => `
+            <div class="flex justify-between items-center p-3 rounded-lg bg-gray-900/60 border border-gray-800">
+              <span class="font-semibold text-white uppercase">${k}</span>
+              <code class="text-xs text-emerald-400">${tokens[k]}</code>
+            </div>
+          `).join('');
+        }
       }
-      container.innerHTML = keys.map(k => `
-        <div class="flex justify-between items-center p-3 rounded-lg bg-gray-900/60 border border-gray-800">
-          <span class="font-semibold text-white uppercase">${k}</span>
-          <code class="text-xs text-emerald-400">${tokens[k]}</code>
-        </div>
-      `).join('');
+    }
+
+    async function handleSwitchProvider() {
+      const provider = document.getElementById('switchProviderSelect').value;
+      const model = document.getElementById('switchModelInput').value.trim();
+      try {
+        const res = await fetch('/api/provider', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider, model })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          await refreshData();
+        } else {
+          alert('Failed to switch provider: ' + (data.error || 'unknown error'));
+        }
+      } catch (err) {
+        alert('Switch provider error: ' + err.message);
+      }
+    }
+
+    async function probeRouterHealth() {
+      const btn = document.getElementById('probeHealthBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span>↻ Probing...</span>';
+      }
+      try {
+        const res = await fetch('/api/router/probe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (data.ok) {
+          state.router = await fetchJson('/api/router').catch(() => null);
+          renderRouter();
+        } else {
+          alert('Health probe failed: ' + (data.error || 'unknown error'));
+        }
+      } catch (err) {
+        alert('Health probe error: ' + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<span>↻ Probe Health</span>';
+        }
+      }
+    }
+
+    async function runRouterBenchmark() {
+      const promptInput = document.getElementById('routerBenchPrompt');
+      const promptText = (promptInput && promptInput.value.trim()) || 'Explain recursion in 10 words.';
+      const btn = document.getElementById('runBenchBtn');
+      const container = document.getElementById('routerBenchResultsContainer');
+      const tbody = document.getElementById('routerBenchTableBody');
+
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span>Benchmarking...</span>';
+      }
+
+      try {
+        const res = await fetch('/api/router/bench', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: promptText })
+        });
+        const data = await res.json();
+        if (data.ok && data.results) {
+          container.classList.remove('hidden');
+          const results = data.results;
+          if (!results.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-4 text-center text-gray-500 font-sans">No benchmark results returned.</td></tr>';
+          } else {
+            tbody.innerHTML = results.map((r, idx) => {
+              const rank = idx + 1;
+              const rankBadge = rank === 1
+                ? '<span class="px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300 font-bold border border-emerald-700 text-[10px]">#1 FASTEST</span>'
+                : `<span class="text-gray-400 font-bold">#${rank}</span>`;
+              const statusBadge = r.success
+                ? '<span class="text-emerald-400 font-semibold">OK</span>'
+                : '<span class="text-rose-400 font-semibold">ERR</span>';
+              const ttftVal = r.ttft_ms != null ? r.ttft_ms : (r.ttft_seconds != null ? r.ttft_seconds * 1000 : null);
+              const ttftStr = ttftVal != null ? `${Number(ttftVal).toFixed(1)} ms` : '-';
+              const latVal = r.latency_ms != null ? r.latency_ms : (r.latency_seconds != null ? r.latency_seconds * 1000 : null);
+              const latencyStr = latVal != null ? `${Number(latVal).toFixed(1)} ms` : '-';
+              const routeName = r.route || r.route_name || 'default';
+              const outText = r.output || r.response_preview || r.error || '';
+              const sample = escapeHtml(outText.substring(0, 50));
+
+              return `
+                <tr class="hover:bg-gray-900/40 transition">
+                  <td class="px-4 py-2.5">${rankBadge}</td>
+                  <td class="px-4 py-2.5 font-bold text-white">${escapeHtml(routeName)}</td>
+                  <td class="px-4 py-2.5 text-gray-300">${escapeHtml(r.provider || '')}</td>
+                  <td class="px-4 py-2.5 text-indigo-300 truncate max-w-[140px]">${escapeHtml(r.model || '')}</td>
+                  <td class="px-4 py-2.5 text-right text-purple-300">${ttftStr}</td>
+                  <td class="px-4 py-2.5 text-right font-bold text-emerald-300">${latencyStr}</td>
+                  <td class="px-4 py-2.5">${statusBadge}</td>
+                  <td class="px-4 py-2.5 text-gray-400 truncate max-w-[200px]" title="${escapeHtml(outText)}">${sample}</td>
+                </tr>
+              `;
+            }).join('');
+          }
+        } else {
+          alert('Benchmark failed: ' + (data.error || 'unknown error'));
+        }
+      } catch (err) {
+        alert('Benchmark error: ' + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<span>⚡ Run Benchmark</span>';
+        }
+      }
     }
 
     async function inspectRun(runId) {
