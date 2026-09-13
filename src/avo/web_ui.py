@@ -27,6 +27,7 @@ from avo.auth import load_all_tokens
 from avo.chat_session import SessionLifecycle
 from avo.cost import aggregate_costs, report_to_dict
 from avo.doctor import run_doctor
+from avo.persona import PersonaManager
 from avo.storage.sqlite import SQLiteEventStore
 from avo.tracing import TraceInspector
 
@@ -128,6 +129,13 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                         "chain": chain_list,
                         "cooldown_seconds": float(
                             os.environ.get("AVO_ROUTER_COOLDOWN_SECONDS", "30.0") or 30.0
+                        ),
+                    },
+                    "persona": {
+                        "active": PersonaManager(self.server.database_path.parent).active_persona
+                        or "default",
+                        "instructions_configured": bool(
+                            PersonaManager(self.server.database_path.parent).custom_instructions
                         ),
                     },
                     "env": {

@@ -1151,3 +1151,49 @@ def test_repl_shell_and_exclamation_commands(
     assert "hello from bang" in out
     assert "exited with code 1" in out
     assert "usage: /shell COMMAND" in err
+
+
+def test_repl_persona_and_instructions_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    stdin = io.StringIO(
+        "/persona\n"
+        "/persona coder\n"
+        "/persona invalid_name\n"
+        "/instructions\n"
+        "/instructions Focus strictly on async code.\n"
+        "/instructions\n"
+        "/context\n"
+        "/persona clear\n"
+        "/instructions clear\n"
+        "/quit\n"
+    )
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = asyncio.run(
+        run_repl(
+            database_path=chat_env["db"],
+            workspace_root=chat_env["workspace"],
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            environ=env,
+        )
+    )
+    assert code == 0
+    out = stdout.getvalue()
+    err = stderr.getvalue()
+    assert "Available built-in personas:" in out
+    assert "✓ Switched persona to: coder" in out
+    assert "Unknown persona 'invalid_name'" in err
+    assert "Focus strictly on async code." in out
+    assert "Persona" in out
+    assert "✓ Reset persona to default." in out
+    assert "✓ Cleared workspace instructions." in out

@@ -60,6 +60,7 @@ from avo.permissions import (
     build_approval_callback,
     permission_policy_from_env,
 )
+from avo.persona import PersonaManager
 from avo.providers.streaming import split_thinking
 from avo.runtime import AgentRuntime, ApprovalCallback
 from avo.skills import SkillRegistry
@@ -106,6 +107,7 @@ class ChatContext:
     pending_preamble: str | None = None
     background: BackgroundJobManager = field(default_factory=BackgroundJobManager)
     permission_policy: PermissionPolicy = field(default_factory=PermissionPolicy)
+    persona: PersonaManager = field(default_factory=PersonaManager)
 
 
 def _read_environ() -> dict[str, str]:
@@ -202,6 +204,8 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/router", "show multi-provider fallback router live status"),
     ("/model [NAME]", "list known models, or switch to NAME or PROVIDER/MODEL"),
     ("/context", "display full context snapshot (session, model, workspace, skills)"),
+    ("/persona [NAME]", "list known personas or switch active persona (coder, reviewer, etc.)"),
+    ("/instructions [TEXT]", "view or set custom workspace instructions"),
     ("/cost", "show token usage and spend breakdown from ledger"),
     ("/permissions [MODE]", "view or switch permission mode (default, accept_edits, etc.)"),
     ("/shell [CMD]", "execute shell command in workspace (or use !CMD)"),
@@ -279,6 +283,13 @@ def _print_active_context(out: TextIO, ctx: ChatContext, environ: dict[str, str]
             else "none",
         ),
         ("Background Jobs", f"{running_jobs} active running"),
+        ("Persona", ctx.persona.active_persona or "(default)"),
+        (
+            "Instructions",
+            f"{len(ctx.persona.custom_instructions)} chars active"
+            if ctx.persona.custom_instructions
+            else "none",
+        ),
     ]
 
     label_w = max(len(k) for k, _ in rows)
@@ -286,6 +297,70 @@ def _print_active_context(out: TextIO, ctx: ChatContext, environ: dict[str, str]
     for k, v in rows:
         out.write(f"│ {k.ljust(label_w)} : {v}\n")
     out.write("╰─────────────────────────────────────────────────────────╯\n")
+    out.flush()
+
+
+def _manage_persona(
+    ctx: ChatContext,
+    name_arg: str | None,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """List available personas or switch active persona."""
+    from avo.persona import BUILTIN_PERSONAS
+
+    if not name_arg:
+        current = ctx.persona.active_persona or "(default)"
+        out.write(f"Active persona: {current}\n\n")
+        out.write("Available built-in personas:\n")
+        for p_name, p_desc in BUILTIN_PERSONAS.items():
+            first_line = p_desc.splitlines()[0]
+            out.write(f"  • {p_name:<10} - {first_line}\n")
+        out.write("\nSwitch persona with: /persona <NAME> (or /persona clear to reset)\n")
+        out.flush()
+        return
+
+    if name_arg.lower() in ("clear", "reset", "none", "off"):
+        ctx.persona.set_persona(None)
+        out.write("✓ Reset persona to default.\n")
+        out.flush()
+        return
+
+    try:
+        ctx.persona.set_persona(name_arg)
+        out.write(f"✓ Switched persona to: {name_arg.lower()}\n")
+        out.flush()
+    except ValueError as exc:
+        err.write(f"{exc}\n")
+        err.flush()
+
+
+def _manage_instructions(
+    ctx: ChatContext,
+    text_arg: str | None,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """View or set custom workspace instructions."""
+    if not text_arg:
+        current = ctx.persona.custom_instructions
+        if current:
+            out.write("Active workspace instructions:\n")
+            out.write(f"{current}\n")
+        else:
+            out.write("No custom workspace instructions configured.\n")
+            out.write("Tip: create .avo/instructions.md or set with /instructions <TEXT>\n")
+        out.flush()
+        return
+
+    if text_arg.lower() in ("clear", "reset", "none", "off"):
+        ctx.persona.set_custom_instructions(None)
+        out.write("✓ Cleared workspace instructions.\n")
+        out.flush()
+        return
+
+    ctx.persona.set_custom_instructions(text_arg)
+    out.write("✓ Updated custom workspace instructions for this session.\n")
     out.flush()
 
 
@@ -735,6 +810,7 @@ def build_chat_context(
     skills_root.mkdir(parents=True, exist_ok=True)
     skills = SkillRegistry(skills_root)
     session = SessionLifecycle.open(db_path)
+    persona_mgr = PersonaManager(workspace_root=workspace.root)
     if force_new_session or session_id is None:
         return ChatContext(
             runtime=runtime,
@@ -746,6 +822,7 @@ def build_chat_context(
             session=session,
             session_id=_new_session_id(),
             permission_policy=resolved_policy,
+            persona=persona_mgr,
         )
     if not session.session_exists(session_id):
         session.close()
@@ -762,6 +839,7 @@ def build_chat_context(
         session_id=session_id,
         pending_preamble=preamble,
         permission_policy=resolved_policy,
+        persona=persona_mgr,
     )
 
 
@@ -810,6 +888,16 @@ async def _run_slash(
 
     if cmd == "/context":
         _print_active_context(out, ctx, environ)
+        return False
+
+    if cmd == "/persona":
+        name_arg = args[1] if len(args) > 1 else None
+        _manage_persona(ctx, name_arg, out, err)
+        return False
+
+    if cmd in ("/instructions", "/prompt"):
+        text_arg = " ".join(args[1:]) if len(args) > 1 else None
+        _manage_instructions(ctx, text_arg, out, err)
         return False
 
     if cmd == "/cost":
@@ -1138,11 +1226,14 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
 
     ctx.session.record_user_turn(ctx.session_id, task)
     effective_task = task
+    system_prompt = ctx.persona.render_system_prompt()
+    if system_prompt:
+        effective_task = f"[System Context]\n{system_prompt}\n\n---\n{effective_task}"
     if ctx.pending_preamble is not None:
         effective_task = (
             f"{ctx.pending_preamble}\n\n"
             f"---\n"
-            f"User's current message (continue directly without greeting):\n{task}"
+            f"User's current message (continue directly without greeting):\n{effective_task}"
         )
         ctx.pending_preamble = None
 
