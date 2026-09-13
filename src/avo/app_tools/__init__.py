@@ -16,6 +16,7 @@ from .git_commit import git_commit_tool
 from .git_diff import git_diff_tool
 from .git_status import git_status_tool
 from .linter import lint_tool
+from .test_runner import test_runner_tool
 from .workspace_map import workspace_map_tool
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "git_status_tool",
     "lint_tool",
     "read_file_tool",
+    "test_runner_tool",
     "workspace_map_tool",
     "write_file_tool",
 ]

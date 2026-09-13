@@ -27,7 +27,7 @@ from typing import TextIO
 
 from avo import __version__ as AVO_VERSION
 from avo import runtime as _runtime  # noqa: F401  (typing hook)
-from avo.app_tools import git_commit_tool, git_diff_tool, lint_tool
+from avo.app_tools import git_commit_tool, git_diff_tool, lint_tool, test_runner_tool
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
 from avo.app_tools.workspace import Workspace
 from avo.background import BackgroundJobManager, render_job_detail, render_job_row
@@ -198,6 +198,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/diff [PATH]", "show git status, diff stat, or unified diff for PATH"),
     ("/undo", "revert uncommitted workspace modifications"),
     ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
+    ("/test [TARGET]", "run automated test suite on workspace files"),
     ("/commit [MSG]", "stage changes and create atomic git commit (auto-message if omitted)"),
     ("/bench [PROMPT]", "benchmark live routes and display speed ranking"),
     ("/clear", "clear the terminal screen"),
@@ -382,6 +383,34 @@ def _run_workspace_lint(
         out.write(f"⚠ Linter ({tool_used}) detected {count} issue(s):\n")
         for issue in res.get("issues", []):
             out.write(f"  • {issue}\n")
+    out.flush()
+
+
+def _run_workspace_tests(
+    workspace_root: Path,
+    out: TextIO,
+    err: TextIO,
+    target: str | None = None,
+) -> None:
+    """Execute automated tests on workspace and display concise results."""
+    from avo.app_tools.test_runner import run_tests
+
+    out.write(f"Running test suite ({target or 'all'})...\n")
+    out.flush()
+    res = run_tests(workspace_root, target=target)
+    runner = res.get("runner", "test_runner")
+    target_name = res.get("target", "all")
+    if res.get("ok"):
+        out.write(f"✓ Test suite ({runner}) passed cleanly: {res.get('summary')}\n")
+    else:
+        ret = res.get("returncode")
+        out.write(f"✗ Test suite ({runner}) failed for target '{target_name}' (exit code {ret}):\n")
+        out.write(f"  Summary: {res.get('summary')}\n")
+        failures = res.get("failures", [])
+        if failures:
+            out.write("  Failure traces:\n")
+            for f in failures[:10]:
+                out.write(f"    • {f}\n")
     out.flush()
 
 
@@ -576,6 +605,7 @@ def build_chat_context(
             read_file_tool(),
             write_file_tool(),
             lint_tool(),
+            test_runner_tool(),
             git_diff_tool(),
             git_commit_tool(),
         ],
@@ -672,6 +702,11 @@ async def _run_slash(
     if cmd == "/lint":
         target = args[1] if len(args) > 1 else None
         _run_workspace_lint(ctx.workspace.root, out, err, target)
+        return False
+
+    if cmd == "/test":
+        target = args[1] if len(args) > 1 else None
+        _run_workspace_tests(ctx.workspace.root, out, err, target)
         return False
 
     if cmd == "/commit":

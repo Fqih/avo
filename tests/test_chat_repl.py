@@ -126,7 +126,14 @@ def test_build_chat_context_constructs_runtime_with_tools(
     assert ctx.store is not None
     assert ctx.workspace.root == chat_env["workspace"].resolve()
     tool_names = {tool.metadata.name for tool in ctx.runtime.tools._tools.values()}  # type: ignore[attr-defined]
-    assert tool_names == {"read_file", "write_file", "lint", "git_diff", "git_commit"}
+    assert tool_names == {
+        "read_file",
+        "write_file",
+        "lint",
+        "test_runner",
+        "git_diff",
+        "git_commit",
+    }
 
 
 def test_build_chat_context_missing_provider_raises(
