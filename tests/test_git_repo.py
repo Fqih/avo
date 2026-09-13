@@ -224,3 +224,44 @@ def test_branch_and_log_outside_repo(tmp_path: Path) -> None:
         repo.switch_branch("main")
     with pytest.raises(GitError, match="not a git repository"):
         repo.log()
+
+
+def test_git_repo_stash_lifecycle(git_repo: Path) -> None:
+    repo = GitRepository(git_repo)
+    # git_repo fixture has tracked.txt modified and new.txt untracked
+    assert not repo.status().is_clean
+
+    # 1. Stash save with custom message
+    res = repo.stash_save("experimental WIP")
+    assert "WIP" in res or "Saved" in res
+    assert repo.status().is_clean
+    assert (git_repo / "tracked.txt").read_text(encoding="utf-8") == "hello"
+
+    # 2. Stash list
+    stashes = repo.stash_list()
+    assert len(stashes) == 1
+    assert "experimental WIP" in stashes[0]["description"]
+
+    # 3. Stash pop
+    repo.stash_pop(0)
+    assert not repo.status().is_clean
+    assert (git_repo / "tracked.txt").read_text(encoding="utf-8") == "hello world"
+    assert len(repo.stash_list()) == 0
+
+    # 4. Stash save & drop
+    repo.stash_save("to be dropped")
+    assert len(repo.stash_list()) == 1
+    repo.stash_drop(0)
+    assert len(repo.stash_list()) == 0
+
+
+def test_stash_outside_repo(tmp_path: Path) -> None:
+    repo = GitRepository(tmp_path)
+    with pytest.raises(GitError, match="not a git repository"):
+        repo.stash_save()
+    with pytest.raises(GitError, match="not a git repository"):
+        repo.stash_list()
+    with pytest.raises(GitError, match="not a git repository"):
+        repo.stash_pop()
+    with pytest.raises(GitError, match="not a git repository"):
+        repo.stash_drop()

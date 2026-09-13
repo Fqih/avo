@@ -229,6 +229,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/commit [MSG]", "stage changes and create atomic git commit (auto-message if omitted)"),
     ("/branch [NAME]", "list git branches, or switch/create branch NAME"),
     ("/log [N]", "show recent N git commits in the repository"),
+    ("/stash [CMD]", "manage git stash (list, save, pop, or drop)"),
     ("/bench [PROMPT]", "benchmark live routes and display speed ranking"),
     ("/clear", "clear the terminal screen"),
     ("/export [PATH]", "export current chat session to Markdown file"),
@@ -1048,6 +1049,80 @@ def _show_git_log(
     out.flush()
 
 
+def _manage_stash(
+    workspace_root: Path,
+    subcmd: str | None,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Manage git stashes (list, save, pop, or drop)."""
+    from avo.workspace.git import GitError, GitRepository
+
+    repo = GitRepository(workspace_root)
+    if not repo.is_repository():
+        err.write(f"Workspace {workspace_root} is not a git repository.\n")
+        err.flush()
+        return
+
+    cmd = (subcmd or "list").lower().strip()
+    if cmd in ("list", ""):
+        try:
+            stashes = repo.stash_list()
+        except GitError as exc:
+            err.write(f"git error: {exc}\n")
+            err.flush()
+            return
+
+        if not stashes:
+            out.write("No stashes found in repository.\n")
+            out.flush()
+            return
+
+        out.write(f"\nGit Stashes ({len(stashes)}):\n\n")
+        for s in stashes:
+            out.write(f"  [{s['index']}] {s['ref']}: {s['description']}\n")
+        out.write("\n")
+        out.flush()
+        return
+
+    if cmd in ("save", "push"):
+        msg = " ".join(args) if args else None
+        try:
+            res = repo.stash_save(msg)
+            out.write(f"✓ {res}\n")
+            out.flush()
+        except GitError as exc:
+            err.write(f"git error: {exc}\n")
+            err.flush()
+        return
+
+    if cmd in ("pop", "apply"):
+        idx = int(args[0]) if args and args[0].isdigit() else 0
+        try:
+            repo.stash_pop(idx)
+            out.write(f"✓ Applied and removed stash@{{{idx}}}.\n")
+            out.flush()
+        except GitError as exc:
+            err.write(f"git error: {exc}\n")
+            err.flush()
+        return
+
+    if cmd in ("drop", "delete"):
+        idx = int(args[0]) if args and args[0].isdigit() else 0
+        try:
+            repo.stash_drop(idx)
+            out.write(f"✓ Dropped stash@{{{idx}}}.\n")
+            out.flush()
+        except GitError as exc:
+            err.write(f"git error: {exc}\n")
+            err.flush()
+        return
+
+    err.write(f"Unknown stash subcommand '{subcmd}'. Usage: /stash [list|save|pop|drop]\n")
+    err.flush()
+
+
 def _show_router_status(ctx: ChatContext, out: TextIO) -> None:
     """Display real-time router circuit breaker and health status."""
     from avo.providers.router import BaseRouterProvider
@@ -1323,6 +1398,12 @@ async def _run_slash(
     if cmd == "/log":
         count = int(args[1]) if len(args) > 1 and args[1].isdigit() else 10
         _show_git_log(ctx.workspace.root, out, err, max_count=count)
+        return False
+
+    if cmd == "/stash":
+        sub = args[1] if len(args) > 1 else None
+        sub_args = args[2:] if len(args) > 2 else []
+        _manage_stash(ctx.workspace.root, sub, sub_args, out, err)
         return False
 
     if cmd == "/bench":

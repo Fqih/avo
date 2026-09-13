@@ -367,6 +367,83 @@ class GitRepository:
                 )
         return commits
 
+    def stash_save(
+        self,
+        message: str | None = None,
+        *,
+        include_untracked: bool = True,
+    ) -> str:
+        """Stash working tree changes and return status output."""
+        if not self.is_repository():
+            raise GitError(f"{self._root} is not a git repository")
+
+        status = self.status()
+        if status.is_clean:
+            return "No local changes to save"
+
+        args = ["stash", "push"]
+        if include_untracked:
+            args.append("--include-untracked")
+        if message and message.strip():
+            args.extend(["-m", message.strip()])
+
+        proc = _run_git(self._root, args)
+        if proc.returncode != 0:
+            err_msg = proc.stderr.strip() or proc.stdout.strip()
+            raise GitError(f"git stash push failed: {err_msg}")
+
+        return proc.stdout.strip() or "Saved working directory and index state"
+
+    def stash_list(self) -> list[dict[str, str]]:
+        """List current stashes with index, ref, and description."""
+        if not self.is_repository():
+            raise GitError(f"{self._root} is not a git repository")
+
+        proc = _run_git(self._root, ["stash", "list"])
+        if proc.returncode != 0:
+            return []
+
+        stashes: list[dict[str, str]] = []
+        for line in proc.stdout.splitlines():
+            clean = line.strip()
+            if not clean or ":" not in clean:
+                continue
+            ref_part, rest = clean.split(":", 1)
+            ref_str = ref_part.strip()
+            idx = "0"
+            if "{" in ref_str and "}" in ref_str:
+                idx = ref_str.split("{", 1)[1].split("}", 1)[0]
+            stashes.append(
+                {
+                    "index": idx,
+                    "ref": ref_str,
+                    "description": rest.strip(),
+                }
+            )
+        return stashes
+
+    def stash_pop(self, index: int = 0) -> None:
+        """Apply and remove stash at index (default 0)."""
+        if not self.is_repository():
+            raise GitError(f"{self._root} is not a git repository")
+
+        ref = f"stash@{{{index}}}"
+        proc = _run_git(self._root, ["stash", "pop", ref])
+        if proc.returncode != 0:
+            err_msg = proc.stderr.strip() or proc.stdout.strip()
+            raise GitError(f"git stash pop failed: {err_msg}")
+
+    def stash_drop(self, index: int = 0) -> None:
+        """Drop stash entry at index (default 0)."""
+        if not self.is_repository():
+            raise GitError(f"{self._root} is not a git repository")
+
+        ref = f"stash@{{{index}}}"
+        proc = _run_git(self._root, ["stash", "drop", ref])
+        if proc.returncode != 0:
+            err_msg = proc.stderr.strip() or proc.stdout.strip()
+            raise GitError(f"git stash drop failed: {err_msg}")
+
 
 def generate_commit_message_heuristic(status: GitStatus) -> str:
     """Generate a conventional commit message based on modified files."""

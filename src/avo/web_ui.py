@@ -433,6 +433,45 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)}, status=400)
             return
 
+        if path == "/api/git/stash":
+            from avo.workspace.git import GitError, GitRepository
+
+            content_len = int(self.headers.get("Content-Length", 0))
+            stash_payload: dict[str, Any] = {}
+            if content_len > 0:
+                with contextlib.suppress(Exception):
+                    loaded = json.loads(self.rfile.read(content_len).decode("utf-8"))
+                    if isinstance(loaded, dict):
+                        stash_payload = loaded
+
+            repo = GitRepository(self.server.workspace_root)
+            if not repo.is_repository():
+                self._send_json({"ok": False, "error": "Not a git repository"}, status=400)
+                return
+
+            action = str(stash_payload.get("action", "list")).strip().lower()
+            try:
+                if action in ("save", "push"):
+                    stash_msg = stash_payload.get("message")
+                    save_res = repo.stash_save(str(stash_msg) if stash_msg else None)
+                    self._send_json({"ok": True, "result": save_res, "stashes": repo.stash_list()})
+                    return
+                if action in ("pop", "apply"):
+                    idx = int(stash_payload.get("index", 0))
+                    repo.stash_pop(idx)
+                    self._send_json({"ok": True, "stashes": repo.stash_list()})
+                    return
+                if action in ("drop", "delete"):
+                    idx = int(data.get("index", 0))
+                    repo.stash_drop(idx)
+                    self._send_json({"ok": True, "stashes": repo.stash_list()})
+                    return
+                self._send_json({"ok": True, "stashes": repo.stash_list()})
+                return
+            except GitError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+
         self._send_json({"error": "Not Found"}, status=404)
 
 
@@ -472,10 +511,9 @@ class AvoWebServer(ThreadingHTTPServer):
                 "is_clean": True,
                 "entries": [],
                 "modified": [],
-                "added": [],
                 "untracked": [],
-                "deleted": [],
                 "branches": [],
+                "stashes": [],
                 "diff": "",
                 "recent_commits": [],
             }
@@ -486,6 +524,7 @@ class AvoWebServer(ThreadingHTTPServer):
             staged_diff = repo.diff(staged=True)
             full_diff = (staged_diff + "\n" + diff_text).strip() if staged_diff else diff_text
             commits = repo.log(max_count=10)
+            stashes = repo.stash_list()
             entries = [
                 {
                     "path": e.path,
@@ -507,6 +546,7 @@ class AvoWebServer(ThreadingHTTPServer):
                 "modified": list(status.modified),
                 "untracked": list(status.untracked),
                 "branches": branches,
+                "stashes": stashes,
                 "diff": full_diff,
                 "recent_commits": commits,
             }
@@ -522,6 +562,7 @@ class AvoWebServer(ThreadingHTTPServer):
                 "modified": [],
                 "untracked": [],
                 "branches": [],
+                "stashes": [],
                 "diff": "",
                 "recent_commits": [],
             }

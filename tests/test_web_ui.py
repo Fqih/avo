@@ -468,3 +468,59 @@ def test_web_ui_api_git_non_repo(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_web_ui_api_git_stash(tmp_path: Path) -> None:
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.email", "tester@example.com"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.name", "Tester"], cwd=str(ws), check=True)
+    (ws / "file.txt").write_text("initial", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(ws), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(ws), check=True)
+
+    db_path = tmp_path / "git_stash_test.db"
+    server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=ws)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        # 1. Modify file
+        (ws / "file.txt").write_text("dirty state", encoding="utf-8")
+
+        # 2. POST /api/git/stash (save)
+        req_save = urllib.request.Request(
+            f"{base_url}/api/git/stash",
+            data=json.dumps({"action": "save", "message": "save for later"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_save, timeout=5) as resp:
+            assert resp.status == 200
+            save_res = json.loads(resp.read().decode("utf-8"))
+            assert save_res["ok"] is True
+            assert len(save_res["stashes"]) == 1
+            assert "save for later" in save_res["stashes"][0]["description"]
+
+        assert (ws / "file.txt").read_text(encoding="utf-8") == "initial"
+
+        # 3. POST /api/git/stash (pop)
+        req_pop = urllib.request.Request(
+            f"{base_url}/api/git/stash",
+            data=json.dumps({"action": "pop", "index": 0}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_pop, timeout=5) as resp:
+            assert resp.status == 200
+            pop_res = json.loads(resp.read().decode("utf-8"))
+            assert pop_res["ok"] is True
+            assert len(pop_res["stashes"]) == 0
+
+        assert (ws / "file.txt").read_text(encoding="utf-8") == "dirty state"
+    finally:
+        server.shutdown()
+        server.server_close()

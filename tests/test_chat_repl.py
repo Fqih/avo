@@ -1446,3 +1446,62 @@ def test_repl_branch_and_log_commands(
     assert "Recent Commits" in log_out
     assert "second commit" in log_out
     assert "initial commit" in log_out
+
+
+def test_repl_stash_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ws = chat_env["workspace"]
+    # Initialize git repo in workspace
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(ws), check=True)
+    (ws / "file.txt").write_text("v1", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(ws), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init commit"], cwd=str(ws), check=True)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=ws,
+        environ=env,
+    )
+
+    # 1. Empty stash list
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = asyncio.run(_run_slash(ctx, ["/stash", "list"], stdout, stderr, env))
+    assert res is False
+    assert "No stashes found" in stdout.getvalue()
+
+    # 2. Modify file and /stash save
+    (ws / "file.txt").write_text("v2 uncommitted", encoding="utf-8")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = asyncio.run(_run_slash(ctx, ["/stash", "save", "my work"], stdout, stderr, env))
+    assert res is False
+    assert "✓" in stdout.getvalue()
+    assert (ws / "file.txt").read_text(encoding="utf-8") == "v1"
+
+    # 3. /stash list shows saved stash
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = asyncio.run(_run_slash(ctx, ["/stash"], stdout, stderr, env))
+    assert res is False
+    assert "Git Stashes" in stdout.getvalue()
+    assert "my work" in stdout.getvalue()
+
+    # 4. /stash pop restores change
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = asyncio.run(_run_slash(ctx, ["/stash", "pop"], stdout, stderr, env))
+    assert res is False
+    assert "Applied and removed" in stdout.getvalue()
+    assert (ws / "file.txt").read_text(encoding="utf-8") == "v2 uncommitted"
