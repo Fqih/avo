@@ -346,7 +346,62 @@ def test_race_router_strategy_in_build_provider_from_env() -> None:
         "AVO_ROUTER_STRATEGY": "race",
         "AVO_ROUTER_CHAIN": "ollama",
         "AVO_OLLAMA_MODEL": "llama3.2",
+        "AVO_ROUTER_SPECULATIVE_DELAY_MS": "400",
     }
     provider = build_provider_from_env(env)
     assert isinstance(provider, RaceRouterProvider)
     assert provider.strategy == "race"
+    assert provider.speculative_delay_seconds == 0.4
+
+
+def test_race_router_speculative_delay_cancels_secondary() -> None:
+    p_primary = _MockProvider("primary-fast", delay=0.01)
+    p_secondary = _MockProvider("secondary-cloud", delay=0.01)
+
+    router = RaceRouterProvider(
+        [("primary-fast", p_primary), ("secondary-cloud", p_secondary)],  # type: ignore[list-item]
+        speculative_delay_seconds=0.08,
+    )
+    req = ModelRequest(run_id="r-spec-1", step=1, messages=[])
+
+    resp = asyncio.run(router.generate(req))
+    assert resp.content == "from primary-fast"
+    assert p_primary.generate_called == 1
+    # Secondary was delayed and cancelled before calling provider.generate!
+    assert p_secondary.generate_called == 0
+
+
+def test_race_router_speculative_delay_secondary_wins_when_primary_slow() -> None:
+    p_primary = _MockProvider("primary-slow", delay=0.15)
+    p_secondary = _MockProvider("secondary-cloud-fast", delay=0.01)
+
+    router = RaceRouterProvider(
+        [("primary-slow", p_primary), ("secondary-cloud-fast", p_secondary)],  # type: ignore[list-item]
+        speculative_delay_seconds=0.03,
+    )
+    req = ModelRequest(run_id="r-spec-2", step=1, messages=[])
+
+    resp = asyncio.run(router.generate(req))
+    assert resp.content == "from secondary-cloud-fast"
+    assert p_secondary.generate_called == 1
+
+
+def test_race_router_speculative_delay_streaming() -> None:
+    p_primary = _MockProvider("primary", chunks=["chunk 1", "chunk 2"], delay=0.01)
+    p_secondary = _MockProvider("secondary", chunks=["sec 1"], delay=0.01)
+
+    router = RaceRouterProvider(
+        [("primary", p_primary), ("secondary", p_secondary)],  # type: ignore[list-item]
+        speculative_delay_seconds=0.08,
+    )
+    req = ModelRequest(run_id="r-spec-stream", step=1, messages=[])
+
+    async def run_stream() -> list[str]:
+        out = []
+        async for chunk in router.stream(req):
+            if chunk.text:
+                out.append(chunk.text)
+        return out
+
+    result = asyncio.run(run_stream())
+    assert result == ["chunk 1", "chunk 2"]

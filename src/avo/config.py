@@ -334,7 +334,17 @@ def _build_router_from_env(
     if strategy in ("race", "fastest", "parallel"):
         from avo.providers.router import RaceRouterProvider
 
-        return RaceRouterProvider(routes, cooldown_seconds=cooldown_seconds)
+        spec_str = env.get("AVO_ROUTER_SPECULATIVE_DELAY_MS", "").strip()
+        try:
+            speculative_delay_seconds = float(spec_str) / 1000.0 if spec_str else 0.0
+        except ValueError:
+            speculative_delay_seconds = 0.0
+
+        return RaceRouterProvider(
+            routes,
+            cooldown_seconds=cooldown_seconds,
+            speculative_delay_seconds=speculative_delay_seconds,
+        )
 
     return FallbackRouterProvider(routes, cooldown_seconds=cooldown_seconds)
 

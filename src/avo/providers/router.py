@@ -263,9 +263,24 @@ class RaceRouterProvider(BaseRouterProvider):
 
     Returns the fastest successful response or first chunk from whichever provider
     replies first, then cancels the remaining requests to maximize speed.
+    Supports speculative delay racing (hedged requests) via ``speculative_delay_seconds``.
     """
 
     strategy: str = "race"
+
+    def __init__(
+        self,
+        routes: Sequence[tuple[str, ModelProvider]],
+        *,
+        cooldown_seconds: float = 30.0,
+        speculative_delay_seconds: float = 0.0,
+    ) -> None:
+        super().__init__(routes, cooldown_seconds=cooldown_seconds)
+        self._speculative_delay_seconds = max(0.0, speculative_delay_seconds)
+
+    @property
+    def speculative_delay_seconds(self) -> float:
+        return self._speculative_delay_seconds
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         """Query candidate routes in parallel and return the first successful response."""
@@ -284,22 +299,35 @@ class RaceRouterProvider(BaseRouterProvider):
                 self._record_failure(name, exc)
                 raise ProviderError(f"race provider {name!r} failed: {exc}") from exc
 
-        tasks: dict[asyncio.Task[ModelResponse], tuple[str, float]] = {}
-        for name, provider in candidates:
-            t0 = time.monotonic()
-            task = asyncio.create_task(provider.generate(request), name=f"race-{name}")
-            tasks[task] = (name, t0)
+        async def _delayed_generate(
+            r_name: str,
+            r_prov: ModelProvider,
+            delay: float,
+        ) -> tuple[str, float, ModelResponse]:
+            if delay > 0:
+                await asyncio.sleep(delay)
+            t_start = time.monotonic()
+            resp = await r_prov.generate(request)
+            return (r_name, t_start, resp)
+
+        tasks: set[asyncio.Task[tuple[str, float, ModelResponse]]] = set()
+        for idx, (name, provider) in enumerate(candidates):
+            delay = self._speculative_delay_seconds * idx
+            task = asyncio.create_task(
+                _delayed_generate(name, provider, delay),
+                name=f"race-{name}",
+            )
+            tasks.add(task)
 
         errors: list[str] = []
-        pending: set[asyncio.Task[ModelResponse]] = set(tasks.keys())
+        pending: set[asyncio.Task[tuple[str, float, ModelResponse]]] = set(tasks)
 
         try:
             while pending:
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 for completed_task in done:
-                    name, start_time = tasks[completed_task]
                     try:
-                        resp = completed_task.result()
+                        name, start_time, resp = completed_task.result()
                         self._record_success(name, start_time)
                         _LOG.info(
                             "race won by provider %r in %.1fms",
@@ -309,10 +337,14 @@ class RaceRouterProvider(BaseRouterProvider):
                         for other_task in pending:
                             other_task.cancel()
                         return resp
+                    except asyncio.CancelledError:
+                        continue
                     except Exception as exc:
-                        self._record_failure(name, exc)
-                        errors.append(f"[{name}] {exc!s}")
-                        _LOG.warning("race candidate %r failed: %s", name, exc)
+                        task_name = completed_task.get_name()
+                        clean_name = task_name.replace("race-", "")
+                        self._record_failure(clean_name, exc)
+                        errors.append(f"[{clean_name}] {exc!s}")
+                        _LOG.warning("race candidate %r failed: %s", clean_name, exc)
         finally:
             for t in pending:
                 t.cancel()
@@ -343,8 +375,10 @@ class RaceRouterProvider(BaseRouterProvider):
 
         queue: asyncio.Queue[tuple[str, ModelChunk | None, Any, Exception | None]] = asyncio.Queue()
 
-        async def _worker(r_name: str, r_prov: ModelProvider) -> None:
+        async def _worker(r_name: str, r_prov: ModelProvider, delay: float) -> None:
             try:
+                if delay > 0:
+                    await asyncio.sleep(delay)
                 if isinstance(r_prov, StreamingModelProvider):
                     it = r_prov.stream(request).__aiter__()
                     first = await it.__anext__()
@@ -354,12 +388,17 @@ class RaceRouterProvider(BaseRouterProvider):
                     await queue.put((r_name, ModelChunk(text=r_resp.content or ""), None, None))
             except StopAsyncIteration:
                 await queue.put((r_name, ModelChunk(text=""), None, None))
+            except asyncio.CancelledError:
+                raise
             except Exception as worker_exc:
                 await queue.put((r_name, None, None, worker_exc))
 
         tasks = [
-            asyncio.create_task(_worker(name, prov), name=f"race-stream-{name}")
-            for name, prov in candidates
+            asyncio.create_task(
+                _worker(name, prov, self._speculative_delay_seconds * idx),
+                name=f"race-stream-{name}",
+            )
+            for idx, (name, prov) in enumerate(candidates)
         ]
 
         winner_name: str | None = None
