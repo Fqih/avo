@@ -27,7 +27,7 @@ from typing import TextIO
 
 from avo import __version__ as AVO_VERSION
 from avo import runtime as _runtime  # noqa: F401  (typing hook)
-from avo.app_tools import git_diff_tool, lint_tool
+from avo.app_tools import git_commit_tool, git_diff_tool, lint_tool
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
 from avo.app_tools.workspace import Workspace
 from avo.background import BackgroundJobManager, render_job_detail, render_job_row
@@ -198,6 +198,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/diff [PATH]", "show git status, diff stat, or unified diff for PATH"),
     ("/undo", "revert uncommitted workspace modifications"),
     ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
+    ("/commit [MSG]", "stage changes and create atomic git commit (auto-message if omitted)"),
     ("/clear", "clear the terminal screen"),
     ("/export [PATH]", "export current chat session to Markdown file"),
     ("/sessions", "list past chat sessions"),
@@ -383,6 +384,41 @@ def _run_workspace_lint(
     out.flush()
 
 
+def _run_workspace_commit(
+    workspace_root: Path,
+    out: TextIO,
+    err: TextIO,
+    message: str | None = None,
+) -> None:
+    """Stage changes and create a git commit from REPL."""
+    from avo.workspace.git import GitError, GitRepository, generate_commit_message_heuristic
+
+    repo = GitRepository(workspace_root)
+    if not repo.is_repository():
+        err.write(f"workspace {workspace_root} is not a git repository or git failed.\n")
+        return
+
+    status = repo.status()
+    if status.is_clean:
+        out.write("Working tree is clean. Nothing to commit.\n")
+        out.flush()
+        return
+
+    commit_msg = (
+        message.strip()
+        if message and message.strip()
+        else generate_commit_message_heuristic(status)
+    )
+
+    try:
+        commit_hash = repo.commit(message=commit_msg)
+        out.write(f"✓ Committed [{commit_hash}]: {commit_msg}\n")
+        out.flush()
+    except GitError as exc:
+        err.write(f"commit failed: {exc}\n")
+        err.flush()
+
+
 def _clear_screen(out: TextIO) -> None:
     """Clear the terminal screen and reset cursor."""
 
@@ -506,7 +542,13 @@ def build_chat_context(
     runtime = AgentRuntime(
         provider=provider,
         event_store=store,
-        tools=[read_file_tool(), write_file_tool(), lint_tool(), git_diff_tool()],
+        tools=[
+            read_file_tool(),
+            write_file_tool(),
+            lint_tool(),
+            git_diff_tool(),
+            git_commit_tool(),
+        ],
     )
     skills_root = workspace_root / ".avo" / "skills"
     # Ensure the skills directory exists for first-run use, but the
@@ -600,6 +642,11 @@ async def _run_slash(
     if cmd == "/lint":
         target = args[1] if len(args) > 1 else None
         _run_workspace_lint(ctx.workspace.root, out, err, target)
+        return False
+
+    if cmd == "/commit":
+        msg = " ".join(args[1:]) if len(args) > 1 else None
+        _run_workspace_commit(ctx.workspace.root, out, err, msg)
         return False
 
     if cmd == "/clear":
