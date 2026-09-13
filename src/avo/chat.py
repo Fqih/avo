@@ -285,10 +285,12 @@ def _print_provider_summary(out: TextIO, ctx: ChatContext, environ: dict[str, st
 
 def _print_active_context(out: TextIO, ctx: ChatContext, environ: dict[str, str]) -> None:
     """Render a comprehensive snapshot of the active chat context."""
+    from avo.context_advisor import evaluate_session_context
 
     turns = ctx.session.turns(ctx.session_id)
     skills_list = ctx.skills.names()
     running_jobs = ctx.background.running_count
+    report = evaluate_session_context(turns, ctx.model_name, environ=environ)
 
     rows: list[tuple[str, str]] = [
         ("Session ID", ctx.session_id),
@@ -296,6 +298,7 @@ def _print_active_context(out: TextIO, ctx: ChatContext, environ: dict[str, str]
         ("Provider", ctx.provider_name),
         ("Model", ctx.model_name),
         ("Workspace", str(ctx.workspace.root)),
+        ("Context Window", f"{report.context_limit:,} tokens (~{report.usage_percent:.1f}% used)"),
         (
             "Skills Active",
             f"{len(skills_list)} installed ({', '.join(skills_list[:3])})"
@@ -1812,6 +1815,18 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
         out.write(f"Avo> {clean_answer}\n")
     elif result.output:
         out.write(f"Avo> {result.output}\n")
+
+    from avo.context_advisor import evaluate_session_context
+
+    turns = ctx.session.turns(ctx.session_id)
+    last_tokens = result.token_usage.total_tokens if result.token_accounting_available else None
+    report = evaluate_session_context(
+        turns,
+        ctx.model_name,
+        last_turn_tokens=last_tokens,
+    )
+    if report.is_warning and report.advice_message:
+        out.write(f"\n💡 {report.advice_message}\n")
     out.flush()
 
 

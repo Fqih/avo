@@ -648,9 +648,14 @@ class AvoWebServer(ThreadingHTTPServer):
                 return None
             turns = lifecycle.turns(session_id)
             lifecycle.close()
+            from avo.context_advisor import evaluate_session_context
+
+            model_name = os.environ.get("AVO_MODEL", "auto")
+            advisor_report = evaluate_session_context(turns, model_name)
             return {
                 "session_id": session_id,
                 "turn_count": len(turns),
+                "context_advice": advisor_report.to_dict(),
                 "turns": [
                     {
                         "sequence": t.sequence,

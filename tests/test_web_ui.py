@@ -130,6 +130,9 @@ def test_web_ui_api_session_detail(web_server: tuple[str, Path]) -> None:
         assert len(data["turns"]) == 2
         assert data["turns"][0]["role"] == "user"
         assert data["turns"][1]["role"] == "assistant"
+        assert "context_advice" in data
+        assert "usage_percent" in data["context_advice"]
+        assert "context_limit" in data["context_advice"]
 
     # Query nonexistent session
     with pytest.raises(urllib.error.HTTPError) as exc_info:

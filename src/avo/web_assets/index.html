@@ -317,6 +317,11 @@
                 <option value="accept_edits">Accept Edits</option>
               </select>
             </div>
+            <!-- Context Meter Badge -->
+            <div id="chatContextBadge" class="hidden items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-900 border border-gray-800 text-[11px]">
+              <span class="text-gray-400">Context:</span>
+              <span id="chatContextPercent" class="font-mono text-gray-200">0%</span>
+            </div>
             <button onclick="clearCurrentChatView()" class="text-xs text-gray-400 hover:text-gray-200 px-2.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 border border-gray-700/60 transition">Clear Messages</button>
           </div>
         </div>
@@ -782,6 +787,24 @@
         if (!data || !data.turns || !data.turns.length) {
           clearCurrentChatView();
           return;
+        }
+
+        if (data.context_advice) {
+          const badge = document.getElementById('chatContextBadge');
+          const pctEl = document.getElementById('chatContextPercent');
+          if (badge && pctEl) {
+            badge.classList.remove('hidden');
+            badge.classList.add('flex');
+            const pct = data.context_advice.usage_percent || 0;
+            pctEl.innerText = pct + '%';
+            if (data.context_advice.is_critical) {
+              badge.className = 'flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-rose-950/80 border border-rose-800 text-rose-300 text-[11px]';
+            } else if (data.context_advice.is_warning) {
+              badge.className = 'flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-950/80 border border-amber-800 text-amber-300 text-[11px]';
+            } else {
+              badge.className = 'flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-gray-900 border border-gray-800 text-[11px] text-gray-300';
+            }
+          }
         }
 
         messagesContainer.innerHTML = data.turns.map(t => {
