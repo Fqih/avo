@@ -47,6 +47,7 @@
   <div class="px-6 border-b border-gray-800 bg-gray-950/40">
     <nav class="flex gap-6 text-sm font-medium">
       <button onclick="switchTab('overview')" id="tab-overview" class="py-3 border-b-2 border-indigo-500 text-indigo-400 font-semibold transition">Overview</button>
+      <button onclick="switchTab('chat')" id="tab-chat" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Live Chat</button>
       <button onclick="switchTab('runs')" id="tab-runs" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Runs Explorer</button>
       <button onclick="switchTab('sessions')" id="tab-sessions" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Chat Sessions</button>
       <button onclick="switchTab('router')" id="tab-router" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Router &amp; Credentials</button>
@@ -85,6 +86,59 @@
       <div class="glass rounded-xl p-6 border border-gray-800">
         <h3 class="text-base font-semibold text-white mb-3">System Diagnostics (Doctor)</h3>
         <div id="doctorDetails" class="text-sm text-gray-300 space-y-2">Loading diagnostics...</div>
+      </div>
+    </div>
+
+    <!-- LIVE CHAT TAB -->
+    <div id="view-chat" class="hidden h-[calc(100vh-13rem)] flex gap-4">
+      <!-- Chat Sessions Sidebar -->
+      <div class="w-64 glass rounded-xl border border-gray-800 flex flex-col p-3">
+        <button onclick="startNewChatSession()" class="w-full py-2 px-3 mb-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition">
+          <span class="text-sm leading-none">+</span> New Chat
+        </button>
+        <p class="text-[10px] text-gray-400 uppercase font-bold tracking-wider px-1 mb-1.5">Recent Sessions</p>
+        <div id="chatSessionsNav" class="flex-1 overflow-y-auto space-y-1 text-xs pr-1">
+          <!-- Session items dynamically injected -->
+        </div>
+      </div>
+
+      <!-- Chat Workspace Area -->
+      <div class="flex-1 glass rounded-xl border border-gray-800 flex flex-col overflow-hidden">
+        <!-- Chat Header -->
+        <div class="px-5 py-3 border-b border-gray-800 bg-gray-950/40 flex justify-between items-center">
+          <div class="flex items-center gap-2.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <div>
+              <p class="text-xs font-bold text-white flex items-center gap-2">
+                Avo Assistant
+                <span id="chatActiveSessionBadge" class="text-[10px] font-mono font-normal text-indigo-400 bg-indigo-950/80 px-2 py-0.5 rounded border border-indigo-800/60"></span>
+              </p>
+              <p id="chatModelIndicator" class="text-[11px] text-gray-400">Ready</p>
+            </div>
+          </div>
+          <button onclick="clearCurrentChatView()" class="text-xs text-gray-400 hover:text-gray-200 px-2.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 border border-gray-700/60 transition">Clear Messages</button>
+        </div>
+
+        <!-- Messages History -->
+        <div id="chatMessages" class="flex-1 p-6 overflow-y-auto space-y-4 text-sm">
+          <div class="flex items-start gap-3">
+            <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white text-xs shrink-0 shadow">A</div>
+            <div class="glass p-3.5 rounded-2xl rounded-tl-none border border-gray-800 text-gray-200 text-xs leading-relaxed max-w-2xl">
+              Hello! I am Avo, your autonomous software engineering agent. Ask any coding question or instruct me to run tasks on your codebase.
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat Input Footer -->
+        <div class="p-3.5 border-t border-gray-800 bg-gray-950/60">
+          <form id="chatForm" onsubmit="handleChatSubmit(event)" class="flex gap-2">
+            <textarea id="chatInput" rows="1" placeholder="Type your message... (Enter to send, Shift+Enter for newline)" onkeydown="handleChatKeyDown(event)" class="flex-1 bg-gray-900/90 border border-gray-700/80 rounded-xl px-4 py-2.5 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+            <button id="sendBtn" type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 transition shrink-0">
+              <span id="sendBtnText">Send</span>
+              <span id="sendSpinner" class="hidden w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            </button>
+          </form>
+        </div>
       </div>
     </div>
 
@@ -154,7 +208,7 @@
   </div>
 
   <script>
-    let state = { overview: null, runs: [], sessions: [] };
+    let state = { overview: null, runs: [], sessions: [], activeSessionId: null, isGenerating: false };
 
     async function fetchJson(url) {
       const res = await fetch(url);
@@ -176,6 +230,7 @@
         renderRuns();
         renderSessions();
         renderRouter();
+        renderChatSessionsNav();
       } catch (err) {
         console.error("Fetch failed", err);
       }
@@ -290,12 +345,251 @@
     }
 
     function switchTab(tabId) {
-      ['overview', 'runs', 'sessions', 'router'].forEach(t => {
-        document.getElementById('view-' + t).classList.add('hidden');
-        document.getElementById('tab-' + t).className = 'py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition';
+      ['overview', 'chat', 'runs', 'sessions', 'router'].forEach(t => {
+        const el = document.getElementById('view-' + t);
+        const tab = document.getElementById('tab-' + t);
+        if (el) el.classList.add('hidden');
+        if (tab) tab.className = 'py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition';
       });
-      document.getElementById('view-' + tabId).classList.remove('hidden');
-      document.getElementById('tab-' + tabId).className = 'py-3 border-b-2 border-indigo-500 text-indigo-400 font-semibold transition';
+      const targetView = document.getElementById('view-' + tabId);
+      const targetTab = document.getElementById('tab-' + tabId);
+      if (targetView) targetView.classList.remove('hidden');
+      if (targetTab) targetTab.className = 'py-3 border-b-2 border-indigo-500 text-indigo-400 font-semibold transition';
+
+      if (tabId === 'chat' && !state.activeSessionId) {
+        if (state.sessions && state.sessions.length > 0) {
+          selectChatSession(state.sessions[0].session_id);
+        } else {
+          startNewChatSession();
+        }
+      }
+    }
+
+    function renderChatSessionsNav() {
+      const container = document.getElementById('chatSessionsNav');
+      if (!container) return;
+      if (!state.sessions.length) {
+        container.innerHTML = '<p class="text-[11px] text-gray-500 italic p-1">No past sessions</p>';
+        return;
+      }
+      container.innerHTML = state.sessions.map(s => {
+        const isActive = s.session_id === state.activeSessionId;
+        const bg = isActive ? 'bg-indigo-900/50 border-indigo-700/80 text-white' : 'bg-gray-900/60 border-gray-800 text-gray-300 hover:bg-gray-800/60';
+        return `
+          <button onclick="selectChatSession('${s.session_id}')" class="w-full text-left p-2 rounded-lg border ${bg} transition flex justify-between items-center group">
+            <div class="truncate mr-1">
+              <span class="font-mono text-[11px] font-semibold">${s.session_id}</span>
+              <p class="text-[10px] text-gray-400 truncate">${s.turn_count} turn(s)</p>
+            </div>
+            <span class="text-[10px] text-gray-500 group-hover:text-indigo-400">&rsaquo;</span>
+          </button>
+        `;
+      }).join('');
+    }
+
+    function startNewChatSession() {
+      const newSid = 'chat-' + Math.random().toString(16).substring(2, 10);
+      state.activeSessionId = newSid;
+      document.getElementById('chatActiveSessionBadge').innerText = newSid;
+      clearCurrentChatView();
+      renderChatSessionsNav();
+    }
+
+    async function selectChatSession(sid) {
+      state.activeSessionId = sid;
+      document.getElementById('chatActiveSessionBadge').innerText = sid;
+      renderChatSessionsNav();
+
+      const messagesContainer = document.getElementById('chatMessages');
+      messagesContainer.innerHTML = '<div class="text-xs text-gray-400 p-2 italic">Loading session messages...</div>';
+
+      try {
+        const data = await fetchJson('/api/sessions/' + sid);
+        if (!data || !data.turns || !data.turns.length) {
+          clearCurrentChatView();
+          return;
+        }
+
+        messagesContainer.innerHTML = data.turns.map(t => {
+          if (t.role === 'user') {
+            return `
+              <div class="flex items-start justify-end gap-3">
+                <div class="bg-indigo-600/90 text-white p-3 rounded-2xl rounded-tr-none text-xs leading-relaxed max-w-2xl shadow">
+                  ${escapeHtml(t.content)}
+                </div>
+                <div class="w-7 h-7 rounded-lg bg-gray-700 flex items-center justify-center font-bold text-gray-200 text-xs shrink-0 shadow">U</div>
+              </div>
+            `;
+          } else {
+            return `
+              <div class="flex items-start gap-3">
+                <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white text-xs shrink-0 shadow">A</div>
+                <div class="glass p-3.5 rounded-2xl rounded-tl-none border border-gray-800 text-gray-200 text-xs leading-relaxed max-w-2xl whitespace-pre-wrap">
+                  ${escapeHtml(t.content)}
+                </div>
+              </div>
+            `;
+          }
+        }).join('');
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      } catch (err) {
+        messagesContainer.innerHTML = `<div class="text-xs text-rose-400 p-2">Failed to load session: ${err}</div>`;
+      }
+    }
+
+    function clearCurrentChatView() {
+      document.getElementById('chatMessages').innerHTML = `
+        <div class="flex items-start gap-3">
+          <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white text-xs shrink-0 shadow">A</div>
+          <div class="glass p-3.5 rounded-2xl rounded-tl-none border border-gray-800 text-gray-200 text-xs leading-relaxed max-w-2xl">
+            Hello! I am Avo, your autonomous software engineering assistant. Type a message below or ask for assistance with your codebase.
+          </div>
+        </div>
+      `;
+    }
+
+    function handleChatKeyDown(event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        handleChatSubmit(event);
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text || '';
+      return div.innerHTML;
+    }
+
+    async function handleChatSubmit(event) {
+      if (event) event.preventDefault();
+      if (state.isGenerating) return;
+
+      const input = document.getElementById('chatInput');
+      const text = input.value.trim();
+      if (!text) return;
+
+      if (!state.activeSessionId) {
+        state.activeSessionId = 'chat-' + Math.random().toString(16).substring(2, 10);
+        document.getElementById('chatActiveSessionBadge').innerText = state.activeSessionId;
+      }
+
+      input.value = '';
+      const messagesContainer = document.getElementById('chatMessages');
+
+      // Append user bubble
+      const userBubble = document.createElement('div');
+      userBubble.className = 'flex items-start justify-end gap-3';
+      userBubble.innerHTML = `
+        <div class="bg-indigo-600/90 text-white p-3 rounded-2xl rounded-tr-none text-xs leading-relaxed max-w-2xl shadow">
+          ${escapeHtml(text)}
+        </div>
+        <div class="w-7 h-7 rounded-lg bg-gray-700 flex items-center justify-center font-bold text-gray-200 text-xs shrink-0 shadow">U</div>
+      `;
+      messagesContainer.appendChild(userBubble);
+
+      // Create assistant container
+      const asstWrapper = document.createElement('div');
+      asstWrapper.className = 'flex items-start gap-3';
+      const asstContentId = 'msg-' + Date.now();
+      const thoughtContentId = 'thought-' + Date.now();
+      asstWrapper.innerHTML = `
+        <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white text-xs shrink-0 shadow">A</div>
+        <div class="glass p-3.5 rounded-2xl rounded-tl-none border border-gray-800 text-gray-200 text-xs leading-relaxed max-w-2xl w-full">
+          <div id="${thoughtContentId}" class="hidden mb-3 p-2.5 rounded-lg bg-gray-900/80 border border-gray-800 text-gray-400 font-mono text-[11px]">
+            <div class="text-[10px] uppercase font-bold text-indigo-400 mb-1">💭 Thought Process</div>
+            <div class="thought-body whitespace-pre-wrap"></div>
+          </div>
+          <div id="${asstContentId}" class="whitespace-pre-wrap"><span class="inline-block w-2 h-3.5 bg-indigo-400 animate-pulse ml-0.5"></span></div>
+        </div>
+      `;
+      messagesContainer.appendChild(asstWrapper);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+      // Lock UI
+      state.isGenerating = true;
+      document.getElementById('sendBtn').disabled = true;
+      document.getElementById('sendBtnText').classList.add('hidden');
+      document.getElementById('sendSpinner').classList.remove('hidden');
+      document.getElementById('chatModelIndicator').innerText = 'Generating response...';
+
+      let fullAnswer = '';
+      let fullThought = '';
+
+      try {
+        const response = await fetch('/api/chat?stream=true', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream'
+          },
+          body: JSON.stringify({
+            message: text,
+            session_id: state.activeSessionId
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || ('HTTP ' + response.status));
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // keep partial line
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+            const jsonStr = trimmed.substring(5).trim();
+            if (!jsonStr) continue;
+
+            try {
+              const data = JSON.parse(jsonStr);
+              if (data.done) {
+                if (data.session_id) state.activeSessionId = data.session_id;
+                break;
+              }
+              if (data.thought) {
+                fullThought += data.thought;
+                const thoughtBox = document.getElementById(thoughtContentId);
+                thoughtBox.classList.remove('hidden');
+                thoughtBox.querySelector('.thought-body').innerText = fullThought;
+              }
+              if (data.text) {
+                fullAnswer += data.text;
+                const contentEl = document.getElementById(asstContentId);
+                contentEl.innerHTML = escapeHtml(fullAnswer) + '<span class="inline-block w-2 h-3.5 bg-indigo-400 animate-pulse ml-0.5"></span>';
+              }
+              messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            } catch (pErr) {
+              console.warn('SSE Parse error', pErr);
+            }
+          }
+        }
+
+        // Finalize text
+        const contentEl = document.getElementById(asstContentId);
+        contentEl.innerText = fullAnswer || '(No content received)';
+      } catch (err) {
+        const contentEl = document.getElementById(asstContentId);
+        contentEl.innerHTML = `<span class="text-rose-400">Error: ${escapeHtml(err.message)}</span>`;
+      } finally {
+        state.isGenerating = false;
+        document.getElementById('sendBtn').disabled = false;
+        document.getElementById('sendBtnText').classList.remove('hidden');
+        document.getElementById('sendSpinner').classList.add('hidden');
+        document.getElementById('chatModelIndicator').innerText = 'Ready';
+        refreshData();
+      }
     }
 
     function filterRuns() {

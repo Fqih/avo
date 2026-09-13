@@ -100,6 +100,146 @@ def test_web_ui_api_sessions(web_server: tuple[str, Path]) -> None:
         assert any(s["session_id"] == "sess-web-test" for s in data["sessions"])
 
 
+def test_web_ui_api_session_detail(web_server: tuple[str, Path]) -> None:
+    base_url, db_path = web_server
+
+    session = SessionLifecycle.open(db_path)
+    session.record_user_turn("sess-detail-123", "Turn 1: user hello")
+    session.record_assistant_turn(
+        "sess-detail-123",
+        "Turn 2: assistant response",
+        run_id="run-detail-1",
+        status="COMPLETED",
+        stop_reason="FINAL",
+    )
+    session.close()
+
+    # Query specific session
+    req = urllib.request.Request(f"{base_url}/api/sessions/sess-detail-123")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["session_id"] == "sess-detail-123"
+        assert data["turn_count"] == 2
+        assert len(data["turns"]) == 2
+        assert data["turns"][0]["role"] == "user"
+        assert data["turns"][1]["role"] == "assistant"
+
+    # Query nonexistent session
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(f"{base_url}/api/sessions/nonexistent-xyz", timeout=5)
+    assert exc_info.value.code == 404
+
+
+def test_web_ui_api_chat_json(
+    web_server: tuple[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_url, db_path = web_server
+
+    from avo.models import ModelResponse
+    from avo.providers.streaming import ModelChunk
+
+    class DummyProvider:
+        async def generate(self, req):
+            return ModelResponse(content="Halo dari test assistant!")
+
+        async def stream(self, req):
+            yield ModelChunk(text="Halo dari test assistant!")
+
+    monkeypatch.setattr("avo.config.build_provider_from_env", lambda env: DummyProvider())
+
+    payload = json.dumps({"message": "Hello Avo!", "session_id": "sess-chat-test"}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["ok"] is True
+        assert data["session_id"] == "sess-chat-test"
+        assert "Halo dari test assistant!" in data["reply"]
+
+    # Verify persisted in SQLite
+    session = SessionLifecycle.open(db_path)
+    turns = session.turns("sess-chat-test")
+    session.close()
+    assert len(turns) == 2
+    assert turns[0].content == "Hello Avo!"
+    assert "Halo dari test assistant!" in turns[1].content
+
+
+def test_web_ui_api_chat_sse(web_server: tuple[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    base_url, db_path = web_server
+
+    from avo.providers.streaming import ModelChunk
+
+    class StreamingDummyProvider:
+        async def stream(self, req):
+            yield ModelChunk(thought="Analyzing user prompt...")
+            yield ModelChunk(text="Streamed ")
+            yield ModelChunk(text="reply!")
+
+    monkeypatch.setattr("avo.config.build_provider_from_env", lambda env: StreamingDummyProvider())
+
+    payload = json.dumps(
+        {
+            "message": "Tell me a joke",
+            "session_id": "sess-sse-test",
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{base_url}/api/chat",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        assert "text/event-stream" in resp.headers.get("Content-Type", "")
+        body = resp.read().decode("utf-8")
+        assert "data:" in body
+        assert "Analyzing user prompt..." in body
+        assert "Streamed" in body
+        assert '"done": true' in body
+
+    # Verify persisted
+    session = SessionLifecycle.open(db_path)
+    turns = session.turns("sess-sse-test")
+    session.close()
+    assert len(turns) == 2
+    assert turns[1].content == "Streamed reply!"
+
+
+def test_web_ui_api_chat_validation_and_options(web_server: tuple[str, Path]) -> None:
+    base_url, _ = web_server
+
+    # Empty message
+    req_empty = urllib.request.Request(
+        f"{base_url}/api/chat",
+        data=json.dumps({"message": "   "}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req_empty, timeout=5)
+    assert exc_info.value.code == 400
+
+    # OPTIONS CORS
+    req_opt = urllib.request.Request(
+        f"{base_url}/api/chat",
+        method="OPTIONS",
+    )
+    with urllib.request.urlopen(req_opt, timeout=5) as resp:
+        assert resp.status == 204
+        assert resp.headers.get("Access-Control-Allow-Origin") == "*"
+
+
 def test_web_ui_cli_help(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc:
         web_ui_main(["--help"])
