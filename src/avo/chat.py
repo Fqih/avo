@@ -199,6 +199,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/undo", "revert uncommitted workspace modifications"),
     ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
     ("/commit [MSG]", "stage changes and create atomic git commit (auto-message if omitted)"),
+    ("/bench [PROMPT]", "benchmark live routes and display speed ranking"),
     ("/clear", "clear the terminal screen"),
     ("/export [PATH]", "export current chat session to Markdown file"),
     ("/sessions", "list past chat sessions"),
@@ -416,6 +417,35 @@ def _run_workspace_commit(
         out.flush()
     except GitError as exc:
         err.write(f"commit failed: {exc}\n")
+        err.flush()
+
+
+async def _run_bench_command(
+    ctx: ChatContext,
+    prompt: str,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Benchmark configured live provider or router routes and display ranking."""
+    from avo.bench import benchmark_all_routes, benchmark_route, render_benchmark_table
+    from avo.providers.router import BaseRouterProvider
+
+    provider = ctx.runtime.provider
+    out.write(f"Benchmarking with prompt: {prompt!r}...\n")
+    out.flush()
+
+    try:
+        if isinstance(provider, BaseRouterProvider):
+            results = await benchmark_all_routes(provider.routes, prompt=prompt)
+            out.write(render_benchmark_table(results))
+            out.flush()
+            return
+
+        res = await benchmark_route(ctx.provider_name, provider, prompt=prompt)
+        out.write(render_benchmark_table([res]))
+        out.flush()
+    except Exception as exc:
+        err.write(f"benchmark failed: {exc}\n")
         err.flush()
 
 
@@ -647,6 +677,11 @@ async def _run_slash(
     if cmd == "/commit":
         msg = " ".join(args[1:]) if len(args) > 1 else None
         _run_workspace_commit(ctx.workspace.root, out, err, msg)
+        return False
+
+    if cmd == "/bench":
+        prompt_arg = " ".join(args[1:]) if len(args) > 1 else "Explain recursion in 10 words."
+        await _run_bench_command(ctx, prompt_arg, out, err)
         return False
 
     if cmd == "/clear":

@@ -12,8 +12,12 @@ import pytest
 from avo.bench import (
     BenchError,
     BenchReport,
+    RouteBenchResult,
     TurnRecord,
     _script_for_turns,
+    benchmark_all_routes,
+    benchmark_route,
+    render_benchmark_table,
     run_benchmark,
 )
 from avo.bench import (
@@ -120,3 +124,129 @@ def test_main_help_returns_zero() -> None:
         code = bench_main(["--help"])
     assert code == 0
     assert "Usage:" in buffer.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_benchmark_route_success() -> None:
+    provider = FakeProvider([ModelResponse(content="fast hello")])
+    res = await benchmark_route("ollama", provider, prompt="hi")
+    assert isinstance(res, RouteBenchResult)
+    assert res.route == "ollama"
+    assert res.success is True
+    assert res.latency_ms >= 0
+    assert res.output == "fast hello"
+    assert res.error is None
+
+
+@pytest.mark.asyncio
+async def test_benchmark_route_failure() -> None:
+    class BrokenProvider:
+        async def generate(self, req: object) -> object:
+            raise ConnectionRefusedError("Connection refused to port 11434")
+
+    res = await benchmark_route("broken", BrokenProvider())  # type: ignore[arg-type]
+    assert res.route == "broken"
+    assert res.success is False
+    assert "Connection refused" in (res.error or "")
+
+
+@pytest.mark.asyncio
+async def test_benchmark_all_routes_ranks_by_speed() -> None:
+    import asyncio
+
+    class SlowProvider:
+        async def generate(self, req: object) -> object:
+            await asyncio.sleep(0.05)
+            return ModelResponse(content="slow")
+
+    class FastProvider:
+        async def generate(self, req: object) -> object:
+            await asyncio.sleep(0.01)
+            return ModelResponse(content="fast")
+
+    routes = [("slow", SlowProvider()), ("fast", FastProvider())]  # type: ignore[list-item]
+    results = await benchmark_all_routes(routes, prompt="test")
+    assert len(results) == 2
+    assert results[0].route == "fast"
+    assert results[1].route == "slow"
+    assert results[0].latency_ms < results[1].latency_ms
+
+
+def test_render_benchmark_table() -> None:
+    results = [
+        RouteBenchResult(
+            route="ollama",
+            provider_name="ollama",
+            model="llama3.2",
+            success=True,
+            latency_ms=12.5,
+            ttft_ms=10.0,
+            output="ok",
+        ),
+        RouteBenchResult(
+            route="openrouter",
+            provider_name="openrouter",
+            model="meta-llama/llama-3.3-70b-instruct:free",
+            success=True,
+            latency_ms=85.2,
+            ttft_ms=50.1,
+            output="ok",
+        ),
+    ]
+    table = render_benchmark_table(results)
+    assert "Route Benchmark Ranking" in table
+    assert "ollama" in table
+    assert "openrouter" in table
+    assert "Fastest route: ollama" in table
+    assert "AVO_ROUTER_CHAIN=ollama,openrouter" in table
+
+
+def test_bench_main_live_router(monkeypatch: pytest.MonkeyPatch) -> None:
+    from avo.providers.router import FallbackRouterProvider
+
+    p1 = FakeProvider([ModelResponse(content="p1 reply")])
+    p2 = FakeProvider([ModelResponse(content="p2 reply")])
+    mock_router = FallbackRouterProvider([("p1", p1), ("p2", p2)])  # type: ignore[list-item]
+
+    monkeypatch.setattr("avo.config.build_provider_from_env", lambda env: mock_router)
+
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        code = bench_main(["--live", "--task", "ping test"])
+    assert code == 0
+    out = buffer.getvalue()
+    assert "Route Benchmark Ranking" in out
+    assert "p1" in out
+    assert "p2" in out
+
+
+def test_chat_repl_bench_slash_command(tmp_path: Path) -> None:
+    from avo.chat import _run_slash, build_chat_context
+    from avo.providers.router import FallbackRouterProvider
+
+    p1 = FakeProvider([ModelResponse(content="r1 answer")])
+    mock_router = FallbackRouterProvider([("ollama", p1)])  # type: ignore[list-item]
+
+    db_path = tmp_path / "chat.db"
+    environ = {
+        "AVO_PROVIDER": "router",
+        "AVO_ROUTER_CHAIN": "ollama",
+        "AVO_OLLAMA_MODEL": "llama3.2",
+    }
+    ctx = build_chat_context(
+        database_path=db_path,
+        workspace_root=tmp_path,
+        environ=environ,
+    )
+    ctx.runtime.provider = mock_router
+
+    out = io.StringIO()
+    err = io.StringIO()
+
+    import asyncio
+
+    exited = asyncio.run(_run_slash(ctx, ["/bench", "quick latency check"], out, err, environ))
+    assert exited is False
+    assert "Benchmarking with prompt" in out.getvalue()
+    assert "Route Benchmark Ranking" in out.getvalue()
+    assert "ollama" in out.getvalue()
