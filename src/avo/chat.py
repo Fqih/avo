@@ -27,6 +27,7 @@ from typing import TextIO
 
 from avo import __version__ as AVO_VERSION
 from avo import runtime as _runtime  # noqa: F401  (typing hook)
+from avo.app_tools import git_diff_tool, lint_tool
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
 from avo.app_tools.workspace import Workspace
 from avo.background import BackgroundJobManager, render_job_detail, render_job_row
@@ -196,6 +197,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/context", "display full context snapshot (session, model, workspace, skills)"),
     ("/diff [PATH]", "show git status, diff stat, or unified diff for PATH"),
     ("/undo", "revert uncommitted workspace modifications"),
+    ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
     ("/clear", "clear the terminal screen"),
     ("/export [PATH]", "export current chat session to Markdown file"),
     ("/sessions", "list past chat sessions"),
@@ -360,6 +362,27 @@ def _undo_workspace(workspace_root: Path, out: TextIO, err: TextIO) -> None:
         err.write(f"undo failed: {exc}\n")
 
 
+def _run_workspace_lint(
+    workspace_root: Path,
+    out: TextIO,
+    err: TextIO,
+    target_path: str | None = None,
+) -> None:
+    """Execute linter on workspace and display concise results."""
+    from avo.app_tools.linter import run_linter
+
+    res = run_linter(workspace_root, target_path)
+    tool_used = res.get("tool", "linter")
+    if res.get("ok"):
+        out.write(f"✓ Linter ({tool_used}) passed cleanly: no issues found.\n")
+    else:
+        count = res.get("issue_count", 0)
+        out.write(f"⚠ Linter ({tool_used}) detected {count} issue(s):\n")
+        for issue in res.get("issues", []):
+            out.write(f"  • {issue}\n")
+    out.flush()
+
+
 def _clear_screen(out: TextIO) -> None:
     """Clear the terminal screen and reset cursor."""
 
@@ -483,7 +506,7 @@ def build_chat_context(
     runtime = AgentRuntime(
         provider=provider,
         event_store=store,
-        tools=[read_file_tool(), write_file_tool()],
+        tools=[read_file_tool(), write_file_tool(), lint_tool(), git_diff_tool()],
     )
     skills_root = workspace_root / ".avo" / "skills"
     # Ensure the skills directory exists for first-run use, but the
@@ -572,6 +595,11 @@ async def _run_slash(
 
     if cmd == "/undo":
         _undo_workspace(ctx.workspace.root, out, err)
+        return False
+
+    if cmd == "/lint":
+        target = args[1] if len(args) > 1 else None
+        _run_workspace_lint(ctx.workspace.root, out, err, target)
         return False
 
     if cmd == "/clear":
