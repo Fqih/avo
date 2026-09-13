@@ -27,6 +27,7 @@ _PROVIDER_LABELS = {
     "groq": "Groq",
     "cerebras": "Cerebras",
     "openrouter": "OpenRouter",
+    "router": "Multi-Provider Router",
 }
 
 _REQUIRED_BY_PROVIDER: dict[str, tuple[str, ...]] = {
@@ -37,6 +38,7 @@ _REQUIRED_BY_PROVIDER: dict[str, tuple[str, ...]] = {
     "groq": ("AVO_PROVIDER", "AVO_MODEL", "AVO_GROQ_API_KEY"),
     "cerebras": ("AVO_PROVIDER", "AVO_MODEL", "AVO_CEREBRAS_API_KEY"),
     "openrouter": ("AVO_PROVIDER", "AVO_MODEL", "AVO_OPENROUTER_API_KEY"),
+    "router": ("AVO_PROVIDER",),
 }
 
 
@@ -137,6 +139,14 @@ def _endpoint_for(env: Mapping[str, str], provider: str) -> tuple[str | None, st
         except (ValueError, KeyError):
             return None, None
         return openrouter_cfg.endpoint, None
+
+    if provider == "router":
+        chain = (
+            env.get("AVO_ROUTER_CHAIN", "").strip()
+            or env.get("AVO_ROUTER_PROVIDERS", "").strip()
+            or "auto"
+        )
+        return f"router://{chain}", "fallback"
 
     return None, None
 

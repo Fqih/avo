@@ -150,3 +150,15 @@ def test_run_doctor_openrouter_ok() -> None:
     assert report.provider == "openrouter"
     assert report.endpoint == "https://openrouter.ai/api/v1/chat/completions"
     assert report.has_api_key
+
+
+def test_run_doctor_router_ok() -> None:
+    report = run_doctor(
+        {
+            "AVO_PROVIDER": "router",
+            "AVO_ROUTER_CHAIN": "ollama,openrouter",
+        }
+    )
+    assert report.ok
+    assert report.provider == "router"
+    assert report.endpoint == "router://ollama,openrouter"

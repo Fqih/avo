@@ -17,7 +17,9 @@ import os
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
-ProviderName = Literal["ollama", "minimax", "anthropic", "openai", "groq", "cerebras", "openrouter"]
+ProviderName = Literal[
+    "ollama", "minimax", "anthropic", "openai", "groq", "cerebras", "openrouter", "router"
+]
 _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "ollama",
     "minimax",
@@ -26,6 +28,7 @@ _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "groq",
     "cerebras",
     "openrouter",
+    "router",
 )
 
 
@@ -95,6 +98,12 @@ PROVIDER_MODELS: dict[ProviderName, tuple[str, ...]] = {
         "openai/gpt-4o",
         "openai/gpt-4o-mini",
     ),
+    "router": (
+        "auto",
+        "ollama,openrouter",
+        "ollama,groq",
+        "openrouter,anthropic",
+    ),
 }
 
 
@@ -162,8 +171,15 @@ def build_provider_from_env(
         raise ConfigError(f"AVO_PROVIDER must be one of {allowed!s}; got {name!r}")
 
     model = env.get("AVO_MODEL", "").strip()
-    if not model:
+    if not model and name != "router":
         raise ConfigError("AVO_MODEL is required")
+
+    if name == "router":
+        return _build_router_from_env(
+            env,
+            max_completion_tokens=max_completion_tokens,
+            request_timeout_seconds=request_timeout_seconds,
+        )
 
     if name == "ollama":
         from avo.providers.ollama import OllamaConfig, OllamaProvider
@@ -237,6 +253,69 @@ def build_provider_from_env(
         max_completion_tokens=max_completion_tokens,
         request_timeout_seconds=request_timeout_seconds,
     )
+
+
+def _build_router_from_env(
+    env: Mapping[str, str],
+    *,
+    max_completion_tokens: int = 1024,
+    request_timeout_seconds: float = 30.0,
+) -> Any:
+    from avo.providers.router import FallbackRouterProvider
+
+    chain_raw = (
+        env.get("AVO_ROUTER_CHAIN", "").strip() or env.get("AVO_ROUTER_PROVIDERS", "").strip()
+    )
+    if chain_raw:
+        requested = [p.strip().lower() for p in chain_raw.split(",") if p.strip()]
+    else:
+        requested = ["ollama"]
+        if (
+            env.get("AVO_OPENROUTER_API_KEY", "").strip()
+            or env.get("OPENROUTER_API_KEY", "").strip()
+        ):
+            requested.append("openrouter")
+        if env.get("AVO_GROQ_API_KEY", "").strip():
+            requested.append("groq")
+        if env.get("AVO_CEREBRAS_API_KEY", "").strip():
+            requested.append("cerebras")
+        if env.get("AVO_ANTHROPIC_API_KEY", "").strip():
+            requested.append("anthropic")
+        if env.get("AVO_OPENAI_API_KEY", "").strip():
+            requested.append("openai")
+        if len(requested) == 1:
+            requested.append("openrouter")
+
+    routes: list[tuple[str, Any]] = []
+    for prov_name in requested:
+        prov_model = env.get(f"AVO_{prov_name.upper()}_MODEL", "").strip()
+        if not prov_model:
+            catalog = _lookup_catalog(prov_name)
+            prov_model = catalog[0] if catalog else "default"
+
+        prov_env = dict(env)
+        prov_env["AVO_PROVIDER"] = prov_name
+        prov_env["AVO_MODEL"] = prov_model
+        try:
+            prov_instance = build_provider_from_env(
+                prov_env,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+            routes.append((prov_name, prov_instance))
+        except (ConfigError, ValueError) as exc:
+            if len(requested) == 1:
+                raise ConfigError(
+                    f"router provider {prov_name!r} failed to initialize: {exc}"
+                ) from exc
+
+    if not routes:
+        from avo.providers.ollama import OllamaConfig, OllamaProvider
+
+        ollama_cfg = OllamaConfig.from_avo_env(env, fallback_model=default_model("ollama"))
+        routes.append(("ollama", OllamaProvider(ollama_cfg)))
+
+    return FallbackRouterProvider(routes)
 
 
 def apply_runtime_overrides(policy_kwargs: dict[str, Any], environ: Mapping[str, str]) -> None:
