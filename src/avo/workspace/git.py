@@ -13,6 +13,7 @@ operations are idempotent and resumable.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -366,6 +367,55 @@ class GitRepository:
                     }
                 )
         return commits
+
+    def commit_show(self, commit_hash: str, *, max_lines: int = 500) -> dict[str, Any]:
+        """Inspect a single commit by hash, returning metadata, stat, and diff."""
+        if not self.is_repository():
+            raise GitError(f"{self._root} is not a git repository")
+
+        clean_hash = commit_hash.strip()
+        if not clean_hash or not re.match(r"^[a-zA-Z0-9_.-]+$", clean_hash):
+            raise GitError(f"invalid commit hash: {commit_hash!r}")
+
+        fmt = "%h%x00%H%x00%an%x00%ae%x00%cI%x00%s%x00%b"
+        meta_proc = _run_git(self._root, ["show", "-s", f"--format={fmt}", clean_hash])
+        if meta_proc.returncode != 0:
+            raise GitError(f"commit not found: {clean_hash}")
+
+        parts = meta_proc.stdout.split("\x00")
+        if len(parts) < 7:
+            raise GitError(f"failed to parse commit info for {clean_hash}")
+
+        short_hash = parts[0].strip()
+        full_hash = parts[1].strip()
+        author = parts[2].strip()
+        email = parts[3].strip()
+        date_iso = parts[4].strip()
+        subject = parts[5].strip()
+        body = parts[6].strip()
+
+        diff_proc = _run_git(self._root, ["show", "--format=", "--stat", "-p", clean_hash])
+        diff_text = diff_proc.stdout.strip()
+        diff_lines = diff_text.splitlines()
+        truncated = False
+        if len(diff_lines) > max_lines:
+            diff_lines = diff_lines[:max_lines]
+            extra_count = len(diff_proc.stdout.splitlines()) - max_lines
+            diff_lines.append(f"... diff truncated ({extra_count} more lines) ...")
+            diff_text = "\n".join(diff_lines)
+            truncated = True
+
+        return {
+            "hash": short_hash,
+            "full_hash": full_hash,
+            "author": author,
+            "email": email,
+            "date": date_iso,
+            "subject": subject,
+            "body": body,
+            "diff": diff_text,
+            "truncated": truncated,
+        }
 
     def stash_save(
         self,

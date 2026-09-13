@@ -181,6 +181,34 @@ class AvoWebHandler(BaseHTTPRequestHandler):
             self._send_json(self.server.get_sync_git_status())
             return
 
+        if path == "/api/git/stash":
+            from avo.workspace.git import GitRepository
+
+            repo = GitRepository(self.server.workspace_root)
+            if not repo.is_repository():
+                self._send_json({"error": "Not a git repository"}, status=400)
+                return
+            self._send_json({"stashes": repo.stash_list()})
+            return
+
+        if path.startswith("/api/git/commit/"):
+            from avo.workspace.git import GitError, GitRepository
+
+            commit_hash = path.split("/api/git/commit/", 1)[1].strip()
+            if not commit_hash:
+                self._send_json({"error": "commit hash is required"}, status=400)
+                return
+            repo = GitRepository(self.server.workspace_root)
+            if not repo.is_repository():
+                self._send_json({"error": "Not a git repository"}, status=400)
+                return
+            try:
+                commit_data = repo.commit_show(commit_hash)
+                self._send_json(commit_data)
+            except GitError as exc:
+                self._send_json({"error": str(exc)}, status=404)
+            return
+
         if path == "/api/cost":
             cost_report = aggregate_costs(self.server.database_path)
             self._send_json(report_to_dict(cost_report))
@@ -495,7 +523,7 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                     self._send_json({"ok": True, "stashes": repo.stash_list()})
                     return
                 if action in ("drop", "delete"):
-                    idx = int(data.get("index", 0))
+                    idx = int(stash_payload.get("index", 0))
                     repo.stash_drop(idx)
                     self._send_json({"ok": True, "stashes": repo.stash_list()})
                     return

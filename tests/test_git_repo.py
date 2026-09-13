@@ -265,3 +265,42 @@ def test_stash_outside_repo(tmp_path: Path) -> None:
         repo.stash_pop()
     with pytest.raises(GitError, match="not a git repository"):
         repo.stash_drop()
+
+
+def test_commit_show(git_repo: Path) -> None:
+    repo = GitRepository(git_repo)
+    commits = repo.log(max_count=1)
+    assert len(commits) == 1
+    init_hash = commits[0]["hash"]
+
+    details = repo.commit_show(init_hash)
+    assert details["hash"] == init_hash
+    assert len(details["full_hash"]) >= 40
+    assert details["author"] == "Test"
+    assert details["email"] == "test@example.com"
+    assert details["subject"] == "initial"
+    assert "tracked.txt" in details["diff"]
+    assert details["truncated"] is False
+
+
+def test_commit_show_truncation(git_repo: Path) -> None:
+    repo = GitRepository(git_repo)
+    commits = repo.log(max_count=1)
+    init_hash = commits[0]["hash"]
+
+    details = repo.commit_show(init_hash, max_lines=1)
+    assert details["truncated"] is True
+    assert "... diff truncated" in details["diff"]
+
+
+def test_commit_show_errors(tmp_path: Path, git_repo: Path) -> None:
+    repo_outside = GitRepository(tmp_path)
+    with pytest.raises(GitError, match="not a git repository"):
+        repo_outside.commit_show("HEAD")
+
+    repo = GitRepository(git_repo)
+    with pytest.raises(GitError, match="invalid commit hash"):
+        repo.commit_show("invalid hash with spaces;")
+
+    with pytest.raises(GitError, match="commit not found"):
+        repo.commit_show("deadbeef0000")

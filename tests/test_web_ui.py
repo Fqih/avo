@@ -566,7 +566,15 @@ def test_web_ui_api_git_stash(tmp_path: Path) -> None:
 
         assert (ws / "file.txt").read_text(encoding="utf-8") == "initial"
 
-        # 3. POST /api/git/stash (pop)
+        # 3. GET /api/git/stash
+        req_get_stash = urllib.request.Request(f"{base_url}/api/git/stash")
+        with urllib.request.urlopen(req_get_stash, timeout=5) as resp:
+            assert resp.status == 200
+            stash_data = json.loads(resp.read().decode("utf-8"))
+            assert "stashes" in stash_data
+            assert len(stash_data["stashes"]) == 1
+
+        # 4. POST /api/git/stash (pop)
         req_pop = urllib.request.Request(
             f"{base_url}/api/git/stash",
             data=json.dumps({"action": "pop", "index": 0}).encode("utf-8"),
@@ -580,6 +588,85 @@ def test_web_ui_api_git_stash(tmp_path: Path) -> None:
             assert len(pop_res["stashes"]) == 0
 
         assert (ws / "file.txt").read_text(encoding="utf-8") == "dirty state"
+
+        # 5. POST /api/git/stash (save & drop)
+        with urllib.request.urlopen(req_save, timeout=5) as resp:
+            assert resp.status == 200
+            save_res2 = json.loads(resp.read().decode("utf-8"))
+            assert len(save_res2["stashes"]) == 1
+
+        req_drop = urllib.request.Request(
+            f"{base_url}/api/git/stash",
+            data=json.dumps({"action": "drop", "index": 0}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_drop, timeout=5) as resp:
+            assert resp.status == 200
+            drop_res = json.loads(resp.read().decode("utf-8"))
+            assert drop_res["ok"] is True
+            assert len(drop_res["stashes"]) == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_web_ui_api_git_commit_show(tmp_path: Path) -> None:
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.email", "tester@example.com"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.name", "Tester"], cwd=str(ws), check=True)
+    (ws / "sample.py").write_text("print('hello world')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(ws), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "feat: initial commit"], cwd=str(ws), check=True)
+
+    # Get commit hash
+    rev_proc = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=str(ws),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    commit_hash = rev_proc.stdout.strip()
+
+    db_path = tmp_path / "git_commit_test.db"
+    server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=ws)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        # A. Query commit details
+        req_commit = urllib.request.Request(f"{base_url}/api/git/commit/{commit_hash}")
+        with urllib.request.urlopen(req_commit, timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["hash"] == commit_hash
+            assert data["subject"] == "feat: initial commit"
+            assert data["author"] == "Tester"
+            assert data["email"] == "tester@example.com"
+            assert "sample.py" in data["diff"]
+            assert "print('hello world')" in data["diff"]
+            assert data["truncated"] is False
+
+        # B. Query non-existent commit -> 404
+        req_missing = urllib.request.Request(f"{base_url}/api/git/commit/deadbeef0000")
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(req_missing, timeout=5)
+        assert exc_info.value.code == 404
+
+        # C. Verify index.html contains commitModal and stash UI
+        req_html = urllib.request.Request(base_url)
+        with urllib.request.urlopen(req_html, timeout=5) as resp:
+            html = resp.read().decode("utf-8")
+            assert "commitModal" in html
+            assert "inspectCommit" in html
+            assert "gitStashesList" in html
+            assert "handleStashPop" in html
+            assert "handleStashDrop" in html
     finally:
         server.shutdown()
         server.server_close()
