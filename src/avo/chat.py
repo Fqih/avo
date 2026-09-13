@@ -32,11 +32,13 @@ from avo.app_tools import (
     edit_file_tool,
     git_commit_tool,
     git_diff_tool,
+    git_status_tool,
     glob_tool,
     grep_tool,
     lint_tool,
     symbols_tool,
     test_runner_tool,
+    workspace_map_tool,
 )
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
 from avo.app_tools.workspace import Workspace
@@ -223,6 +225,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/undo", "revert uncommitted workspace modifications"),
     ("/grep PATTERN [GLOB]", "search workspace file contents for regex pattern"),
     ("/find [GLOB]", "find files in workspace matching glob pattern (alias: /search)"),
+    ("/map [N]", "display workspace file tree and recently modified files (alias: /tree)"),
     ("/symbols [PATH]", "extract code symbols (classes, methods, functions) from PATH"),
     ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
     ("/test [TARGET]", "run automated test suite on workspace files"),
@@ -890,6 +893,72 @@ async def _run_find_command(
     out.flush()
 
 
+def _format_file_size(size_bytes: int) -> str:
+    """Format byte sizes into human-readable units."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+async def _run_workspace_map_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Display workspace file tree and recently modified files."""
+    max_entries = 50
+    if len(args) > 1 and args[1].isdigit():
+        max_entries = max(1, min(5000, int(args[1])))
+
+    from avo.app_tools.workspace_map import workspace_map_tool
+
+    tool = workspace_map_tool()
+    with bind_workspace(ctx.workspace):
+        try:
+            res = await tool.invoke(
+                {"max_entries": max_entries, "include_map": True, "include_recent": True}
+            )
+        except Exception as exc:
+            err.write(f"map error: {exc}\n")
+            err.flush()
+            return
+
+    if not isinstance(res, dict):
+        err.write("map error: unexpected response format\n")
+        err.flush()
+        return
+
+    root_path = res.get("root", str(ctx.workspace.root))
+    entry_count = res.get("entry_count", 0)
+    truncated = res.get("truncated", False)
+    recent_files = res.get("recent", [])
+    map_text = res.get("map", "")
+
+    trunc_label = f" (showing {max_entries} entries, truncated)" if truncated else ""
+    out.write(f"\nWorkspace Map: {root_path}\n")
+    out.write(f"Indexed files: {entry_count}{trunc_label}\n")
+
+    if isinstance(recent_files, list) and recent_files:
+        out.write("\nRecently Modified Files:\n")
+        for item in recent_files[:8]:
+            if isinstance(item, dict):
+                p = item.get("path", "")
+                raw_sz = item.get("size", 0)
+                sz_int = int(raw_sz) if isinstance(raw_sz, (int, str, float)) else 0
+                sz = _format_file_size(sz_int)
+                out.write(f"  • {p:<45} ({sz})\n")
+
+    if map_text:
+        out.write("\nFile Tree:\n")
+        for line in str(map_text).splitlines():
+            out.write(f"  {line}\n")
+    out.write("\n")
+    out.flush()
+
+
 async def _run_symbols_command(
     ctx: ChatContext,
     args: list[str],
@@ -1214,8 +1283,10 @@ def build_chat_context(
             grep_tool(),
             glob_tool(),
             symbols_tool(),
+            workspace_map_tool(),
             lint_tool(),
             test_runner_tool(),
+            git_status_tool(),
             git_diff_tool(),
             git_commit_tool(),
         ],
@@ -1362,6 +1433,10 @@ async def _run_slash(
 
     if cmd in ("/find", "/search"):
         await _run_find_command(ctx, args, out, err)
+        return False
+
+    if cmd in ("/map", "/tree"):
+        await _run_workspace_map_command(ctx, args, out, err)
         return False
 
     if cmd == "/symbols":

@@ -135,8 +135,10 @@ def test_build_chat_context_constructs_runtime_with_tools(
         "grep",
         "glob",
         "symbols",
+        "workspace_map",
         "lint",
         "test_runner",
+        "git_status",
         "git_diff",
         "git_commit",
     }
@@ -1505,3 +1507,46 @@ def test_repl_stash_command(
     assert res is False
     assert "Applied and removed" in stdout.getvalue()
     assert (ws / "file.txt").read_text(encoding="utf-8") == "v2 uncommitted"
+
+
+@pytest.mark.asyncio
+async def test_repl_map_and_tree_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ws = chat_env["workspace"]
+    (ws / "docs").mkdir()
+    (ws / "docs" / "guide.md").write_text("guide", encoding="utf-8")
+    (ws / "app.py").write_text("print('hello')", encoding="utf-8")
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=ws,
+        environ=env,
+    )
+
+    # 1. /map default
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/map"], stdout, stderr, env)
+    assert res is False
+    out = stdout.getvalue()
+    assert "Workspace Map:" in out
+    assert "Indexed files:" in out
+    assert "Recently Modified Files:" in out
+    assert "docs/guide.md" in out
+    assert "app.py" in out
+
+    # 2. /tree alias with limit
+    stdout_tree = io.StringIO()
+    stderr_tree = io.StringIO()
+    res2 = await _run_slash(ctx, ["/tree", "1"], stdout_tree, stderr_tree, env)
+    assert res2 is False
+    out_tree = stdout_tree.getvalue()
+    assert "Workspace Map:" in out_tree
+    assert "showing 1 entries, truncated" in out_tree

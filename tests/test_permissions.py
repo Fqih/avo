@@ -46,12 +46,16 @@ def test_default_mode_asks_every_tool() -> None:
 
 def test_accept_edits_auto_approves_read_and_write() -> None:
     assert should_require_approval("read_file", PermissionMode.ACCEPT_EDITS) is False
+    assert should_require_approval("workspace_map", PermissionMode.ACCEPT_EDITS) is False
+    assert should_require_approval("git_status", PermissionMode.ACCEPT_EDITS) is False
     assert should_require_approval("write_file", PermissionMode.ACCEPT_EDITS) is False
     assert should_require_approval("edit_file", PermissionMode.ACCEPT_EDITS) is False
 
 
 def test_plan_mode_requires_plan_before_writes() -> None:
     assert should_require_approval("read_file", PermissionMode.PLAN) is False
+    assert should_require_approval("workspace_map", PermissionMode.PLAN) is False
+    assert should_require_approval("git_status", PermissionMode.PLAN) is False
     assert should_require_approval("write_file", PermissionMode.PLAN, plan_submitted=False) is True
     assert should_require_approval("write_file", PermissionMode.PLAN, plan_submitted=True) is False
     assert should_require_approval("edit_file", PermissionMode.PLAN, plan_submitted=True) is False
