@@ -27,7 +27,7 @@ from avo.auth import load_all_tokens
 from avo.chat_session import SessionLifecycle
 from avo.cost import aggregate_costs, report_to_dict
 from avo.doctor import run_doctor
-from avo.persona import PersonaManager
+from avo.persona import BUILTIN_PERSONAS, PersonaManager
 from avo.storage.sqlite import SQLiteEventStore
 from avo.tracing import TraceInspector
 
@@ -132,17 +132,41 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                         ),
                     },
                     "persona": {
-                        "active": PersonaManager(self.server.database_path.parent).active_persona
-                        or "default",
+                        "active": self.server.persona_manager.active_persona or "default",
                         "instructions_configured": bool(
-                            PersonaManager(self.server.database_path.parent).custom_instructions
+                            self.server.persona_manager.custom_instructions
                         ),
+                        "instructions": self.server.persona_manager.custom_instructions or "",
+                        "available": [*BUILTIN_PERSONAS.keys(), "default"],
+                    },
+                    "permissions": {
+                        "mode": self.server.permission_mode,
+                        "available": ["bypass", "default", "accept_edits"],
                     },
                     "env": {
                         "AVO_ROUTER_CHAIN": router_chain,
                         "AVO_ROUTER_PROVIDERS": os.environ.get("AVO_ROUTER_PROVIDERS", ""),
                         "AVO_ROUTER_MODELS": os.environ.get("AVO_ROUTER_MODELS", ""),
                     },
+                }
+            )
+            return
+
+        if path == "/api/persona":
+            self._send_json(
+                {
+                    "active": self.server.persona_manager.active_persona or "default",
+                    "instructions": self.server.persona_manager.custom_instructions or "",
+                    "available": [*BUILTIN_PERSONAS.keys(), "default"],
+                }
+            )
+            return
+
+        if path == "/api/permissions":
+            self._send_json(
+                {
+                    "mode": self.server.permission_mode,
+                    "available": ["bypass", "default", "accept_edits"],
                 }
             )
             return
@@ -263,6 +287,71 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)}, status=500)
             return
 
+        if path == "/api/persona":
+            content_len = int(self.headers.get("Content-Length", 0))
+            if content_len <= 0:
+                self._send_json({"error": "empty body"}, status=400)
+                return
+            try:
+                data = json.loads(self.rfile.read(content_len).decode("utf-8"))
+            except Exception:
+                self._send_json({"error": "invalid JSON body"}, status=400)
+                return
+
+            persona_name = data.get("persona")
+            instructions = data.get("instructions")
+
+            if persona_name is not None:
+                p_clean = str(persona_name).strip()
+                if p_clean in ("default", "clear", ""):
+                    self.server.persona_manager.set_persona(None)
+                elif p_clean in BUILTIN_PERSONAS:
+                    self.server.persona_manager.set_persona(p_clean)
+                else:
+                    self._send_json(
+                        {"ok": False, "error": f"Unknown persona '{p_clean}'"}, status=400
+                    )
+                    return
+
+            if instructions is not None:
+                instr_clean = str(instructions).strip()
+                if instr_clean in ("clear", ""):
+                    self.server.persona_manager.set_custom_instructions(None)
+                else:
+                    self.server.persona_manager.set_custom_instructions(instr_clean)
+
+            self._send_json(
+                {
+                    "ok": True,
+                    "persona": self.server.persona_manager.active_persona or "default",
+                    "instructions": self.server.persona_manager.custom_instructions or "",
+                }
+            )
+            return
+
+        if path == "/api/permissions":
+            content_len = int(self.headers.get("Content-Length", 0))
+            if content_len <= 0:
+                self._send_json({"error": "empty body"}, status=400)
+                return
+            try:
+                data = json.loads(self.rfile.read(content_len).decode("utf-8"))
+            except Exception:
+                self._send_json({"error": "invalid JSON body"}, status=400)
+                return
+
+            mode = str(data.get("mode", "")).strip().lower()
+            if mode not in ("bypass", "default", "accept_edits"):
+                self._send_json(
+                    {"ok": False, "error": f"Invalid permission mode '{mode}'"}, status=400
+                )
+                return
+
+            self.server.permission_mode = mode
+            os.environ["AVO_PERMISSION_MODE"] = mode
+            self._send_json({"ok": True, "mode": mode})
+            return
+
         self._send_json({"error": "Not Found"}, status=404)
 
 
@@ -273,9 +362,19 @@ class AvoWebServer(ThreadingHTTPServer):
         self,
         server_address: tuple[str, int],
         database_path: Path,
+        persona_manager: PersonaManager | None = None,
+        permission_mode: str | None = None,
     ) -> None:
         super().__init__(server_address, AvoWebHandler)
         self.database_path = database_path
+        self.persona_manager = (
+            persona_manager if persona_manager is not None else PersonaManager(database_path.parent)
+        )
+        self.permission_mode = (
+            permission_mode
+            if permission_mode is not None
+            else os.environ.get("AVO_PERMISSION_MODE", "bypass")
+        )
 
     def get_sync_runs(self) -> list[dict[str, Any]]:
         """Query runs from SQLite synchronously."""
@@ -394,13 +493,14 @@ class AvoWebServer(ThreadingHTTPServer):
             lifecycle.record_user_turn(sid, message)
             past_turns = lifecycle.turns(sid)
 
+            system_content = self.persona_manager.render_system_prompt() or (
+                "You are Avo, an autonomous and precise software engineering agent. "
+                "Provide direct, concise, and technically accurate responses."
+            )
             messages: list[dict[str, JsonValue]] = [
                 {
                     "role": "system",
-                    "content": (
-                        "You are Avo, an autonomous and precise software engineering agent. "
-                        "Provide direct, concise, and technically accurate responses."
-                    ),
+                    "content": system_content,
                 }
             ]
             for t in past_turns[-20:]:

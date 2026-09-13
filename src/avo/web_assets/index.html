@@ -124,6 +124,60 @@
           </table>
         </div>
       </div>
+
+      <!-- Engineering Persona & Security Governance Card -->
+      <div class="glass rounded-xl p-6 border border-gray-800 space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-base font-semibold text-white">Engineering Persona &amp; Security Policy</h3>
+            <p class="text-xs text-gray-400">Configure role specialization, instructions, and tool permission gates</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="overviewPersonaBadge" class="px-2.5 py-1 text-xs rounded-full bg-indigo-950/80 border border-indigo-800 text-indigo-300 font-semibold font-mono">Persona: default</span>
+            <span id="overviewPermBadge" class="px-2.5 py-1 text-xs rounded-full bg-emerald-950/80 border border-emerald-800 text-emerald-300 font-semibold font-mono">Mode: bypass</span>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+          <!-- Persona Selection -->
+          <div class="space-y-2">
+            <label class="block text-xs font-semibold text-gray-300 uppercase tracking-wider">Active Role Specialization</label>
+            <div class="flex gap-2">
+              <select id="overviewPersonaSelect" class="flex-1 bg-gray-900 border border-gray-700 text-xs rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-indigo-500">
+                <option value="default">Default (Autonomous Generalist)</option>
+                <option value="coder">Coder (TDD, Implementation, Refactoring)</option>
+                <option value="reviewer">Reviewer (Security, Performance, Quality)</option>
+                <option value="architect">Architect (System Design, Modularity)</option>
+                <option value="terse">Terse (Strictly minimal output)</option>
+              </select>
+              <button onclick="savePersonaFromOverview()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow transition">Apply</button>
+            </div>
+          </div>
+          <!-- Permission Mode -->
+          <div class="space-y-2">
+            <label class="block text-xs font-semibold text-gray-300 uppercase tracking-wider">Security Permission Gate</label>
+            <div class="flex gap-2">
+              <select id="overviewPermSelect" class="flex-1 bg-gray-900 border border-gray-700 text-xs rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-emerald-500">
+                <option value="bypass">Bypass (Autonomous execution)</option>
+                <option value="default">Default (Prompt user confirmation)</option>
+                <option value="accept_edits">Accept Edits (Auto-allow file edits)</option>
+              </select>
+              <button onclick="savePermFromOverview()" class="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold shadow transition">Apply</button>
+            </div>
+          </div>
+        </div>
+        <!-- Custom Workspace Instructions -->
+        <div class="space-y-2 pt-2 border-t border-gray-800/80">
+          <div class="flex justify-between items-center">
+            <label class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Custom Workspace Instructions (.avo/instructions.md)</label>
+            <span id="instructionsSaveStatus" class="text-[11px] text-emerald-400 hidden">✓ Saved</span>
+          </div>
+          <textarea id="overviewInstructionsText" rows="2" placeholder="Add custom prompt instructions for this repository or workspace..." class="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500"></textarea>
+          <div class="flex justify-end gap-2">
+            <button onclick="clearInstructions()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs transition">Clear</button>
+            <button onclick="saveInstructions()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow transition">Save Instructions</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- LIVE CHAT TAB -->
@@ -153,7 +207,29 @@
               <p id="chatModelIndicator" class="text-[11px] text-gray-400">Ready</p>
             </div>
           </div>
-          <button onclick="clearCurrentChatView()" class="text-xs text-gray-400 hover:text-gray-200 px-2.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 border border-gray-700/60 transition">Clear Messages</button>
+          <div class="flex items-center gap-3">
+            <!-- Quick Persona -->
+            <div class="flex items-center gap-1.5">
+              <label for="chatPersonaSelect" class="text-gray-400 text-[11px]">Persona:</label>
+              <select id="chatPersonaSelect" onchange="quickSetPersona(this.value)" class="bg-gray-900 border border-gray-700 text-indigo-300 text-[11px] rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500">
+                <option value="default">Default</option>
+                <option value="coder">Coder</option>
+                <option value="reviewer">Reviewer</option>
+                <option value="architect">Architect</option>
+                <option value="terse">Terse</option>
+              </select>
+            </div>
+            <!-- Quick Mode -->
+            <div class="flex items-center gap-1.5">
+              <label for="chatPermSelect" class="text-gray-400 text-[11px]">Mode:</label>
+              <select id="chatPermSelect" onchange="quickSetPermission(this.value)" class="bg-gray-900 border border-gray-700 text-emerald-300 text-[11px] rounded-lg px-2 py-1 focus:outline-none focus:border-emerald-500">
+                <option value="bypass">Bypass</option>
+                <option value="default">Default</option>
+                <option value="accept_edits">Accept Edits</option>
+              </select>
+            </div>
+            <button onclick="clearCurrentChatView()" class="text-xs text-gray-400 hover:text-gray-200 px-2.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 border border-gray-700/60 transition">Clear Messages</button>
+          </div>
         </div>
 
         <!-- Messages History -->
@@ -316,8 +392,117 @@
         docHtml += `<p class="text-amber-400"><strong>Missing variables:</strong> ${doc.missing.join(', ')}</p>`;
       } else {
         docHtml += `<p class="text-emerald-400">All required variables configured successfully.</p>`;
-      }
       document.getElementById('doctorDetails').innerHTML = docHtml;
+
+      // Persona & Permissions Governance
+      const activePersona = (o.persona && o.persona.active) || 'default';
+      const activePerm = (o.permissions && o.permissions.mode) || 'bypass';
+      const customInstr = (o.persona && o.persona.instructions) || '';
+
+      const pBadge = document.getElementById('overviewPersonaBadge');
+      if (pBadge) pBadge.innerText = `Persona: ${activePersona}`;
+      const mBadge = document.getElementById('overviewPermBadge');
+      if (mBadge) mBadge.innerText = `Mode: ${activePerm}`;
+
+      const pSelect = document.getElementById('overviewPersonaSelect');
+      if (pSelect) pSelect.value = activePersona;
+      const mSelect = document.getElementById('overviewPermSelect');
+      if (mSelect) mSelect.value = activePerm;
+
+      const cpSelect = document.getElementById('chatPersonaSelect');
+      if (cpSelect) cpSelect.value = activePersona;
+      const cmSelect = document.getElementById('chatPermSelect');
+      if (cmSelect) cmSelect.value = activePerm;
+
+      const instrEl = document.getElementById('overviewInstructionsText');
+      if (instrEl && document.activeElement !== instrEl) instrEl.value = customInstr;
+    }
+
+    async function savePersonaFromOverview() {
+      const p = document.getElementById('overviewPersonaSelect').value;
+      await setPersona(p);
+    }
+
+    async function quickSetPersona(persona) {
+      await setPersona(persona);
+    }
+
+    async function setPersona(persona) {
+      try {
+        const res = await fetch('/api/persona', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ persona })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          if (state.overview) {
+            state.overview.persona = state.overview.persona || {};
+            state.overview.persona.active = data.persona;
+          }
+          renderOverview();
+        }
+      } catch (err) {
+        console.error('Failed to set persona', err);
+      }
+    }
+
+    async function savePermFromOverview() {
+      const mode = document.getElementById('overviewPermSelect').value;
+      await setPermission(mode);
+    }
+
+    async function quickSetPermission(mode) {
+      await setPermission(mode);
+    }
+
+    async function setPermission(mode) {
+      try {
+        const res = await fetch('/api/permissions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          if (state.overview) {
+            state.overview.permissions = state.overview.permissions || {};
+            state.overview.permissions.mode = data.mode;
+          }
+          renderOverview();
+        }
+      } catch (err) {
+        console.error('Failed to set permission mode', err);
+      }
+    }
+
+    async function saveInstructions() {
+      const instructions = document.getElementById('overviewInstructionsText').value;
+      try {
+        const res = await fetch('/api/persona', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ instructions })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          const statusEl = document.getElementById('instructionsSaveStatus');
+          if (statusEl) {
+            statusEl.classList.remove('hidden');
+            setTimeout(() => statusEl.classList.add('hidden'), 2500);
+          }
+          if (state.overview && state.overview.persona) {
+            state.overview.persona.instructions = data.instructions;
+          }
+        }
+      } catch (err) {
+        console.error('Failed to save instructions', err);
+      }
+    }
+
+    async function clearInstructions() {
+      document.getElementById('overviewInstructionsText').value = '';
+      await saveInstructions();
     }
 
     function renderCostModels() {

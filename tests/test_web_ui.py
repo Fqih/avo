@@ -277,3 +277,84 @@ def test_web_ui_api_cost(web_server: tuple[str, Path]) -> None:
         assert data["cost_usd"] == "0.0050"
         assert len(data["models"]) == 1
         assert data["models"][0]["model"] == "gpt-4o"
+
+
+def test_web_ui_api_persona_and_permissions(web_server: tuple[str, Path]) -> None:
+    import urllib.error
+
+    base_url, _ = web_server
+
+    # 1. Verify status contains persona and permissions
+    req_status = urllib.request.Request(f"{base_url}/api/status")
+    with urllib.request.urlopen(req_status, timeout=5) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        assert "persona" in data
+        assert data["persona"]["active"] == "default"
+        assert "available" in data["persona"]
+        assert "coder" in data["persona"]["available"]
+        assert "permissions" in data
+        assert data["permissions"]["mode"] == "bypass"
+        assert "accept_edits" in data["permissions"]["available"]
+
+    # 2. GET /api/persona
+    req_p_get = urllib.request.Request(f"{base_url}/api/persona")
+    with urllib.request.urlopen(req_p_get, timeout=5) as resp:
+        p_data = json.loads(resp.read().decode("utf-8"))
+        assert p_data["active"] == "default"
+
+    # 3. POST /api/persona - switch to coder
+    req_p_post = urllib.request.Request(
+        f"{base_url}/api/persona",
+        data=json.dumps({"persona": "coder", "instructions": "Write clean async code"}).encode(
+            "utf-8"
+        ),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req_p_post, timeout=5) as resp:
+        assert resp.status == 200
+        res = json.loads(resp.read().decode("utf-8"))
+        assert res["ok"] is True
+        assert res["persona"] == "coder"
+        assert res["instructions"] == "Write clean async code"
+
+    # 4. POST /api/persona - invalid persona returns 400
+    req_p_bad = urllib.request.Request(
+        f"{base_url}/api/persona",
+        data=json.dumps({"persona": "nonexistent_role"}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req_p_bad, timeout=5)
+    assert exc_info.value.code == 400
+
+    # 5. GET /api/permissions
+    req_perm_get = urllib.request.Request(f"{base_url}/api/permissions")
+    with urllib.request.urlopen(req_perm_get, timeout=5) as resp:
+        perm_data = json.loads(resp.read().decode("utf-8"))
+        assert perm_data["mode"] == "bypass"
+
+    # 6. POST /api/permissions - switch to accept_edits
+    req_perm_post = urllib.request.Request(
+        f"{base_url}/api/permissions",
+        data=json.dumps({"mode": "accept_edits"}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req_perm_post, timeout=5) as resp:
+        assert resp.status == 200
+        perm_res = json.loads(resp.read().decode("utf-8"))
+        assert perm_res["ok"] is True
+        assert perm_res["mode"] == "accept_edits"
+
+    # 7. POST /api/permissions - invalid mode returns 400
+    req_perm_bad = urllib.request.Request(
+        f"{base_url}/api/permissions",
+        data=json.dumps({"mode": "invalid_mode"}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_perm_bad:
+        urllib.request.urlopen(req_perm_bad, timeout=5)
+    assert exc_perm_bad.value.code == 400
