@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -358,3 +360,111 @@ def test_web_ui_api_persona_and_permissions(web_server: tuple[str, Path]) -> Non
     with pytest.raises(urllib.error.HTTPError) as exc_perm_bad:
         urllib.request.urlopen(req_perm_bad, timeout=5)
     assert exc_perm_bad.value.code == 400
+
+
+def test_web_ui_api_git(tmp_path: Path) -> None:
+    # 1. Initialize git repository
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.email", "tester@example.com"], cwd=str(ws), check=True)
+    subprocess.run(["git", "config", "user.name", "Tester"], cwd=str(ws), check=True)
+    (ws / "tracked.txt").write_text("initial content", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(ws), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init commit"], cwd=str(ws), check=True)
+
+    db_path = tmp_path / "git_test.db"
+    server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=ws)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        # A. GET /api/git - verify clean state and initial commit
+        req_get = urllib.request.Request(f"{base_url}/api/git")
+        with urllib.request.urlopen(req_get, timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["is_repo"] is True
+            assert data["branch"] == "main"
+            assert data["is_clean"] is True
+            assert len(data["recent_commits"]) == 1
+            assert data["recent_commits"][0]["subject"] == "init commit"
+
+        # B. Modify file and query status
+        (ws / "tracked.txt").write_text("updated content", encoding="utf-8")
+        with urllib.request.urlopen(req_get, timeout=5) as resp:
+            data_modified = json.loads(resp.read().decode("utf-8"))
+            assert data_modified["is_clean"] is False
+            assert "tracked.txt" in data_modified["modified"]
+            assert "+updated content" in data_modified["diff"]
+
+        # C. POST /api/git/commit
+        req_commit = urllib.request.Request(
+            f"{base_url}/api/git/commit",
+            data=json.dumps({"message": "feat: update tracked file"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_commit, timeout=5) as resp:
+            assert resp.status == 200
+            commit_res = json.loads(resp.read().decode("utf-8"))
+            assert commit_res["ok"] is True
+            assert "commit_hash" in commit_res
+            assert commit_res["message"] == "feat: update tracked file"
+
+        # Verify clean again
+        with urllib.request.urlopen(req_get, timeout=5) as resp:
+            data_after_commit = json.loads(resp.read().decode("utf-8"))
+            assert data_after_commit["is_clean"] is True
+            assert len(data_after_commit["recent_commits"]) == 2
+
+        # D. POST /api/git/branch - create and switch
+        req_branch = urllib.request.Request(
+            f"{base_url}/api/git/branch",
+            data=json.dumps({"branch": "feature/dashboard-git", "create": True}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_branch, timeout=5) as resp:
+            assert resp.status == 200
+            branch_res = json.loads(resp.read().decode("utf-8"))
+            assert branch_res["ok"] is True
+            assert branch_res["branch"] == "feature/dashboard-git"
+
+        # Verify current branch is updated
+        with urllib.request.urlopen(req_get, timeout=5) as resp:
+            data_branch = json.loads(resp.read().decode("utf-8"))
+            assert data_branch["branch"] == "feature/dashboard-git"
+            branch_names = [b["name"] for b in data_branch["branches"]]
+            assert "feature/dashboard-git" in branch_names
+            assert "main" in branch_names
+
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_web_ui_api_git_non_repo(tmp_path: Path) -> None:
+    empty_dir = tmp_path / "not_git"
+    empty_dir.mkdir()
+    db_path = tmp_path / "nongit.db"
+
+    server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=empty_dir)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        req_get = urllib.request.Request(f"{base_url}/api/git")
+        with urllib.request.urlopen(req_get, timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["is_repo"] is False
+            assert data["is_clean"] is True
+            assert data["entries"] == []
+    finally:
+        server.shutdown()
+        server.server_close()

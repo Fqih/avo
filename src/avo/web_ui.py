@@ -171,6 +171,10 @@ class AvoWebHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/api/git":
+            self._send_json(self.server.get_sync_git_status())
+            return
+
         if path == "/api/cost":
             cost_report = aggregate_costs(self.server.database_path)
             self._send_json(report_to_dict(cost_report))
@@ -352,6 +356,83 @@ class AvoWebHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "mode": mode})
             return
 
+        if path == "/api/git/commit":
+            from avo.workspace.git import GitRepository, generate_commit_message_heuristic
+
+            content_len = int(self.headers.get("Content-Length", 0))
+            body_dict: dict[str, Any] = {}
+            if content_len > 0:
+                with contextlib.suppress(Exception):
+                    body_dict = json.loads(self.rfile.read(content_len).decode("utf-8"))
+
+            repo = GitRepository(self.server.workspace_root)
+            if not repo.is_repository():
+                self._send_json({"ok": False, "error": "Not a git repository"}, status=400)
+                return
+
+            status = repo.status()
+            if status.is_clean:
+                self._send_json(
+                    {"ok": False, "error": "Working tree clean, nothing to commit"}, status=400
+                )
+                return
+
+            msg = body_dict.get("message")
+            commit_msg = (
+                str(msg).strip()
+                if msg and str(msg).strip()
+                else generate_commit_message_heuristic(status)
+            )
+
+            try:
+                commit_hash = repo.commit(commit_msg)
+            except Exception as exc:
+                self._send_json(
+                    {"ok": False, "error": f"git commit failed: {exc}"},
+                    status=500,
+                )
+                return
+
+            self._send_json(
+                {
+                    "ok": True,
+                    "message": commit_msg,
+                    "commit_hash": commit_hash,
+                }
+            )
+            return
+
+        if path == "/api/git/branch":
+            from avo.workspace.git import GitError, GitRepository
+
+            content_len = int(self.headers.get("Content-Length", 0))
+            if content_len <= 0:
+                self._send_json({"error": "empty body"}, status=400)
+                return
+            try:
+                data = json.loads(self.rfile.read(content_len).decode("utf-8"))
+            except Exception:
+                self._send_json({"error": "invalid JSON body"}, status=400)
+                return
+
+            branch_name = str(data.get("branch", "")).strip()
+            create = bool(data.get("create", False))
+            if not branch_name:
+                self._send_json({"ok": False, "error": "Branch name is required"}, status=400)
+                return
+
+            repo = GitRepository(self.server.workspace_root)
+            if not repo.is_repository():
+                self._send_json({"ok": False, "error": "Not a git repository"}, status=400)
+                return
+
+            try:
+                repo.switch_branch(branch_name, create=create)
+                self._send_json({"ok": True, "branch": branch_name, "created": create})
+            except GitError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
         self._send_json({"error": "Not Found"}, status=404)
 
 
@@ -364,9 +445,11 @@ class AvoWebServer(ThreadingHTTPServer):
         database_path: Path,
         persona_manager: PersonaManager | None = None,
         permission_mode: str | None = None,
+        workspace_root: Path | None = None,
     ) -> None:
         super().__init__(server_address, AvoWebHandler)
         self.database_path = database_path
+        self.workspace_root = workspace_root if workspace_root is not None else Path.cwd()
         self.persona_manager = (
             persona_manager if persona_manager is not None else PersonaManager(database_path.parent)
         )
@@ -375,6 +458,73 @@ class AvoWebServer(ThreadingHTTPServer):
             if permission_mode is not None
             else os.environ.get("AVO_PERMISSION_MODE", "bypass")
         )
+
+    def get_sync_git_status(self) -> dict[str, Any]:
+        """Query repository status, branches, diff, and recent commits synchronously."""
+        from avo.workspace.git import GitRepository
+
+        repo = GitRepository(self.workspace_root)
+        if not repo.is_repository():
+            return {
+                "is_repo": False,
+                "workspace": str(self.workspace_root),
+                "branch": None,
+                "is_clean": True,
+                "entries": [],
+                "modified": [],
+                "added": [],
+                "untracked": [],
+                "deleted": [],
+                "branches": [],
+                "diff": "",
+                "recent_commits": [],
+            }
+        try:
+            status = repo.status()
+            branches = repo.list_branches()
+            diff_text = repo.diff()
+            staged_diff = repo.diff(staged=True)
+            full_diff = (staged_diff + "\n" + diff_text).strip() if staged_diff else diff_text
+            commits = repo.log(max_count=10)
+            entries = [
+                {
+                    "path": e.path,
+                    "status_code": e.status_code,
+                    "status": (
+                        "untracked"
+                        if e.is_untracked
+                        else ("modified" if e.is_modified else "changed")
+                    ),
+                }
+                for e in status.entries
+            ]
+            return {
+                "is_repo": True,
+                "workspace": str(self.workspace_root),
+                "branch": status.branch,
+                "is_clean": status.is_clean,
+                "entries": entries,
+                "modified": list(status.modified),
+                "untracked": list(status.untracked),
+                "branches": branches,
+                "diff": full_diff,
+                "recent_commits": commits,
+            }
+        except Exception as exc:
+            _LOG.warning("Could not read git status: %s", exc)
+            return {
+                "is_repo": True,
+                "workspace": str(self.workspace_root),
+                "error": str(exc),
+                "branch": None,
+                "is_clean": True,
+                "entries": [],
+                "modified": [],
+                "untracked": [],
+                "branches": [],
+                "diff": "",
+                "recent_commits": [],
+            }
 
     def get_sync_runs(self) -> list[dict[str, Any]]:
         """Query runs from SQLite synchronously."""
@@ -582,12 +732,18 @@ def run_web_dashboard(
     *,
     port: int = 43111,
     database_path: Path | None = None,
+    workspace_root: Path | None = None,
     open_browser: bool = True,
     output_writer: Any = sys.stdout.write,
 ) -> int:
     """Start the local Web UI server and optionally open the browser."""
     db_path = database_path if database_path is not None else Path("avo.db")
-    server = AvoWebServer(("127.0.0.1", port), database_path=db_path)
+    ws_root = workspace_root if workspace_root is not None else Path.cwd()
+    server = AvoWebServer(
+        ("127.0.0.1", port),
+        database_path=db_path,
+        workspace_root=ws_root,
+    )
     url = f"http://localhost:{port}"
 
     output_writer(
@@ -632,6 +788,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Path to the SQLite database (default: avo.db).",
     )
     parser.add_argument(
+        "--workspace",
+        "-w",
+        type=Path,
+        default=None,
+        help="Path to the workspace root directory (default: current directory).",
+    )
+    parser.add_argument(
         "--no-browser",
         action="store_true",
         help="Do not automatically open the dashboard in the default browser.",
@@ -641,6 +804,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return run_web_dashboard(
         port=args.port,
         database_path=args.database,
+        workspace_root=args.workspace,
         open_browser=not args.no_browser,
     )
 
