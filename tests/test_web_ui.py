@@ -41,6 +41,9 @@ def test_web_ui_serves_html(web_server: tuple[str, Path]) -> None:
         assert "text/html" in resp.headers.get("Content-Type", "")
         content = resp.read().decode("utf-8")
         assert "Avo Dashboard" in content
+        assert "renderMarkdown" in content
+        assert "copyCode" in content
+        assert "code-block-wrapper" in content
 
 
 def test_web_ui_api_status(web_server: tuple[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
