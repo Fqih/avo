@@ -155,12 +155,22 @@ def _parser() -> argparse.ArgumentParser:
         add_help=False,
         help="Manage OAuth and API credentials (see `avo login --help`).",
     )
+    commands.add_parser(
+        "ui",
+        add_help=False,
+        help="Launch the local Web UI dashboard (see `avo ui --help`).",
+    )
 
     return parser
 
 
 async def _execute(args: argparse.Namespace, rest: list[str] | None = None) -> int:
     tail = rest if rest is not None else []
+    if args.command == "ui":
+        from avo.web_ui import main as web_ui_main
+
+        return web_ui_main(tail or _tail_argv("ui"))
+
     if args.command == "login":
         from avo.auth import main_login
 
@@ -292,6 +302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args, rest = parser.parse_known_args(effective_argv)
     if rest and args.command not in {
         "login",
+        "ui",
         "plugin",
         "mcp",
         "skill",

@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Avo Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background-color: #0b0f19; color: #f3f4f6; font-family: ui-sans-serif, system-ui, sans-serif; }
+    .glass { background: rgba(17, 24, 39, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+  <!-- Navbar -->
+  <header class="glass sticky top-0 z-40 px-6 py-4 flex items-center justify-between border-b border-gray-800">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/30">A</div>
+      <div>
+        <h1 class="font-bold text-lg leading-none tracking-tight">Avo Dashboard</h1>
+        <p class="text-xs text-gray-400 mt-1">Autonomous Agent Runtime &amp; Router</p>
+      </div>
+      <span class="ml-2 px-2 py-0.5 text-xs font-semibold rounded bg-indigo-900/60 text-indigo-300 border border-indigo-700/50">v{{AVO_VERSION}}</span>
+    </div>
+    <div class="flex items-center gap-4">
+      <div id="healthBadge" class="flex items-center gap-2 px-3 py-1 text-xs rounded-full bg-emerald-950/80 border border-emerald-800 text-emerald-300 font-medium">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span id="healthText">Doctor: OK</span>
+      </div>
+      <button onclick="refreshData()" class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 transition">Refresh</button>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <div class="px-6 border-b border-gray-800 bg-gray-950/40">
+    <nav class="flex gap-6 text-sm font-medium">
+      <button onclick="switchTab('overview')" id="tab-overview" class="py-3 border-b-2 border-indigo-500 text-indigo-400 font-semibold transition">Overview</button>
+      <button onclick="switchTab('runs')" id="tab-runs" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Runs Explorer</button>
+      <button onclick="switchTab('sessions')" id="tab-sessions" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Chat Sessions</button>
+      <button onclick="switchTab('router')" id="tab-router" class="py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition">Router &amp; Credentials</button>
+    </nav>
+  </div>
+
+  <!-- Content Container -->
+  <main class="flex-1 p-6 max-w-7xl mx-auto w-full">
+    <!-- OVERVIEW TAB -->
+    <div id="view-overview" class="space-y-6">
+      <!-- KPI Stats -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="glass p-5 rounded-xl">
+          <p class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Active Provider</p>
+          <p id="kpiProvider" class="text-2xl font-bold text-white mt-1">-</p>
+          <p id="kpiModel" class="text-xs text-indigo-400 mt-0.5 truncate">-</p>
+        </div>
+        <div class="glass p-5 rounded-xl">
+          <p class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Recorded Runs</p>
+          <p id="kpiRuns" class="text-2xl font-bold text-white mt-1">0</p>
+          <p class="text-xs text-gray-400 mt-0.5">Persisted in SQLite</p>
+        </div>
+        <div class="glass p-5 rounded-xl">
+          <p class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Chat Sessions</p>
+          <p id="kpiSessions" class="text-2xl font-bold text-white mt-1">0</p>
+          <p class="text-xs text-gray-400 mt-0.5">Conversation threads</p>
+        </div>
+        <div class="glass p-5 rounded-xl">
+          <p class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Credentials Stored</p>
+          <p id="kpiTokens" class="text-2xl font-bold text-white mt-1">0</p>
+          <p class="text-xs text-emerald-400 mt-0.5">~/.config/avo/auth.json (0600)</p>
+        </div>
+      </div>
+
+      <!-- Quick Doctor Card -->
+      <div class="glass rounded-xl p-6 border border-gray-800">
+        <h3 class="text-base font-semibold text-white mb-3">System Diagnostics (Doctor)</h3>
+        <div id="doctorDetails" class="text-sm text-gray-300 space-y-2">Loading diagnostics...</div>
+      </div>
+    </div>
+
+    <!-- RUNS TAB -->
+    <div id="view-runs" class="hidden space-y-4">
+      <div class="flex justify-between items-center">
+        <h2 class="text-lg font-bold text-white">Execution Runs</h2>
+        <input type="text" id="runSearch" oninput="filterRuns()" placeholder="Search Run ID or State..." class="px-3 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded-lg text-gray-200 focus:outline-none focus:border-indigo-500 w-64">
+      </div>
+      <div class="glass rounded-xl overflow-hidden border border-gray-800">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-gray-900/80 text-gray-400 border-b border-gray-800 uppercase tracking-wider">
+            <tr>
+              <th class="px-4 py-3">Run ID</th>
+              <th class="px-4 py-3">State</th>
+              <th class="px-4 py-3">Stop Reason</th>
+              <th class="px-4 py-3">Steps</th>
+              <th class="px-4 py-3 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody id="runsTableBody" class="divide-y divide-gray-800/60">
+            <tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No runs recorded yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SESSIONS TAB -->
+    <div id="view-sessions" class="hidden space-y-4">
+      <h2 class="text-lg font-bold text-white">Chat Sessions</h2>
+      <div id="sessionsList" class="space-y-3">
+        <p class="text-sm text-gray-500">Loading sessions...</p>
+      </div>
+    </div>
+
+    <!-- ROUTER TAB -->
+    <div id="view-router" class="hidden space-y-6">
+      <div class="glass rounded-xl p-6 border border-gray-800 space-y-4">
+        <h3 class="text-base font-semibold text-white">Multi-Provider Router &amp; Failover</h3>
+        <p class="text-sm text-gray-400">Avo acts like an intelligent model router. Requests are routed sequentially across providers until an answer is produced.</p>
+        <div class="p-4 rounded-lg bg-gray-900/60 border border-gray-800 text-sm space-y-2">
+          <div class="flex justify-between"><span class="text-gray-400">Router Providers:</span><code id="routerChain" class="text-indigo-300">ollama,openrouter</code></div>
+          <div class="flex justify-between"><span class="text-gray-400">Model Mapping:</span><code id="routerModels" class="text-indigo-300">llama3.1,meta-llama/llama-3.3-70b-instruct:free</code></div>
+        </div>
+      </div>
+      <div class="glass rounded-xl p-6 border border-gray-800 space-y-4">
+        <h3 class="text-base font-semibold text-white">Stored Authentication Tokens</h3>
+        <div id="tokensList" class="text-sm text-gray-300 space-y-2">Loading stored tokens...</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Run Detail Modal -->
+  <div id="traceModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+    <div class="glass rounded-2xl max-w-4xl w-full max-h-[85vh] flex flex-col overflow-hidden border border-gray-700 shadow-2xl">
+      <div class="p-4 border-b border-gray-800 flex justify-between items-center">
+        <div>
+          <h3 id="modalTitle" class="text-base font-bold text-white">Run Trace</h3>
+          <p id="modalSub" class="text-xs text-gray-400">Detailed chronological event log</p>
+        </div>
+        <button onclick="closeModal()" class="px-3 py-1 text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg">✕</button>
+      </div>
+      <div id="modalBody" class="p-6 overflow-y-auto space-y-4 text-xs font-mono">
+        Loading trace...
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let state = { overview: null, runs: [], sessions: [] };
+
+    async function fetchJson(url) {
+      const res = await fetch(url);
+      return await res.json();
+    }
+
+    async function refreshData() {
+      try {
+        const [statusData, runsData, sessionsData] = await Promise.all([
+          fetchJson('/api/status'),
+          fetchJson('/api/runs'),
+          fetchJson('/api/sessions')
+        ]);
+        state.overview = statusData;
+        state.runs = runsData.runs || [];
+        state.sessions = sessionsData.sessions || [];
+
+        renderOverview();
+        renderRuns();
+        renderSessions();
+        renderRouter();
+      } catch (err) {
+        console.error("Fetch failed", err);
+      }
+    }
+
+    function renderOverview() {
+      if (!state.overview) return;
+      const o = state.overview;
+      document.getElementById('kpiProvider').innerText = o.provider || '(none)';
+      document.getElementById('kpiModel').innerText = o.model || '-';
+      document.getElementById('kpiRuns').innerText = state.runs.length;
+      document.getElementById('kpiSessions').innerText = state.sessions.length;
+      document.getElementById('kpiTokens').innerText = Object.keys(o.tokens || {}).length;
+
+      const doc = o.doctor || {};
+      const healthEl = document.getElementById('healthBadge');
+      const healthText = document.getElementById('healthText');
+      if (doc.ok) {
+        healthEl.className = "flex items-center gap-2 px-3 py-1 text-xs rounded-full bg-emerald-950/80 border border-emerald-800 text-emerald-300 font-medium";
+        healthText.innerText = "Doctor: Ready";
+      } else {
+        healthEl.className = "flex items-center gap-2 px-3 py-1 text-xs rounded-full bg-amber-950/80 border border-amber-800 text-amber-300 font-medium";
+        healthText.innerText = "Doctor: Missing Config";
+      }
+
+      let docHtml = `<p><strong class="text-white">Active Endpoint:</strong> <code>${doc.endpoint || 'default'}</code></p>`;
+      if (doc.missing && doc.missing.length > 0) {
+        docHtml += `<p class="text-amber-400"><strong>Missing variables:</strong> ${doc.missing.join(', ')}</p>`;
+      } else {
+        docHtml += `<p class="text-emerald-400">All required variables configured successfully.</p>`;
+      }
+      document.getElementById('doctorDetails').innerHTML = docHtml;
+    }
+
+    function renderRuns() {
+      const tbody = document.getElementById('runsTableBody');
+      if (!state.runs.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No runs recorded yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = state.runs.map(r => {
+        const stateColor = r.state === 'COMPLETED' ? 'text-emerald-400 bg-emerald-950/50 border-emerald-800' :
+                           r.state === 'FAILED' ? 'text-rose-400 bg-rose-950/50 border-rose-800' :
+                           'text-indigo-400 bg-indigo-950/50 border-indigo-800';
+        return `
+          <tr class="hover:bg-gray-900/40 transition">
+            <td class="px-4 py-3 font-mono text-gray-300">${r.run_id}</td>
+            <td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-[11px] font-semibold border ${stateColor}">${r.state}</span></td>
+            <td class="px-4 py-3 text-gray-400">${r.stop_reason || '-'}</td>
+            <td class="px-4 py-3 font-semibold text-gray-300">${r.steps}</td>
+            <td class="px-4 py-3 text-right">
+              <button onclick="inspectRun('${r.run_id}')" class="px-2.5 py-1 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-600 text-white font-medium transition">Inspect</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderSessions() {
+      const container = document.getElementById('sessionsList');
+      if (!state.sessions.length) {
+        container.innerHTML = '<p class="text-sm text-gray-500">No chat sessions found in database.</p>';
+        return;
+      }
+      container.innerHTML = state.sessions.map(s => `
+        <div class="glass p-4 rounded-xl border border-gray-800 flex justify-between items-center">
+          <div>
+            <span class="font-mono text-xs text-indigo-400 font-bold">${s.session_id}</span>
+            <p class="text-xs text-gray-400 mt-1">Turns: <strong class="text-white">${s.turn_count}</strong> | Last: ${s.last_activity || '-'}</p>
+          </div>
+          <span class="px-2.5 py-1 text-xs rounded bg-gray-800 text-gray-300 border border-gray-700">Chat Thread</span>
+        </div>
+      `).join('');
+    }
+
+    function renderRouter() {
+      if (!state.overview) return;
+      const env = state.overview.env || {};
+      document.getElementById('routerChain').innerText = env.AVO_ROUTER_PROVIDERS || 'ollama,openrouter';
+      document.getElementById('routerModels').innerText = env.AVO_ROUTER_MODELS || 'llama3.1,meta-llama/llama-3.3-70b-instruct:free';
+
+      const tokens = state.overview.tokens || {};
+      const container = document.getElementById('tokensList');
+      const keys = Object.keys(tokens);
+      if (!keys.length) {
+        container.innerHTML = '<p class="text-gray-500">No stored tokens found. Run <code>avo login</code> to add credentials.</p>';
+        return;
+      }
+      container.innerHTML = keys.map(k => `
+        <div class="flex justify-between items-center p-3 rounded-lg bg-gray-900/60 border border-gray-800">
+          <span class="font-semibold text-white uppercase">${k}</span>
+          <code class="text-xs text-emerald-400">${tokens[k]}</code>
+        </div>
+      `).join('');
+    }
+
+    async function inspectRun(runId) {
+      document.getElementById('traceModal').classList.remove('hidden');
+      document.getElementById('modalTitle').innerText = 'Run: ' + runId;
+      const body = document.getElementById('modalBody');
+      body.innerText = 'Loading trace details...';
+      try {
+        const trace = await fetchJson('/api/runs/' + runId);
+        body.innerHTML = `<pre class="text-gray-200 whitespace-pre-wrap">${trace.text || JSON.stringify(trace, null, 2)}</pre>`;
+      } catch (err) {
+        body.innerText = 'Failed to load trace: ' + err;
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('traceModal').classList.add('hidden');
+    }
+
+    function switchTab(tabId) {
+      ['overview', 'runs', 'sessions', 'router'].forEach(t => {
+        document.getElementById('view-' + t).classList.add('hidden');
+        document.getElementById('tab-' + t).className = 'py-3 border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition';
+      });
+      document.getElementById('view-' + tabId).classList.remove('hidden');
+      document.getElementById('tab-' + tabId).className = 'py-3 border-b-2 border-indigo-500 text-indigo-400 font-semibold transition';
+    }
+
+    function filterRuns() {
+      const q = document.getElementById('runSearch').value.toLowerCase();
+      const rows = document.getElementById('runsTableBody').querySelectorAll('tr');
+      rows.forEach(r => {
+        r.style.display = r.innerText.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
+
+    window.onload = refreshData;
+  </script>
+</body>
+</html>
