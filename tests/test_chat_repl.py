@@ -1079,3 +1079,75 @@ def test_repl_cost_command(
     assert "Tokens: 700" in out
     assert "$0.0075" in out
     assert "gpt-4o" in out
+
+
+def test_repl_permissions_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    stdin = io.StringIO(
+        "/permissions\n"
+        "/permissions accept_edits\n"
+        "/permissions invalid_mode\n"
+        "/permissions bypass_permissions\n"
+        "/quit\n"
+    )
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = asyncio.run(
+        run_repl(
+            database_path=chat_env["db"],
+            workspace_root=chat_env["workspace"],
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            environ=env,
+        )
+    )
+    assert code == 0
+    out = stdout.getvalue()
+    err = stderr.getvalue()
+    assert "Current permission mode: bypass_permissions" in out
+    assert "✓ Switched permission mode to: accept_edits" in out
+    assert "Unknown permission mode 'invalid_mode'" in err
+    assert "✓ Switched permission mode to: bypass_permissions" in out
+
+
+def test_repl_shell_and_exclamation_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    stdin = io.StringIO(
+        "/shell echo 'hello from slash'\n!echo 'hello from bang'\n!false\n/shell\n/quit\n"
+    )
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = asyncio.run(
+        run_repl(
+            database_path=chat_env["db"],
+            workspace_root=chat_env["workspace"],
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            environ=env,
+        )
+    )
+    assert code == 0
+    out = stdout.getvalue()
+    err = stderr.getvalue()
+    assert "hello from slash" in out
+    assert "hello from bang" in out
+    assert "exited with code 1" in out
+    assert "usage: /shell COMMAND" in err

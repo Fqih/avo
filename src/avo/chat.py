@@ -54,8 +54,14 @@ from avo.config import (
     supported_providers,
 )
 from avo.exceptions import AvoError
+from avo.permissions import (
+    PermissionMode,
+    PermissionPolicy,
+    build_approval_callback,
+    permission_policy_from_env,
+)
 from avo.providers.streaming import split_thinking
-from avo.runtime import AgentRuntime
+from avo.runtime import AgentRuntime, ApprovalCallback
 from avo.skills import SkillRegistry
 from avo.storage.sqlite import SQLiteEventStore
 from avo.tracing import TraceInspector
@@ -99,6 +105,7 @@ class ChatContext:
     session_id: str
     pending_preamble: str | None = None
     background: BackgroundJobManager = field(default_factory=BackgroundJobManager)
+    permission_policy: PermissionPolicy = field(default_factory=PermissionPolicy)
 
 
 def _read_environ() -> dict[str, str]:
@@ -196,6 +203,8 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/model [NAME]", "list known models, or switch to NAME or PROVIDER/MODEL"),
     ("/context", "display full context snapshot (session, model, workspace, skills)"),
     ("/cost", "show token usage and spend breakdown from ledger"),
+    ("/permissions [MODE]", "view or switch permission mode (default, accept_edits, etc.)"),
+    ("/shell [CMD]", "execute shell command in workspace (or use !CMD)"),
     ("/diff [PATH]", "show git status, diff stat, or unified diff for PATH"),
     ("/undo", "revert uncommitted workspace modifications"),
     ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
@@ -287,6 +296,96 @@ def _show_cost_breakdown(database_path: Path, out: TextIO) -> None:
     report = aggregate_costs(database_path)
     out.write(report.to_text())
     out.flush()
+
+
+def _manage_permissions(
+    ctx: ChatContext,
+    mode_arg: str | None,
+    out: TextIO,
+    err: TextIO,
+    *,
+    in_stream: TextIO | None = None,
+) -> None:
+    """Display or update the active tool permission mode."""
+    if not mode_arg:
+        current = ctx.permission_policy.mode.value
+        out.write(f"Current permission mode: {current}\n")
+        out.write("Available modes: default, accept_edits, plan, bypass_permissions\n")
+        out.write("Switch mode with: /permissions <MODE>\n")
+        out.flush()
+        return
+
+    try:
+        new_mode = PermissionMode(mode_arg.lower())
+    except ValueError:
+        allowed = ", ".join(m.value for m in PermissionMode)
+        err.write(f"Unknown permission mode '{mode_arg}'. Must be one of: {allowed}\n")
+        err.flush()
+        return
+
+    new_policy = PermissionPolicy(mode=new_mode)
+    ctx.permission_policy = new_policy
+    if new_mode is PermissionMode.BYPASS_PERMISSIONS:
+        ctx.runtime._approval_callback = lambda call: True
+    else:
+        ctx.runtime._approval_callback = build_approval_callback(
+            new_policy, stdin=in_stream, stdout=out
+        )
+    out.write(f"✓ Switched permission mode to: {new_mode.value}\n")
+    out.flush()
+
+
+def _run_repl_shell(
+    workspace_root: Path,
+    command: str,
+    out: TextIO,
+    err: TextIO,
+    *,
+    timeout_seconds: float = 120.0,
+) -> None:
+    """Execute a shell command in workspace and display streaming/captured output."""
+    import subprocess
+    import time
+
+    cmd = command.strip()
+    if not cmd:
+        err.write("usage: !COMMAND or /shell COMMAND\n")
+        err.flush()
+        return
+
+    out.write(f"$ {cmd}\n")
+    out.flush()
+    start = time.perf_counter()
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            shell=True,
+            cwd=str(workspace_root),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
+        elapsed = time.perf_counter() - start
+        if proc.stdout:
+            out.write(proc.stdout)
+            if not proc.stdout.endswith("\n"):
+                out.write("\n")
+        if proc.stderr:
+            err.write(proc.stderr)
+            if not proc.stderr.endswith("\n"):
+                err.write("\n")
+        if proc.returncode != 0:
+            out.write(f"exited with code {proc.returncode} ({elapsed:.2f}s)\n")
+        out.flush()
+        err.flush()
+    except subprocess.TimeoutExpired:
+        err.write(f"command timed out after {timeout_seconds}s\n")
+        err.flush()
+    except Exception as exc:
+        err.write(f"failed to run command: {exc}\n")
+        err.flush()
 
 
 def _show_diff_summary(
@@ -589,6 +688,8 @@ def build_chat_context(
     environ: dict[str, str],
     session_id: str | None = None,
     force_new_session: bool = False,
+    approval_callback: ApprovalCallback | None = None,
+    permission_policy: PermissionPolicy | None = None,
 ) -> ChatContext:
     """Construct the runtime + store + workspace bound together.
 
@@ -619,7 +720,15 @@ def build_chat_context(
             git_diff_tool(),
             git_commit_tool(),
         ],
+        approval_callback=approval_callback,
     )
+    if permission_policy is not None:
+        resolved_policy = permission_policy
+    elif "AVO_PERMISSION_MODE" in environ:
+        resolved_policy = permission_policy_from_env(environ)
+    else:
+        resolved_policy = PermissionPolicy(mode=PermissionMode.BYPASS_PERMISSIONS)
+
     skills_root = workspace_root / ".avo" / "skills"
     # Ensure the skills directory exists for first-run use, but the
     # registry itself walks a path — body lookup happens lazily.
@@ -636,6 +745,7 @@ def build_chat_context(
             skills=skills,
             session=session,
             session_id=_new_session_id(),
+            permission_policy=resolved_policy,
         )
     if not session.session_exists(session_id):
         session.close()
@@ -651,6 +761,7 @@ def build_chat_context(
         session=session,
         session_id=session_id,
         pending_preamble=preamble,
+        permission_policy=resolved_policy,
     )
 
 
@@ -667,6 +778,7 @@ async def _run_slash(
     out: TextIO,
     err: TextIO,
     environ: dict[str, str],
+    in_stream: TextIO | None = None,
 ) -> bool:
     """Dispatch a slash command. Returns True if the REPL should exit."""
 
@@ -702,6 +814,20 @@ async def _run_slash(
 
     if cmd == "/cost":
         _show_cost_breakdown(ctx.store.path, out)
+        return False
+
+    if cmd in ("/permissions", "/perm"):
+        mode_arg = args[1] if len(args) > 1 else None
+        _manage_permissions(ctx, mode_arg, out, err, in_stream=in_stream)
+        return False
+
+    if cmd == "/shell":
+        cmd_text = " ".join(args[1:]) if len(args) > 1 else ""
+        if not cmd_text:
+            err.write("usage: /shell COMMAND (or use !COMMAND)\n")
+            err.flush()
+            return False
+        _run_repl_shell(ctx.workspace.root, cmd_text, out, err)
         return False
 
     if cmd == "/diff":
@@ -1112,6 +1238,13 @@ async def run_repl(
     err_stream = stderr or sys.stderr
     env = environ if environ is not None else _read_environ()
 
+    if "AVO_PERMISSION_MODE" in env:
+        policy = permission_policy_from_env(env)
+        approval_cb = build_approval_callback(policy, stdin=in_stream, stdout=out_stream)
+    else:
+        policy = PermissionPolicy(mode=PermissionMode.BYPASS_PERMISSIONS)
+        approval_cb = None
+
     try:
         ctx = build_chat_context(
             database_path=database_path,
@@ -1119,12 +1252,20 @@ async def run_repl(
             environ=env,
             session_id=session_id,
             force_new_session=force_new_session,
+            approval_callback=approval_cb,
+            permission_policy=policy,
         )
     except ConfigError:
         new_env = interactive_first_run_setup(in_stream, out_stream, secret_reader=secret_reader)
         if new_env is None:
             return 2
         env = {**env, **new_env}
+        if "AVO_PERMISSION_MODE" in env:
+            policy = permission_policy_from_env(env)
+            approval_cb = build_approval_callback(policy, stdin=in_stream, stdout=out_stream)
+        else:
+            policy = PermissionPolicy(mode=PermissionMode.BYPASS_PERMISSIONS)
+            approval_cb = None
         try:
             ctx = build_chat_context(
                 database_path=database_path,
@@ -1132,6 +1273,8 @@ async def run_repl(
                 environ=env,
                 session_id=session_id,
                 force_new_session=force_new_session,
+                approval_callback=approval_cb,
+                permission_policy=policy,
             )
         except (AvoError, OSError) as exc:
             err_stream.write(f"avo chat: {exc}\n")
@@ -1178,13 +1321,20 @@ async def run_repl(
             if not stripped:
                 continue
 
+            if stripped.startswith("!"):
+                cmd_text = stripped[1:].strip()
+                _run_repl_shell(ctx.workspace.root, cmd_text, out_stream, err_stream)
+                continue
+
             if stripped.startswith("/"):
                 try:
                     args = shlex.split(stripped)
                 except ValueError as exc:
                     err_stream.write(f"parse error: {exc}\n")
                     continue
-                should_exit = await _run_slash(ctx, args, out_stream, err_stream, env)
+                should_exit = await _run_slash(
+                    ctx, args, out_stream, err_stream, env, in_stream=in_stream
+                )
                 if should_exit:
                     return 0
                 continue

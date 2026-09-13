@@ -38,8 +38,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from avo.models import ToolCall
 from avo.runtime import ApprovalCallback
 
-_READ_ONLY_TOOLS: frozenset[str] = frozenset({"read_file"})
-_MUTATING_TOOLS: frozenset[str] = frozenset({"write_file", "edit_file"})
+_READ_ONLY_TOOLS: frozenset[str] = frozenset({"read_file", "git_diff", "lint", "test_runner"})
+_MUTATING_TOOLS: frozenset[str] = frozenset({"write_file", "edit_file", "git_commit"})
 _SHELL_TOOLS: frozenset[str] = frozenset({"run_shell"})
 _PLAN_TOOL_NAME = "submit_plan"
 
