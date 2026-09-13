@@ -41,6 +41,25 @@ _PROVIDER_CATALOG: dict[str, dict[str, str | bool]] = {
         "default_model": "MiniMax-M3",
         "needs_api_key": True,
     },
+    "openrouter": {
+        "label": "OpenRouter",
+        "default_model": "meta-llama/llama-3.3-70b-instruct:free",
+        "needs_api_key": True,
+    },
+    "router": {
+        "label": "Router",
+        "default_model": "auto",
+        "needs_api_key": False,
+    },
+}
+
+_PROVIDER_DESCRIPTIONS: dict[str, str] = {
+    "ollama": "Local free models via Ollama daemon",
+    "openai": "OpenAI cloud models (GPT-4o, o3, etc.)",
+    "anthropic": "Anthropic cloud models (Claude 3.7 Sonnet)",
+    "minimax": "MiniMax cloud models (MiniMax-M3)",
+    "openrouter": "OpenRouter (Free tier models & 300+ endpoints)",
+    "router": "Multi-Provider Fallback Router (Auto failover: Ollama -> OpenRouter)",
 }
 
 
@@ -140,8 +159,12 @@ def interactive_first_run_setup(
         stdout.write("Select your provider:\n")
         stdout.write("\n")
         for index, key in enumerate(_PROVIDER_CATALOG, start=1):
-            label = _PROVIDER_CATALOG[key]["label"]
-            stdout.write(f"  {index}. {label}\n")
+            label = str(_PROVIDER_CATALOG[key]["label"])
+            desc = _PROVIDER_DESCRIPTIONS.get(key, "")
+            if desc:
+                stdout.write(f"  {index}. {label.ljust(12)} ({desc})\n")
+            else:
+                stdout.write(f"  {index}. {label}\n")
         stdout.write("\n")
 
         keys = list(_PROVIDER_CATALOG.keys())
@@ -160,14 +183,30 @@ def interactive_first_run_setup(
         uppercase_key = provider_key.upper()
 
         if spec["needs_api_key"]:
-            api_key = _prompt_required(
-                stdin,
-                stdout,
-                "API Key: ",
-                secret=True,
-                secret_reader=secret_reader,
-            )
-            env[f"AVO_{uppercase_key}_API_KEY"] = api_key
+            if provider_key == "openrouter":
+                from avo.auth import get_stored_token
+
+                stored_token = get_stored_token("openrouter")
+                if stored_token:
+                    stdout.write("Found stored OpenRouter token from `avo login`.\n")
+                    use_stored = _prompt_optional(
+                        stdin,
+                        stdout,
+                        "Use stored token? [Y/n]",
+                        default="Y",
+                    )
+                    if use_stored.strip().lower() in ("y", "yes"):
+                        env["AVO_OPENROUTER_API_KEY"] = stored_token
+
+            if f"AVO_{uppercase_key}_API_KEY" not in env:
+                api_key = _prompt_required(
+                    stdin,
+                    stdout,
+                    "API Key: ",
+                    secret=True,
+                    secret_reader=secret_reader,
+                )
+                env[f"AVO_{uppercase_key}_API_KEY"] = api_key
 
         # Provider-specific optional tweaks. Each field is asked for with
         # an unambiguous prompt so the operator cannot paste a URL into
@@ -204,10 +243,61 @@ def interactive_first_run_setup(
             ).strip()
             if base_url:
                 env["AVO_OLLAMA_BASE_URL"] = base_url
+        elif provider_key == "openrouter":
+            base_url = _prompt_optional(
+                stdin,
+                stdout,
+                "OpenRouter base URL (optional)",
+                default="https://openrouter.ai/api/v1",
+            ).strip()
+            if base_url:
+                env["AVO_OPENROUTER_BASE_URL"] = base_url
+        elif provider_key == "router":
+            stdout.write("\nMulti-Provider Fallback Router Setup\n")
+            stdout.write("Avo will try each provider in order until one responds successfully.\n")
+            chain = _prompt_optional(
+                stdin,
+                stdout,
+                "Provider fallback chain (comma-separated)",
+                default="ollama,openrouter",
+            ).strip()
+            env["AVO_ROUTER_PROVIDERS"] = chain or "ollama,openrouter"
 
-        default_model = str(spec["default_model"])
-        model = _prompt_optional(stdin, stdout, "Model", default=default_model).strip()
-        env["AVO_MODEL"] = model or default_model
+            chain_providers = [
+                p.strip().lower() for p in env["AVO_ROUTER_PROVIDERS"].split(",") if p.strip()
+            ]
+            if "openrouter" in chain_providers and not env.get("AVO_OPENROUTER_API_KEY"):
+                from avo.auth import get_stored_token
+
+                stored_or = get_stored_token("openrouter")
+                if stored_or:
+                    env["AVO_OPENROUTER_API_KEY"] = stored_or
+                else:
+                    stdout.write("\nOpenRouter requires an API key for fallback routing:\n")
+                    api_key = _prompt_required(
+                        stdin,
+                        stdout,
+                        "OpenRouter API Key: ",
+                        secret=True,
+                        secret_reader=secret_reader,
+                    )
+                    env["AVO_OPENROUTER_API_KEY"] = api_key
+
+            models_chain = _prompt_optional(
+                stdin,
+                stdout,
+                "Models fallback chain (comma-separated)",
+                default="llama3.1,meta-llama/llama-3.3-70b-instruct:free",
+            ).strip()
+            env["AVO_ROUTER_MODELS"] = (
+                models_chain or "llama3.1,meta-llama/llama-3.3-70b-instruct:free"
+            )
+            env["AVO_MODEL"] = "auto"
+
+        if provider_key != "router":
+            default_model = str(spec["default_model"])
+            model = _prompt_optional(stdin, stdout, "Model", default=default_model).strip()
+            env["AVO_MODEL"] = model or default_model
 
         stdout.write(f"\nProvider configured: {provider_label} ({env['AVO_MODEL']})\n")
         stdout.flush()

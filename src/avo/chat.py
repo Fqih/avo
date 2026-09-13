@@ -66,12 +66,14 @@ _FIRST_RUN_MESSAGE = (
     "Configure one of:\n"
     "\n"
     "  AVO_PROVIDER=ollama\n"
+    "  AVO_PROVIDER=openrouter\n"
+    "  AVO_PROVIDER=router\n"
     "  AVO_PROVIDER=minimax\n"
     "  AVO_PROVIDER=anthropic\n"
     "  AVO_PROVIDER=openai\n"
     "\n"
-    "with the matching provider-specific keys and model. See .env.example "
-    "for the full list of recognised variables.\n"
+    "with the matching provider-specific keys and model. Or run `avo login` "
+    "to authenticate via OAuth. See .env.example for all variables.\n"
     "\n"
     "Then retry:\n"
     "\n"
@@ -105,6 +107,12 @@ def _resolve_provider_label(environ: dict[str, str]) -> tuple[str, str]:
     """Return ``(provider_name, model_name)`` without exposing secrets."""
 
     provider = environ.get("AVO_PROVIDER", "").strip() or "(unset)"
+    if provider == "router":
+        chain = environ.get("AVO_ROUTER_PROVIDERS", "").strip()
+        models = environ.get("AVO_ROUTER_MODELS", "").strip()
+        model_display = f"{chain} [{models}]" if chain and models else "fallback-chain"
+        return provider, model_display
+
     model = (
         environ.get("AVO_MODEL")
         or environ.get("MODEL_MINIMAX")

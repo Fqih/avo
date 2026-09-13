@@ -106,6 +106,63 @@ def test_setup_minimax_rejects_url_in_style_prompt() -> None:
     assert "please choose one of: 1, 2" in out
 
 
+def test_setup_openrouter_manual_key() -> None:
+    from avo.chat import interactive_first_run_setup
+
+    # 5 = openrouter, key (secret_reader), base_url=default, model=default
+    stdin = io.StringIO("5\n\n\n")
+    stdout = io.StringIO()
+    env = interactive_first_run_setup(stdin, stdout, secret_reader=lambda _: "sk-or-v1-manual")
+    assert env == {
+        "AVO_PROVIDER": "openrouter",
+        "AVO_OPENROUTER_API_KEY": "sk-or-v1-manual",
+        "AVO_OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+        "AVO_MODEL": "meta-llama/llama-3.3-70b-instruct:free",
+    }
+    assert "OpenRouter" in stdout.getvalue()
+
+
+def test_setup_openrouter_stored_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from avo.auth import store_token
+    from avo.chat import interactive_first_run_setup
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_token("openrouter", "sk-or-stored-token")
+
+    # 5 = openrouter, use stored token (Y/default), base_url=default, model=default
+    stdin = io.StringIO("5\n\n\n\n")
+    stdout = io.StringIO()
+    env = interactive_first_run_setup(
+        stdin,
+        stdout,
+        secret_reader=lambda _: pytest.fail("secret_reader should not be called with stored token"),
+    )
+    assert env is not None
+    assert env["AVO_PROVIDER"] == "openrouter"
+    assert env["AVO_OPENROUTER_API_KEY"] == "sk-or-stored-token"
+
+
+def test_setup_router_fallback_chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from avo.auth import store_token
+    from avo.chat import interactive_first_run_setup
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_token("openrouter", "sk-or-router-token")
+
+    # 6 = router, default providers (ollama,openrouter), default models
+    stdin = io.StringIO("6\n\n\n")
+    stdout = io.StringIO()
+    env = interactive_first_run_setup(stdin, stdout)
+    assert env == {
+        "AVO_PROVIDER": "router",
+        "AVO_ROUTER_PROVIDERS": "ollama,openrouter",
+        "AVO_ROUTER_MODELS": "llama3.1,meta-llama/llama-3.3-70b-instruct:free",
+        "AVO_OPENROUTER_API_KEY": "sk-or-router-token",
+        "AVO_MODEL": "auto",
+    }
+    assert "Router" in stdout.getvalue()
+
+
 def test_setup_invalid_choice_re_prompts() -> None:
     from avo.chat import interactive_first_run_setup
 
@@ -311,6 +368,70 @@ async def test_fresh_anthropic_setup_reaches_repl(
     combined = stdout.getvalue() + stderr.getvalue()
     assert "AVO_PROVIDER must be one of" not in combined
     assert "provider" in combined.lower() and "anthropic" in combined
+
+
+@pytest.mark.asyncio
+async def test_fresh_openrouter_setup_reaches_repl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import run_repl
+
+    monkeypatch.setattr("os.environ", {})
+    chat_env = _chat_env(tmp_path)
+
+    # 5 (openrouter), key via secret_reader, default base_url, default model, /quit
+    stdin = io.StringIO("5\n\n\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ={},
+        secret_reader=lambda _: "sk-or-repl-test",
+    )
+
+    assert code == 0
+    combined = stdout.getvalue() + stderr.getvalue()
+    assert "AVO_PROVIDER must be one of" not in combined
+    assert "openrouter" in combined.lower()
+
+
+@pytest.mark.asyncio
+async def test_fresh_router_setup_reaches_repl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.auth import store_token
+    from avo.chat import run_repl
+
+    monkeypatch.setattr("os.environ", {})
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_token("openrouter", "sk-or-mock-token")
+    chat_env = _chat_env(tmp_path)
+
+    # 6 (router), default providers, default models, /quit
+    stdin = io.StringIO("6\n\n\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ={},
+    )
+
+    assert code == 0
+    combined = stdout.getvalue() + stderr.getvalue()
+    assert "AVO_PROVIDER must be one of" not in combined
+    assert "router" in combined.lower()
 
 
 def test_build_chat_context_refuses_none_database_path() -> None:

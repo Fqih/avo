@@ -54,6 +54,8 @@ Short index for humans and agents working in this repo with `avo`.
 ## Quick reference
 
 - REPL: `avo chat`
+- Auth / OAuth: `avo login`
+- Multi-provider router: set `AVO_PROVIDER=router` (chains Ollama, OpenRouter, etc.)
 - Slash commands: type `/help` inside the REPL.
 - Workspace skills live in `.avo/skills/<name>/SKILL.md`.
 - Persisted runs: `avo runs list` / `avo runs inspect RUN_ID`.
