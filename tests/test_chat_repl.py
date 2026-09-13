@@ -1601,3 +1601,40 @@ async def test_repl_history_command(
     search_out = stdout_search.getvalue()
     assert "Search History: 'Docker'" in search_out
     assert "How to configure Docker?" in search_out
+
+
+@pytest.mark.asyncio
+async def test_repl_persona_custom_add(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+
+    # 1. /persona add custom role
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(
+        ctx,
+        ["/persona", "add", "security", "Focus strictly on vulnerability scanning."],
+        stdout,
+        stderr,
+        env,
+    )
+    assert res is False
+    assert "Created and activated custom persona 'security'" in stdout.getvalue()
+    assert ctx.persona.active_persona == "security"
+
+    # 2. Verify /persona list displays newly added persona
+    stdout_list = io.StringIO()
+    await _run_slash(ctx, ["/persona"], stdout_list, stderr, env)
+    assert "security" in stdout_list.getvalue()
+    assert "(active)" in stdout_list.getvalue()

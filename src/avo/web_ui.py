@@ -27,7 +27,7 @@ from avo.auth import load_all_tokens
 from avo.chat_session import SessionLifecycle
 from avo.cost import aggregate_costs, report_to_dict
 from avo.doctor import run_doctor
-from avo.persona import BUILTIN_PERSONAS, PersonaManager
+from avo.persona import PersonaManager
 from avo.storage.sqlite import SQLiteEventStore
 from avo.tracing import TraceInspector
 
@@ -137,7 +137,10 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                             self.server.persona_manager.custom_instructions
                         ),
                         "instructions": self.server.persona_manager.custom_instructions or "",
-                        "available": [*BUILTIN_PERSONAS.keys(), "default"],
+                        "available": [
+                            *self.server.persona_manager.available_personas().keys(),
+                            "default",
+                        ],
                     },
                     "permissions": {
                         "mode": self.server.permission_mode,
@@ -157,7 +160,10 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                 {
                     "active": self.server.persona_manager.active_persona or "default",
                     "instructions": self.server.persona_manager.custom_instructions or "",
-                    "available": [*BUILTIN_PERSONAS.keys(), "default"],
+                    "available": [
+                        *self.server.persona_manager.available_personas().keys(),
+                        "default",
+                    ],
                 }
             )
             return
@@ -318,11 +324,21 @@ class AvoWebHandler(BaseHTTPRequestHandler):
             persona_name = data.get("persona")
             instructions = data.get("instructions")
 
+            register_data = data.get("register")
+            if isinstance(register_data, dict):
+                reg_name = str(register_data.get("name", "")).strip()
+                reg_prompt = str(register_data.get("prompt", "")).strip()
+                try:
+                    self.server.persona_manager.register_persona(reg_name, reg_prompt, persist=True)
+                except ValueError as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                    return
+
             if persona_name is not None:
                 p_clean = str(persona_name).strip()
                 if p_clean in ("default", "clear", ""):
                     self.server.persona_manager.set_persona(None)
-                elif p_clean in BUILTIN_PERSONAS:
+                elif p_clean in self.server.persona_manager.available_personas():
                     self.server.persona_manager.set_persona(p_clean)
                 else:
                     self._send_json(
@@ -342,6 +358,10 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "persona": self.server.persona_manager.active_persona or "default",
                     "instructions": self.server.persona_manager.custom_instructions or "",
+                    "available": [
+                        *self.server.persona_manager.available_personas().keys(),
+                        "default",
+                    ],
                 }
             )
             return

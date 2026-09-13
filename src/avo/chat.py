@@ -326,33 +326,55 @@ def _print_active_context(out: TextIO, ctx: ChatContext, environ: dict[str, str]
 
 def _manage_persona(
     ctx: ChatContext,
-    name_arg: str | None,
+    args: list[str],
     out: TextIO,
     err: TextIO,
 ) -> None:
-    """List available personas or switch active persona."""
-    from avo.persona import BUILTIN_PERSONAS
-
-    if not name_arg:
+    """List available personas, register new custom persona, or switch active persona."""
+    if not args:
         current = ctx.persona.active_persona or "(default)"
         out.write(f"Active persona: {current}\n\n")
         out.write("Available built-in personas:\n")
-        for p_name, p_desc in BUILTIN_PERSONAS.items():
+        for p_name, p_desc in ctx.persona.available_personas().items():
             first_line = p_desc.splitlines()[0]
-            out.write(f"  • {p_name:<10} - {first_line}\n")
-        out.write("\nSwitch persona with: /persona <NAME> (or /persona clear to reset)\n")
+            marker = " (active)" if p_name == ctx.persona.active_persona else ""
+            out.write(f"  • {p_name:<12} - {first_line}{marker}\n")
+        out.write(
+            "\nUsage:\n"
+            "  /persona <NAME>                 switch active persona\n"
+            "  /persona add <NAME> <PROMPT>    create custom workspace persona\n"
+            "  /persona clear                  reset to default\n"
+        )
         out.flush()
         return
 
-    if name_arg.lower() in ("clear", "reset", "none", "off"):
+    sub = args[0].lower()
+    if sub == "add":
+        if len(args) < 3:
+            err.write("usage: /persona add <NAME> <PROMPT>\n")
+            err.flush()
+            return
+        p_name = args[1]
+        p_prompt = " ".join(args[2:])
+        try:
+            ctx.persona.register_persona(p_name, p_prompt, persist=True)
+            ctx.persona.set_persona(p_name)
+            out.write(f"✓ Created and activated custom persona {p_name!r}.\n")
+            out.flush()
+        except ValueError as exc:
+            err.write(f"error: {exc}\n")
+            err.flush()
+        return
+
+    if sub in ("clear", "reset", "none", "off"):
         ctx.persona.set_persona(None)
         out.write("✓ Reset persona to default.\n")
         out.flush()
         return
 
     try:
-        ctx.persona.set_persona(name_arg)
-        out.write(f"✓ Switched persona to: {name_arg.lower()}\n")
+        ctx.persona.set_persona(sub)
+        out.write(f"✓ Switched persona to: {sub}\n")
         out.flush()
     except ValueError as exc:
         err.write(f"{exc}\n")
@@ -1452,8 +1474,7 @@ async def _run_slash(
         return False
 
     if cmd == "/persona":
-        name_arg = args[1] if len(args) > 1 else None
-        _manage_persona(ctx, name_arg, out, err)
+        _manage_persona(ctx, args[1:], out, err)
         return False
 
     if cmd in ("/instructions", "/prompt"):

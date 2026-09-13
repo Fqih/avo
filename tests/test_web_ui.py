@@ -368,6 +368,28 @@ def test_web_ui_api_persona_and_permissions(web_server: tuple[str, Path]) -> Non
         urllib.request.urlopen(req_p_bad, timeout=5)
     assert exc_info.value.code == 400
 
+    # 4b. POST /api/persona - register custom persona
+    req_p_reg = urllib.request.Request(
+        f"{base_url}/api/persona",
+        data=json.dumps(
+            {
+                "register": {
+                    "name": "devops",
+                    "prompt": "Role: DevOps Engineer.\nFocus: CI/CD automation.",
+                },
+                "persona": "devops",
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req_p_reg, timeout=5) as resp:
+        assert resp.status == 200
+        reg_res = json.loads(resp.read().decode("utf-8"))
+        assert reg_res["ok"] is True
+        assert reg_res["persona"] == "devops"
+        assert "devops" in reg_res["available"]
+
     # 5. GET /api/permissions
     req_perm_get = urllib.request.Request(f"{base_url}/api/permissions")
     with urllib.request.urlopen(req_perm_get, timeout=5) as resp:

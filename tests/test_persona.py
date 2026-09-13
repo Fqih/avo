@@ -62,3 +62,37 @@ def test_persona_manager_env_var_override(monkeypatch: pytest.MonkeyPatch) -> No
     rendered = mgr.render_system_prompt()
     assert rendered is not None
     assert "Enforce strict zero-warning policy." in rendered
+
+
+def test_register_custom_persona_and_activate() -> None:
+    mgr = PersonaManager()
+    mgr.register_persona(
+        "devsecops",
+        "Role: DevSecOps Engineer.\nFocus: SAST and container security.",
+    )
+    assert "devsecops" in mgr.available_personas()
+    mgr.set_persona("devsecops")
+    assert mgr.active_persona == "devsecops"
+    rendered = mgr.render_system_prompt()
+    assert rendered is not None
+    assert "DevSecOps Engineer" in rendered
+
+
+def test_register_custom_persona_persists_to_workspace(tmp_path: Path) -> None:
+    mgr = PersonaManager(workspace_root=tmp_path)
+    mgr.register_persona("qa", "Role: QA Automation Engineer.", persist=True)
+    target_file = tmp_path / ".avo" / "personas" / "qa.md"
+    assert target_file.is_file()
+    assert target_file.read_text(encoding="utf-8") == "Role: QA Automation Engineer."
+
+    # New manager instance loads it automatically from workspace
+    new_mgr = PersonaManager(workspace_root=tmp_path)
+    assert "qa" in new_mgr.available_personas()
+
+
+def test_register_custom_persona_invalid_name_raises() -> None:
+    mgr = PersonaManager()
+    with pytest.raises(ValueError, match="Invalid persona name"):
+        mgr.register_persona("bad name with spaces!", "Prompt")
+    with pytest.raises(ValueError, match="Persona prompt cannot be empty"):
+        mgr.register_persona("valid_name", "   ")
