@@ -180,6 +180,7 @@ def test_provider_models_catalog_has_all_providers() -> None:
         "openai",
         "groq",
         "cerebras",
+        "openrouter",
     }
     for catalog in PROVIDER_MODELS.values():
         assert catalog, "every catalog must have at least one model"

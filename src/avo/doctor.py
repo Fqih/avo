@@ -24,6 +24,9 @@ _PROVIDER_LABELS = {
     "openai": "OpenAI-compatible",
     "anthropic": "Anthropic",
     "minimax": "MiniMax",
+    "groq": "Groq",
+    "cerebras": "Cerebras",
+    "openrouter": "OpenRouter",
 }
 
 _REQUIRED_BY_PROVIDER: dict[str, tuple[str, ...]] = {
@@ -31,6 +34,9 @@ _REQUIRED_BY_PROVIDER: dict[str, tuple[str, ...]] = {
     "openai": ("AVO_PROVIDER", "AVO_MODEL", "AVO_OPENAI_API_KEY"),
     "anthropic": ("AVO_PROVIDER", "AVO_MODEL", "AVO_ANTHROPIC_API_KEY"),
     "minimax": ("AVO_PROVIDER", "AVO_MODEL", "AVO_MINIMAX_API_KEY"),
+    "groq": ("AVO_PROVIDER", "AVO_MODEL", "AVO_GROQ_API_KEY"),
+    "cerebras": ("AVO_PROVIDER", "AVO_MODEL", "AVO_CEREBRAS_API_KEY"),
+    "openrouter": ("AVO_PROVIDER", "AVO_MODEL", "AVO_OPENROUTER_API_KEY"),
 }
 
 
@@ -105,6 +111,33 @@ def _endpoint_for(env: Mapping[str, str], provider: str) -> tuple[str | None, st
             return None, None
         return openai_cfg.endpoint, None
 
+    if provider == "groq":
+        from avo.providers.groq import GroqConfig
+
+        try:
+            groq_cfg: Any = GroqConfig.from_avo_env(env, fallback_model=fallback_model)
+        except (ValueError, KeyError):
+            return None, None
+        return groq_cfg.endpoint, None
+
+    if provider == "cerebras":
+        from avo.providers.cerebras import CerebrasConfig
+
+        try:
+            cerebras_cfg: Any = CerebrasConfig.from_avo_env(env, fallback_model=fallback_model)
+        except (ValueError, KeyError):
+            return None, None
+        return cerebras_cfg.endpoint, None
+
+    if provider == "openrouter":
+        from avo.providers.openrouter import OpenRouterConfig
+
+        try:
+            openrouter_cfg: Any = OpenRouterConfig.from_avo_env(env, fallback_model=fallback_model)
+        except (ValueError, KeyError):
+            return None, None
+        return openrouter_cfg.endpoint, None
+
     return None, None
 
 
@@ -131,11 +164,16 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
     else:
         required = _REQUIRED_BY_PROVIDER[provider]
         for var in required:
+            if var == "AVO_OPENROUTER_API_KEY" and env.get("OPENROUTER_API_KEY", "").strip():
+                continue
             if not env.get(var, "").strip():
                 missing.append(var)
 
         api_key_var = f"AVO_{provider.upper()}_API_KEY"
-        has_api_key = bool(env.get(api_key_var, "").strip())
+        has_api_key = bool(
+            env.get(api_key_var, "").strip()
+            or (provider == "openrouter" and env.get("OPENROUTER_API_KEY", "").strip())
+        )
 
         base_url_key = f"AVO_{provider.upper()}_BASE_URL"
         base_url = env.get(base_url_key, "").strip() or None

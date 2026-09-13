@@ -136,3 +136,17 @@ def test_render_report_redacts_api_key() -> None:
     render_report(report, out=out)
     text = out.getvalue()
     assert secret not in text
+
+
+def test_run_doctor_openrouter_ok() -> None:
+    report = run_doctor(
+        {
+            "AVO_PROVIDER": "openrouter",
+            "AVO_MODEL": "meta-llama/llama-3.3-70b-instruct:free",
+            "AVO_OPENROUTER_API_KEY": "sk-or-test",
+        }
+    )
+    assert report.ok
+    assert report.provider == "openrouter"
+    assert report.endpoint == "https://openrouter.ai/api/v1/chat/completions"
+    assert report.has_api_key

@@ -17,7 +17,7 @@ import os
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
-ProviderName = Literal["ollama", "minimax", "anthropic", "openai", "groq", "cerebras"]
+ProviderName = Literal["ollama", "minimax", "anthropic", "openai", "groq", "cerebras", "openrouter"]
 _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "ollama",
     "minimax",
@@ -25,6 +25,7 @@ _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "openai",
     "groq",
     "cerebras",
+    "openrouter",
 )
 
 
@@ -81,6 +82,18 @@ PROVIDER_MODELS: dict[ProviderName, tuple[str, ...]] = {
         "llama-3.3-70b",
         "llama-3.1-8b",
         "qwen-2.5-32b",
+    ),
+    "openrouter": (
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "deepseek/deepseek-r1:free",
+        "deepseek/deepseek-chat",
+        "google/gemini-2.0-flash-exp:free",
+        "qwen/qwen-2.5-coder-32b-instruct:free",
+        "meta-llama/llama-3.2-3b-instruct:free",
+        "mistralai/mistral-7b-instruct:free",
+        "anthropic/claude-3.5-sonnet",
+        "openai/gpt-4o",
+        "openai/gpt-4o-mini",
     ),
 }
 
@@ -198,6 +211,16 @@ def build_provider_from_env(
         cerebras_config = CerebrasConfig.from_avo_env(env, fallback_model=model)
         return CerebrasProvider(
             cerebras_config,
+            max_completion_tokens=max_completion_tokens,
+            request_timeout_seconds=request_timeout_seconds,
+        )
+
+    if name == "openrouter":
+        from avo.providers.openrouter import OpenRouterConfig, OpenRouterProvider
+
+        openrouter_config = OpenRouterConfig.from_avo_env(env, fallback_model=model)
+        return OpenRouterProvider(
+            openrouter_config,
             max_completion_tokens=max_completion_tokens,
             request_timeout_seconds=request_timeout_seconds,
         )
