@@ -140,6 +140,37 @@ def test_web_ui_api_session_detail(web_server: tuple[str, Path]) -> None:
     assert exc_info.value.code == 404
 
 
+def test_web_ui_api_history(web_server: tuple[str, Path]) -> None:
+    base_url, db_path = web_server
+
+    session = SessionLifecycle.open(db_path)
+    session.record_user_turn("sess-hist-1", "Deploy application with Helm")
+    session.record_assistant_turn(
+        "sess-hist-1",
+        "Helm chart released to cluster",
+        run_id="run-h1",
+        status="COMPLETED",
+        stop_reason="FINAL",
+    )
+    session.close()
+
+    # 1. Search for keyword "Helm"
+    req = urllib.request.Request(f"{base_url}/api/history?q=Helm")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["query"] == "Helm"
+        assert len(data["results"]) == 2
+
+    # 2. Search scoped to session
+    req_scoped = urllib.request.Request(f"{base_url}/api/history?q=cluster&session_id=sess-hist-1")
+    with urllib.request.urlopen(req_scoped, timeout=5) as resp:
+        assert resp.status == 200
+        data_scoped = json.loads(resp.read().decode("utf-8"))
+        assert len(data_scoped["results"]) == 1
+        assert data_scoped["results"][0]["role"] == "assistant"
+
+
 def test_web_ui_api_chat_json(
     web_server: tuple[str, Path],
     monkeypatch: pytest.MonkeyPatch,

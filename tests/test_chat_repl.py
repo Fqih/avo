@@ -1550,3 +1550,54 @@ async def test_repl_map_and_tree_commands(
     out_tree = stdout_tree.getvalue()
     assert "Workspace Map:" in out_tree
     assert "showing 1 entries, truncated" in out_tree
+
+
+@pytest.mark.asyncio
+async def test_repl_history_command(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+
+    # 1. Empty history
+    stdout_empty = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/history"], stdout_empty, stderr, env)
+    assert res is False
+    assert "No turns recorded yet" in stdout_empty.getvalue()
+
+    # Seed turns in active session
+    ctx.session.record_user_turn(ctx.session_id, "How to configure Docker?")
+    ctx.session.record_assistant_turn(
+        ctx.session_id,
+        "Use docker-compose.yml file",
+        run_id="run-h-1",
+        status="COMPLETED",
+        stop_reason="FINAL",
+    )
+
+    # 2. View recent turns
+    stdout_recent = io.StringIO()
+    res = await _run_slash(ctx, ["/history"], stdout_recent, stderr, env)
+    assert res is False
+    out = stdout_recent.getvalue()
+    assert "Active Session History" in out
+    assert "How to configure Docker?" in out
+    assert "docker-compose.yml" in out
+
+    # 3. Search history with query
+    stdout_search = io.StringIO()
+    res = await _run_slash(ctx, ["/history", "Docker"], stdout_search, stderr, env)
+    assert res is False
+    search_out = stdout_search.getvalue()
+    assert "Search History: 'Docker'" in search_out
+    assert "How to configure Docker?" in search_out

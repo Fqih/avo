@@ -208,6 +208,19 @@ class AvoWebHandler(BaseHTTPRequestHandler):
                 self._send_json(session_data)
             return
 
+        if path == "/api/history":
+            params = urllib.parse.parse_qs(parsed.query)
+            query = params.get("q", [""])[0].strip()
+            sid_raw = params.get("session_id", [None])[0]
+            filter_sid: str | None = (
+                sid_raw.strip() if isinstance(sid_raw, str) and sid_raw.strip() else None
+            )
+            limit_str = params.get("limit", ["50"])[0]
+            limit = int(limit_str) if limit_str.isdigit() else 50
+            results = self.server.search_sync_history(query, session_id=filter_sid, limit=limit)
+            self._send_json({"query": query, "results": results})
+            return
+
         self._send_json({"error": "Not Found"}, status=404)
 
     def do_OPTIONS(self) -> None:
@@ -669,6 +682,32 @@ class AvoWebServer(ThreadingHTTPServer):
         except Exception as exc:
             _LOG.warning("Could not read session %r: %s", session_id, exc)
             return None
+
+    def search_sync_history(
+        self,
+        query: str,
+        *,
+        session_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Search past conversation turns matching a keyword query."""
+        try:
+            lifecycle = SessionLifecycle.open(self.database_path)
+            turns = lifecycle.search_history(query, session_id=session_id, limit=limit)
+            lifecycle.close()
+            return [
+                {
+                    "session_id": t.session_id,
+                    "sequence": t.sequence,
+                    "role": t.role,
+                    "content": t.content,
+                    "created_at": t.created_at.isoformat(),
+                }
+                for t in turns
+            ]
+        except Exception as exc:
+            _LOG.warning("History search error: %s", exc)
+            return []
 
     async def execute_chat_turn(
         self,

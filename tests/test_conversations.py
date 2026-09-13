@@ -91,3 +91,24 @@ def test_metadata_round_trips(store: ConversationStore) -> None:
 def test_metadata_defaults_to_empty(store: ConversationStore) -> None:
     store.append("s", role="user", content="x")
     assert store.turns("s")[0].metadata == {}
+
+
+def test_search_turns_across_and_within_sessions(store: ConversationStore) -> None:
+    store.append("s1", role="user", content="Deploying to kubernetes cluster")
+    store.append("s1", role="assistant", content="Kubernetes deployment succeeded")
+    store.append("s2", role="user", content="Fix database migration issue")
+    store.append("s2", role="assistant", content="Running kubernetes pod for migration")
+
+    # Search all sessions for 'kubernetes'
+    results = store.search_turns("kubernetes")
+    assert len(results) == 3
+    assert all("kubernetes" in r.content.lower() for r in results)
+
+    # Scoped to session 's1'
+    s1_results = store.search_turns("kubernetes", session_id="s1")
+    assert len(s1_results) == 2
+    assert all(r.session_id == "s1" for r in s1_results)
+
+    # Search non-matching query
+    empty = store.search_turns("nonexistent keyword")
+    assert empty == ()

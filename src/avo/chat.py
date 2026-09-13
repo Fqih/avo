@@ -237,6 +237,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/clear", "clear the terminal screen"),
     ("/export [PATH]", "export current chat session to Markdown file"),
     ("/compact [N]", "compact session context window, preserving first and last N turns"),
+    ("/history [QUERY]", "view recent session turns or search past conversation history"),
     ("/sessions", "list past chat sessions"),
     ("/resume [ID]", "resume a chat session (no arg = picker) or a recorded run"),
     ("/session", "show the current session id and turn count"),
@@ -807,6 +808,59 @@ async def _compact_session_history(
         f"{len(compacted)} context entries (keep_last={keep_last}).\n"
         "Summary of earlier conversation staged in active preamble for the next turn.\n"
     )
+    out.flush()
+
+
+def _show_chat_history(ctx: ChatContext, args: list[str], out: TextIO) -> None:
+    """Display recent session history or search conversation turns."""
+    query = " ".join(args).strip() if args else ""
+
+    if query.isdigit():
+        limit = max(1, int(query))
+        query = ""
+    else:
+        limit = 10
+
+    if query:
+        matched = ctx.session.search_history(query, limit=25)
+        if not matched:
+            out.write(f"\nNo conversation turns matched {query!r}.\n\n")
+            out.flush()
+            return
+
+        out.write(f"\n╭─ Search History: {query!r} (found {len(matched)} turns) ─╮\n")
+        for t in matched:
+            role_badge = f"[{t.role.upper()}]"
+            date_str = t.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            snippet = t.content.strip()
+            if len(snippet) > 160:
+                snippet = snippet[:157] + "..."
+            sid_short = t.session_id[:10]
+            out.write(f"│ {role_badge:<11} seq={t.sequence:<3} sess={sid_short:<10} {date_str}\n")
+            snippet_indented = snippet.replace("\n", " ")
+            out.write(f"│   {snippet_indented}\n│\n")
+        out.write("╰" + "─" * 65 + "╯\n\n")
+        out.flush()
+        return
+
+    turns = ctx.session.turns(ctx.session_id)
+    if not turns:
+        out.write(f"\nNo turns recorded yet in active session {ctx.session_id!r}.\n\n")
+        out.flush()
+        return
+
+    recent = turns[-limit:]
+    out.write(f"\n╭─ Active Session History ({len(recent)} of {len(turns)} turns) ─╮\n")
+    for t in recent:
+        role_badge = f"[{t.role.upper()}]"
+        date_str = t.created_at.strftime("%H:%M:%S")
+        snippet = t.content.strip()
+        if len(snippet) > 160:
+            snippet = snippet[:157] + "..."
+        snippet_indented = snippet.replace("\n", " ")
+        out.write(f"│ {role_badge:<13} seq={t.sequence:<3} {date_str}\n")
+        out.write(f"│   {snippet_indented}\n│\n")
+    out.write("╰" + "─" * 55 + "╯\n\n")
     out.flush()
 
 
@@ -1387,6 +1441,10 @@ async def _run_slash(
     if cmd == "/compact":
         keep_last = int(args[1]) if len(args) > 1 and args[1].isdigit() else 6
         await _compact_session_history(ctx, keep_last, out, err)
+        return False
+
+    if cmd == "/history":
+        _show_chat_history(ctx, args[1:], out)
         return False
 
     if cmd == "/context":

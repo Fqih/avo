@@ -180,6 +180,37 @@ class ConversationStore:
             raise HistoryError(f"failed to truncate session: {exc}") from exc
         return int(cursor.rowcount)
 
+    def search_turns(
+        self,
+        query: str,
+        *,
+        session_id: str | None = None,
+        limit: int = 50,
+    ) -> tuple[ConversationTurn, ...]:
+        """Search conversation turns across sessions or within a specific session."""
+        self._ensure_open()
+        pattern = f"%{query}%"
+        try:
+            if session_id is not None:
+                rows = self._connection.execute(
+                    "SELECT session_id, sequence, role, content, metadata_json, created_at "
+                    "FROM conversation_turns "
+                    "WHERE session_id = ? AND content LIKE ? "
+                    "ORDER BY sequence DESC LIMIT ?",
+                    (session_id, pattern, limit),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    "SELECT session_id, sequence, role, content, metadata_json, created_at "
+                    "FROM conversation_turns "
+                    "WHERE content LIKE ? "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (pattern, limit),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise HistoryError(f"failed to search turns: {exc}") from exc
+        return tuple(self._row_to_turn(row) for row in rows)
+
     def _next_sequence(self, session_id: str) -> int:
         try:
             row = self._connection.execute(

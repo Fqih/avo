@@ -119,6 +119,16 @@ class SessionLifecycle:
 
         return self._store.turns(session_id)
 
+    def search_history(
+        self,
+        query: str,
+        *,
+        session_id: str | None = None,
+        limit: int = 50,
+    ) -> tuple[ConversationTurn, ...]:
+        """Search conversation turns by keyword matching."""
+        return self._store.search_turns(query, session_id=session_id, limit=limit)
+
     def last_turn(self, session_id: str) -> ConversationTurn | None:
         return self._store.last_turn(session_id)
 
