@@ -139,9 +139,15 @@ def _parser() -> argparse.ArgumentParser:
         help="Aggregate token usage and USD cost across recorded Avo runs (see `avo cost --help`).",
     )
 
-    commands.add_parser(
+    serve_mcp = commands.add_parser(
         "serve-mcp",
         help="Expose the default application tool registry over MCP stdio (see docs/mcp.md).",
+    )
+    serve_mcp.add_argument(
+        "--workspace-root",
+        type=Path,
+        default=None,
+        help="Workspace directory exposed via MCP resources (default: current working directory).",
     )
 
     return parser
@@ -195,8 +201,9 @@ async def _execute(args: argparse.Namespace) -> int:
         from avo.mcp_server import build_default_registry
         from avo.mcp_server.server import AvoMcpServer
 
+        workspace_root = (args.workspace_root or Path.cwd()).resolve()
         registry = build_default_registry()
-        server = AvoMcpServer(registry=registry)
+        server = AvoMcpServer(registry=registry, workspace_root=workspace_root)
         server.run_forever()
         return 0
 

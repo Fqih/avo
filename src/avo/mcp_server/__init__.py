@@ -28,6 +28,7 @@ connect without modification.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from avo.mcp_server.server import AvoMcpServer
 from avo.tools import ToolRegistry
@@ -40,6 +41,7 @@ def serve_stdio(
     *,
     server_name: str = "avo",
     server_version: str = "0.1.3",
+    workspace_root: Path | str | None = None,
     read_fn: Callable[[int], bytes] | None = None,
     write_fn: Callable[[bytes], int] | None = None,
 ) -> None:
@@ -55,6 +57,7 @@ def serve_stdio(
         registry=registry,
         server_name=server_name,
         server_version=server_version,
+        workspace_root=workspace_root,
     )
     asyncio.run(server.serve_stdio(read_fn=read_fn, write_fn=write_fn))
 
@@ -64,6 +67,7 @@ async def serve_stdio_async(
     *,
     server_name: str = "avo",
     server_version: str = "0.1.3",
+    workspace_root: Path | str | None = None,
     read_fn: Callable[[int], bytes] | None = None,
     write_fn: Callable[[bytes], int] | None = None,
 ) -> None:
@@ -73,6 +77,7 @@ async def serve_stdio_async(
         registry=registry,
         server_name=server_name,
         server_version=server_version,
+        workspace_root=workspace_root,
     )
     await server.serve_stdio(read_fn=read_fn, write_fn=write_fn)
 

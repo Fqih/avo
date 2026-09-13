@@ -323,6 +323,202 @@ def test_tool_annotations_reflect_tool_kind(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 # ---------------------------------------------------------------------------
+# Workspace resources
+# ---------------------------------------------------------------------------
+
+
+def _workspace(tmp_path: Any) -> AvoMcpServer:
+    (tmp_path / "notes.md").write_text("# hello\n", encoding="utf-8")
+    (tmp_path / ".hidden").write_text("secret", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "data.txt").write_text("payload", encoding="utf-8")
+    (tmp_path / "blob.bin").write_bytes(b"\x00\xff\xfe")
+    return AvoMcpServer(registry=_registry(), workspace_root=tmp_path)
+
+
+def test_resources_list_returns_workspace_files(tmp_path: Any) -> None:
+    server = _workspace(tmp_path)
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message({"jsonrpc": "2.0", "id": 20, "method": "resources/list"})
+
+    response = asyncio.run(run())
+    resources = response["result"]["resources"]
+    uris = {r["uri"] for r in resources}
+    assert "avo://workspace/notes.md" in uris
+    assert "avo://workspace/sub/data.txt" in uris
+    # dot-prefixed entries never surface
+    assert not any(".hidden" in uri for uri in uris)
+    by_uri = {r["uri"]: r for r in resources}
+    assert by_uri["avo://workspace/notes.md"]["mimeType"] == "text/markdown"
+    assert by_uri["avo://workspace/sub/data.txt"]["name"] == "sub/data.txt"
+
+
+def test_resources_list_without_workspace_is_empty() -> None:
+    server = AvoMcpServer(registry=_registry())
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message({"jsonrpc": "2.0", "id": 21, "method": "resources/list"})
+
+    response = asyncio.run(run())
+    assert response["result"] == {"resources": []}
+
+
+def test_resources_read_returns_text(tmp_path: Any) -> None:
+    server = _workspace(tmp_path)
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 22,
+                "method": "resources/read",
+                "params": {"uri": "avo://workspace/sub/data.txt"},
+            }
+        )
+
+    response = asyncio.run(run())
+    contents = response["result"]["contents"]
+    assert contents[0]["uri"] == "avo://workspace/sub/data.txt"
+    assert contents[0]["text"] == "payload"
+    assert contents[0]["mimeType"] == "text/plain"
+
+
+def test_resources_read_rejects_traversal(tmp_path: Any) -> None:
+    server = _workspace(tmp_path)
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 23,
+                "method": "resources/read",
+                "params": {"uri": "avo://workspace/../secret"},
+            }
+        )
+
+    response = asyncio.run(run())
+    assert response["error"]["code"] == -32000
+
+
+def test_resources_read_rejects_foreign_scheme(tmp_path: Any) -> None:
+    server = _workspace(tmp_path)
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 24,
+                "method": "resources/read",
+                "params": {"uri": "file:///etc/passwd"},
+            }
+        )
+
+    response = asyncio.run(run())
+    assert response["error"]["code"] == -32602
+
+
+def test_resources_read_requires_string_uri(tmp_path: Any) -> None:
+    server = _workspace(tmp_path)
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
+            {"jsonrpc": "2.0", "id": 25, "method": "resources/read", "params": {"uri": 42}}
+        )
+
+    response = asyncio.run(run())
+    assert response["error"]["code"] == -32602
+
+
+def test_resources_read_missing_file(tmp_path: Any) -> None:
+    server = _workspace(tmp_path)
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 26,
+                "method": "resources/read",
+                "params": {"uri": "avo://workspace/nope.txt"},
+            }
+        )
+
+    response = asyncio.run(run())
+    assert response["error"]["code"] == -32000
+
+
+def test_resources_read_binary_rejected(tmp_path: Any) -> None:
+    server = _workspace(tmp_path)
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 27,
+                "method": "resources/read",
+                "params": {"uri": "avo://workspace/blob.bin"},
+            }
+        )
+
+    response = asyncio.run(run())
+    assert response["error"]["code"] == -32000
+    assert "binary" in response["error"]["message"]
+
+
+def test_resources_read_without_workspace_is_error(tmp_path: Any) -> None:
+    server = AvoMcpServer(registry=_registry())
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 28,
+                "method": "resources/read",
+                "params": {"uri": "avo://workspace/notes.md"},
+            }
+        )
+
+    response = asyncio.run(run())
+    assert response["error"]["code"] == -32000
+
+
+def test_resources_templates_list(tmp_path: Any) -> None:
+    server = _workspace(tmp_path)
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
+            {"jsonrpc": "2.0", "id": 29, "method": "resources/templates/list"}
+        )
+
+    response = asyncio.run(run())
+    templates = response["result"]["resourceTemplates"]
+    assert templates[0]["uriTemplate"] == "avo://workspace/{path}"
+
+
+def test_resources_templates_list_without_workspace_is_empty() -> None:
+    server = AvoMcpServer(registry=_registry())
+
+    async def run() -> Any:
+        await _initialize(server)
+        return await server.handle_message(
+            {"jsonrpc": "2.0", "id": 30, "method": "resources/templates/list"}
+        )
+
+    response = asyncio.run(run())
+    assert response["result"] == {"resourceTemplates": []}
+
+
+# ---------------------------------------------------------------------------
 # End-to-end loop with mock stdio
 # ---------------------------------------------------------------------------
 
