@@ -15,6 +15,8 @@ from .file_tools import bind_workspace, read_file_tool, write_file_tool
 from .git_commit import git_commit_tool
 from .git_diff import git_diff_tool
 from .git_status import git_status_tool
+from .glob_tool import glob_tool
+from .grep_tool import grep_tool
 from .linter import lint_tool
 from .test_runner import test_runner_tool
 from .workspace_map import workspace_map_tool
@@ -24,6 +26,8 @@ __all__ = [
     "git_commit_tool",
     "git_diff_tool",
     "git_status_tool",
+    "glob_tool",
+    "grep_tool",
     "lint_tool",
     "read_file_tool",
     "test_runner_tool",

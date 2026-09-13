@@ -27,8 +27,14 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from avo import __version__ as AVO_VERSION
-from avo import runtime as _runtime  # noqa: F401  (typing hook)
-from avo.app_tools import git_commit_tool, git_diff_tool, lint_tool, test_runner_tool
+from avo.app_tools import (
+    git_commit_tool,
+    git_diff_tool,
+    glob_tool,
+    grep_tool,
+    lint_tool,
+    test_runner_tool,
+)
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
 from avo.app_tools.workspace import Workspace
 from avo.background import BackgroundJobManager, render_job_detail, render_job_row
@@ -212,6 +218,8 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/shell [CMD]", "execute shell command in workspace (or use !CMD)"),
     ("/diff [PATH]", "show git status, diff stat, or unified diff for PATH"),
     ("/undo", "revert uncommitted workspace modifications"),
+    ("/grep PATTERN [GLOB]", "search workspace file contents for regex pattern"),
+    ("/find [GLOB]", "find files in workspace matching glob pattern (alias: /search)"),
     ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
     ("/test [TARGET]", "run automated test suite on workspace files"),
     ("/commit [MSG]", "stage changes and create atomic git commit (auto-message if omitted)"),
@@ -789,6 +797,92 @@ async def _compact_session_history(
     out.flush()
 
 
+async def _run_grep_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Execute workspace regex content search."""
+    if len(args) < 2:
+        err.write("usage: /grep PATTERN [INCLUDE_GLOB]\n")
+        err.flush()
+        return
+
+    pattern = args[1]
+    include_glob = args[2] if len(args) > 2 else None
+
+    from avo.app_tools.grep_tool import grep_tool
+
+    tool = grep_tool()
+    with bind_workspace(ctx.workspace):
+        try:
+            res = await tool.invoke(
+                {"pattern": pattern, "include_glob": include_glob, "max_results": 50}
+            )
+        except Exception as exc:
+            err.write(f"grep error: {exc}\n")
+            err.flush()
+            return
+
+    matches_raw = res.get("matches", []) if isinstance(res, dict) else []
+    matches = matches_raw if isinstance(matches_raw, list) else []
+    truncated = bool(res.get("truncated", False)) if isinstance(res, dict) else False
+
+    if not matches:
+        out.write(f"No matches found for pattern {pattern!r}")
+        if include_glob:
+            out.write(f" matching {include_glob!r}")
+        out.write(".\n")
+        out.flush()
+        return
+
+    out.write(f"\nFound {len(matches)}{'+' if truncated else ''} matches for {pattern!r}:\n\n")
+    for m in matches:
+        if isinstance(m, dict):
+            p = m.get("path", "")
+            ln = m.get("line_number", 0)
+            line = str(m.get("line", "")).rstrip()
+            out.write(f"  {p}:{ln}: {line}\n")
+    out.write("\n")
+    out.flush()
+
+
+async def _run_find_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Execute workspace glob file search."""
+    pattern = args[1] if len(args) > 1 else "*"
+    from avo.app_tools.glob_tool import glob_tool
+
+    tool = glob_tool()
+    with bind_workspace(ctx.workspace):
+        try:
+            res = await tool.invoke({"pattern": pattern, "max_results": 100})
+        except Exception as exc:
+            err.write(f"find error: {exc}\n")
+            err.flush()
+            return
+
+    matches_raw = res.get("matches", []) if isinstance(res, dict) else []
+    matches = matches_raw if isinstance(matches_raw, list) else []
+    truncated = bool(res.get("truncated", False)) if isinstance(res, dict) else False
+
+    if not matches:
+        out.write(f"No files matched pattern {pattern!r}.\n")
+        out.flush()
+        return
+
+    out.write(f"\nMatched {len(matches)}{'+' if truncated else ''} files ({pattern!r}):\n\n")
+    for path_str in matches:
+        out.write(f"  {path_str}\n")
+    out.write("\n")
+    out.flush()
+
+
 def _show_router_status(ctx: ChatContext, out: TextIO) -> None:
     """Display real-time router circuit breaker and health status."""
     from avo.providers.router import BaseRouterProvider
@@ -875,6 +969,8 @@ def build_chat_context(
         tools=[
             read_file_tool(),
             write_file_tool(),
+            grep_tool(),
+            glob_tool(),
             lint_tool(),
             test_runner_tool(),
             git_diff_tool(),
@@ -1015,6 +1111,14 @@ async def _run_slash(
 
     if cmd == "/undo":
         _undo_workspace(ctx.workspace.root, out, err)
+        return False
+
+    if cmd == "/grep":
+        await _run_grep_command(ctx, args, out, err)
+        return False
+
+    if cmd in ("/find", "/search"):
+        await _run_find_command(ctx, args, out, err)
         return False
 
     if cmd == "/lint":

@@ -129,6 +129,8 @@ def test_build_chat_context_constructs_runtime_with_tools(
     assert tool_names == {
         "read_file",
         "write_file",
+        "grep",
+        "glob",
         "lint",
         "test_runner",
         "git_diff",
@@ -1266,3 +1268,74 @@ async def test_repl_compact_command(
     last_call = scripted.calls[-1]
     assert "You are continuing a compacted conversation" in last_call
     assert "deploy now" in last_call
+
+
+@pytest.mark.asyncio
+async def test_repl_grep_and_find_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+    # Check that grep and glob are registered in runtime tools
+    tool_names = [tool.metadata.name for tool in ctx.runtime.tools._tools.values()]
+    assert "grep" in tool_names
+    assert "glob" in tool_names
+
+    ws = chat_env["workspace"]
+    (ws / "main.py").write_text("def unique_search_target(): pass\n", encoding="utf-8")
+    (ws / "doc.txt").write_text("referencing unique_search_target here\n", encoding="utf-8")
+
+    # 1. /grep without args
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    await _run_slash(ctx, ["/grep"], stdout, stderr, env)
+    assert "usage: /grep" in stderr.getvalue()
+
+    # 2. /grep pattern across all files
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    await _run_slash(ctx, ["/grep", "unique_search_target"], stdout, stderr, env)
+    out = stdout.getvalue()
+    assert "Found 2 matches" in out
+    assert "main.py:1" in out
+    assert "doc.txt:1" in out
+
+    # 3. /grep with include_glob
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    await _run_slash(ctx, ["/grep", "unique_search_target", "*.py"], stdout, stderr, env)
+    out = stdout.getvalue()
+    assert "Found 1 matches" in out
+    assert "main.py:1" in out
+    assert "doc.txt" not in out
+
+    # 4. /grep no matches
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    await _run_slash(ctx, ["/grep", "no_such_target_xyz"], stdout, stderr, env)
+    assert "No matches found" in stdout.getvalue()
+
+    # 5. /find glob
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    await _run_slash(ctx, ["/find", "*.py"], stdout, stderr, env)
+    out = stdout.getvalue()
+    assert "Matched 1 files" in out
+    assert "main.py" in out
+
+    # 6. /search alias
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    await _run_slash(ctx, ["/search", "*.txt"], stdout, stderr, env)
+    out = stdout.getvalue()
+    assert "Matched 1 files" in out
+    assert "doc.txt" in out
