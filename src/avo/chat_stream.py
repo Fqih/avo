@@ -13,7 +13,7 @@ from typing import TextIO
 from avo.providers.streaming import ThinkingStreamParser
 
 STREAM_GATE_ENV = "AVO_CHAT_STREAM"
-_INTERRUPT_NOTICE = "⟲ stream interrupted, retrying…\n"
+_INTERRUPT_NOTICE = "⟲ stream interrupted\n"
 
 
 def chat_stream_enabled(environ: dict[str, str]) -> bool:
@@ -36,8 +36,10 @@ class LiveAnswerPrinter:
       :meth:`finish` closes it with a newline.
     - :meth:`on_interrupt` is called by the runtime when a stream dies
       after already printing deltas; already-printed text cannot be
-      unprinted, so the honest behavior is a short notice line before the
-      retry's deltas, then a fresh ``Avo> `` line for the retried answer.
+      unprinted, so the honest behavior is a short notice line, then a
+      fresh ``Avo> `` line if deltas resume on a retry. The notice never
+      promises a retry — the retry decision is made downstream and may
+      fail.
     - ``answered`` reports whether any content was live-printed this
       turn; ``_run_turn`` uses it to suppress the post-run answer block.
     """
@@ -55,7 +57,7 @@ class LiveAnswerPrinter:
             self._emit(channel, text)
 
     def on_interrupt(self) -> None:
-        """Mark the boundary between interrupted and retried deltas."""
+        """Mark where a stream died after live deltas were printed."""
 
         if self._line_open:
             self._out.write("\n")

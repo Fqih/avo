@@ -152,7 +152,10 @@ async def test_mid_stream_failure_shows_notice_and_single_final_answer(
     output = await _run_one_turn(chat_env, monkeypatch, provider, _environ())
 
     assert provider.stream_attempts == 2
-    assert "stream interrupted" in output
+    # The notice must stay truthful: the retry decision happens downstream
+    # and may still fail, so it cannot promise "retrying".
+    assert "⟲ stream interrupted\n" in output
+    assert "retrying" not in output
     # The retried final answer appears exactly once (the partial text was
     # already on screen and cannot be unprinted).
     assert output.count("live streamed answer") == 1

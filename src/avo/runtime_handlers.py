@@ -110,8 +110,6 @@ async def handle_model_pending(runtime: AgentRuntime, context: _RunContext) -> N
                     provider_call,
                     timeout=context.policy.provider_timeout_seconds,
                 )
-        from avo.models import ModelResponse
-
         response = ModelResponse.model_validate(generated)
         if breaker is not None:
             breaker.record_success()
@@ -207,7 +205,8 @@ async def _stream_with_callback(
     pipe) is swallowed here and never charged to the provider. If the
     stream dies after deltas were already displayed,
     ``stream_interrupt_callback`` fires once before the re-raise so the
-    display can flag the upcoming retry.
+    display can flag the interruption (whether a retry follows is decided
+    downstream in :func:`handle_provider_error`).
     """
     forwarded_text = False
 
