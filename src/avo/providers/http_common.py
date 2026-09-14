@@ -7,6 +7,8 @@ import re
 from collections.abc import AsyncIterator
 from typing import Any, Protocol, cast, runtime_checkable
 
+from pydantic import JsonValue
+
 from avo import ModelRequest, ModelResponse, TokenUsage, ToolCall
 from avo.exceptions import ProviderError
 from avo.providers.streaming import ModelChunk
@@ -187,6 +189,8 @@ def parse_openai_stream_payload(payload: str) -> ModelChunk | None:
         return None
     if not isinstance(event, dict):
         return None
+    raw_id = event.get("id")
+    response_id = raw_id if isinstance(raw_id, str) and raw_id else None
     choices = event.get("choices")
     if not isinstance(choices, list) or not choices:
         usage = event.get("usage")
@@ -194,25 +198,53 @@ def parse_openai_stream_payload(payload: str) -> ModelChunk | None:
             parsed = _parse_usage(usage)
             if parsed is not None:
                 # Some providers emit usage only on the terminal chunk.
-                return ModelChunk(finish_reason="usage_only")
+                return ModelChunk(usage=parsed, response_id=response_id)
         return None
     choice = _require_dict(choices[0])
     delta = choice.get("delta")
     text: str = ""
-    tool_call_delta: dict[str, Any] | None = None
+    tool_call_delta: dict[str, JsonValue] | None = None
     if isinstance(delta, dict):
         content = delta.get("content")
         if isinstance(content, str):
             text = content
         tool_calls = delta.get("tool_calls")
         if isinstance(tool_calls, list) and tool_calls:
-            tool_call_delta = _require_dict(tool_calls[0])
+            tool_call_delta = _normalize_openai_tool_delta(_require_dict(tool_calls[0]))
     finish_reason = choice.get("finish_reason")
     if isinstance(finish_reason, str) and finish_reason:
-        return ModelChunk(text=text, finish_reason=finish_reason, tool_call_delta=tool_call_delta)
+        return ModelChunk(
+            text=text,
+            finish_reason=finish_reason,
+            tool_call_delta=tool_call_delta,
+            response_id=response_id,
+        )
     if text or tool_call_delta is not None:
-        return ModelChunk(text=text, tool_call_delta=tool_call_delta)
+        return ModelChunk(text=text, tool_call_delta=tool_call_delta, response_id=response_id)
     return None
+
+
+def _normalize_openai_tool_delta(raw: dict[str, Any]) -> dict[str, JsonValue]:
+    """Map one raw OpenAI ``tool_calls`` fragment to the normalized delta shape.
+
+    The normalized shape is documented on :class:`ModelChunk`: ``index``,
+    optional ``id``, ``name`` and an ``arguments`` JSON-string fragment.
+    """
+    normalized: dict[str, JsonValue] = {}
+    index = raw.get("index")
+    normalized["index"] = index if isinstance(index, int) else 0
+    call_id = raw.get("id")
+    if isinstance(call_id, str) and call_id:
+        normalized["id"] = call_id
+    function = raw.get("function")
+    if isinstance(function, dict):
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            normalized["name"] = name
+        fragment = function.get("arguments")
+        if isinstance(fragment, str) and fragment:
+            normalized["arguments"] = fragment
+    return normalized
 
 
 async def iter_sse_lines(byte_iter: AsyncIterator[bytes]) -> AsyncIterator[str]:
@@ -284,11 +316,37 @@ def parse_anthropic_stream_event(
 ) -> ModelChunk | None:
     """Translate one Anthropic SSE event into a :class:`ModelChunk`.
 
-    Returns ``None`` for event types that carry no incremental content
-    (``ping``, ``message_start``, ``content_block_start`` with
+    Returns ``None`` for event types that carry no usable data (``ping``,
+    ``message_start`` without id or usage, ``content_block_start`` with
     non-tool blocks, etc.) so callers can simply ``async for`` and skip.
+    ``message_start`` carries the message id and input-token usage;
+    ``content_block_start`` announces tool blocks (id/name mapped into
+    the normalized tool-call delta shape); ``message_delta`` carries the
+    final stop reason and cumulative output-token usage.
     """
 
+    if event_type == "message_start":
+        message = payload.get("message")
+        if not isinstance(message, dict):
+            return None
+        raw_id = message.get("id")
+        response_id = raw_id if isinstance(raw_id, str) and raw_id else None
+        usage = _parse_anthropic_stream_usage(message.get("usage"))
+        if response_id is None and usage is None:
+            return None
+        return ModelChunk(usage=usage, response_id=response_id)
+    if event_type == "content_block_start":
+        block = payload.get("content_block")
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            return None
+        normalized: dict[str, JsonValue] = {"index": _stream_block_index(payload)}
+        block_id = block.get("id")
+        if isinstance(block_id, str) and block_id:
+            normalized["id"] = block_id
+        block_name = block.get("name")
+        if isinstance(block_name, str) and block_name:
+            normalized["name"] = block_name
+        return ModelChunk(tool_call_delta=normalized)
     if event_type == "content_block_delta":
         delta = payload.get("delta")
         if not isinstance(delta, dict):
@@ -300,7 +358,12 @@ def parse_anthropic_stream_event(
         if delta.get("type") == "input_json_delta":
             partial = delta.get("partial_json")
             if isinstance(partial, str) and partial:
-                return ModelChunk(tool_call_delta={"arguments_delta": partial})
+                return ModelChunk(
+                    tool_call_delta={
+                        "index": _stream_block_index(payload),
+                        "arguments": partial,
+                    }
+                )
         return None
     if event_type == "message_delta":
         delta = payload.get("delta")
@@ -309,10 +372,37 @@ def parse_anthropic_stream_event(
             stop = delta.get("stop_reason")
             if isinstance(stop, str) and stop:
                 finish_reason = stop
-        return ModelChunk(finish_reason=finish_reason) if finish_reason else None
+        usage = _parse_anthropic_stream_usage(payload.get("usage"))
+        if finish_reason or usage:
+            return ModelChunk(finish_reason=finish_reason, usage=usage)
+        return None
     if event_type == "message_stop":
         return ModelChunk(finish_reason="stop")
     return None
+
+
+def _stream_block_index(payload: dict[str, Any]) -> int:
+    raw = payload.get("index")
+    return raw if isinstance(raw, int) else 0
+
+
+def _parse_anthropic_stream_usage(value: object) -> TokenUsage | None:
+    """Parse partial or full Anthropic usage; zero-filled absent counters.
+
+    Anthropic splits usage across events (``message_start`` carries
+    input tokens, ``message_delta`` carries cumulative output tokens);
+    :class:`StreamAssembler` merges the partial records field-wise.
+    """
+    if not isinstance(value, dict):
+        return None
+    input_tokens = value.get("input_tokens")
+    output_tokens = value.get("output_tokens")
+    if not isinstance(input_tokens, int) and not isinstance(output_tokens, int):
+        return None
+    return TokenUsage(
+        input_tokens=input_tokens if isinstance(input_tokens, int) else 0,
+        output_tokens=output_tokens if isinstance(output_tokens, int) else 0,
+    )
 
 
 async def stream_openai_chunks(

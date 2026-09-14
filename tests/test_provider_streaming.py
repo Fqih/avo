@@ -16,6 +16,7 @@ import pytest
 
 from avo import ModelRequest
 from avo.exceptions import ProviderError
+from avo.models import TokenUsage
 from avo.providers.anthropic import AnthropicConfig, AnthropicProvider
 from avo.providers.groq import GroqConfig, GroqProvider
 from avo.providers.http_common import (
@@ -24,6 +25,7 @@ from avo.providers.http_common import (
     iter_anthropic_sse_events,
     iter_sse_lines,
     parse_anthropic_stream_event,
+    parse_openai_response,
     parse_openai_stream_payload,
 )
 from avo.providers.openai_compatible import (
@@ -114,9 +116,55 @@ def test_parse_openai_stream_payload_tool_call_delta() -> None:
     )
     chunk = parse_openai_stream_payload(f"data: {payload}")
     assert chunk is not None
-    assert chunk.tool_call_delta is not None
-    assert chunk.tool_call_delta["id"] == "call_1"
-    assert chunk.tool_call_delta["function"]["name"] == "search"
+    assert chunk.tool_call_delta == {
+        "index": 0,
+        "id": "call_1",
+        "name": "search",
+        "arguments": '{"q":',
+    }
+
+
+def test_parse_openai_stream_payload_tool_call_argument_fragment() -> None:
+    payload = json.dumps(
+        {
+            "choices": [
+                {
+                    "delta": {"tool_calls": [{"index": 2, "function": {"arguments": '{"q": 1}'}}]},
+                    "finish_reason": None,
+                }
+            ]
+        }
+    )
+    chunk = parse_openai_stream_payload(f"data: {payload}")
+    assert chunk is not None
+    assert chunk.tool_call_delta == {"index": 2, "arguments": '{"q": 1}'}
+
+
+def test_parse_openai_stream_payload_carries_response_id() -> None:
+    payload = json.dumps(
+        {
+            "id": "chatcmpl-9",
+            "choices": [{"index": 0, "delta": {"content": "hi"}, "finish_reason": None}],
+        }
+    )
+    chunk = parse_openai_stream_payload(f"data: {payload}")
+    assert chunk == ModelChunk(text="hi", response_id="chatcmpl-9")
+
+
+def test_parse_openai_stream_payload_usage_only_terminal() -> None:
+    payload = json.dumps(
+        {
+            "id": "chatcmpl-9",
+            "choices": [],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 5},
+        }
+    )
+    chunk = parse_openai_stream_payload(f"data: {payload}")
+    assert chunk is not None
+    assert chunk.usage == TokenUsage(input_tokens=11, output_tokens=5)
+    assert chunk.response_id == "chatcmpl-9"
+    # The old "usage_only" finish-reason sentinel is replaced by the carrier.
+    assert chunk.finish_reason is None
 
 
 def test_parse_anthropic_text_delta() -> None:
@@ -130,11 +178,49 @@ def test_parse_anthropic_text_delta() -> None:
 def test_parse_anthropic_tool_use_input_delta() -> None:
     chunk = parse_anthropic_stream_event(
         "content_block_delta",
-        {"delta": {"type": "input_json_delta", "partial_json": '{"q"'}},
+        {"index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"q"'}},
     )
     assert chunk is not None
-    assert chunk.tool_call_delta is not None
-    assert chunk.tool_call_delta["arguments_delta"] == '{"q"'
+    assert chunk.tool_call_delta == {"index": 1, "arguments": '{"q"'}
+
+
+def test_parse_anthropic_tool_use_block_start() -> None:
+    chunk = parse_anthropic_stream_event(
+        "content_block_start",
+        {"index": 0, "content_block": {"type": "tool_use", "id": "toolu_1", "name": "search"}},
+    )
+    assert chunk is not None
+    assert chunk.tool_call_delta == {"index": 0, "id": "toolu_1", "name": "search"}
+
+
+def test_parse_anthropic_skips_text_block_start() -> None:
+    assert (
+        parse_anthropic_stream_event(
+            "content_block_start",
+            {"index": 0, "content_block": {"type": "text", "text": ""}},
+        )
+        is None
+    )
+
+
+def test_parse_anthropic_message_start_carries_id_and_usage() -> None:
+    chunk = parse_anthropic_stream_event(
+        "message_start",
+        {"message": {"id": "msg_1", "usage": {"input_tokens": 40, "output_tokens": 1}}},
+    )
+    assert chunk is not None
+    assert chunk.response_id == "msg_1"
+    assert chunk.usage == TokenUsage(input_tokens=40, output_tokens=1)
+
+
+def test_parse_anthropic_message_delta_carries_usage() -> None:
+    chunk = parse_anthropic_stream_event(
+        "message_delta",
+        {"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 128}},
+    )
+    assert chunk is not None
+    assert chunk.finish_reason == "end_turn"
+    assert chunk.usage == TokenUsage(input_tokens=0, output_tokens=128)
 
 
 def test_parse_anthropic_message_delta_stop_reason() -> None:
@@ -152,8 +238,10 @@ def test_parse_anthropic_message_stop() -> None:
 
 
 def test_parse_anthropic_skips_event_types_without_chunks() -> None:
-    assert parse_anthropic_stream_event("message_start", {"message": {"id": "x"}}) is None
     assert parse_anthropic_stream_event("ping", {}) is None
+    assert parse_anthropic_stream_event("message_stop_noop", {}) is None
+    # message_start without any usable metadata is still skipped.
+    assert parse_anthropic_stream_event("message_start", {"message": {}}) is None
 
 
 async def test_iter_anthropic_sse_events_emits_pairs() -> None:
@@ -352,8 +440,7 @@ async def test_anthropic_stream_emits_tool_input_delta() -> None:
     chunks = [chunk async for chunk in provider.stream(_request())]
     tool_chunks = [c for c in chunks if c.tool_call_delta is not None]
     assert len(tool_chunks) == 1
-    assert tool_chunks[0].tool_call_delta is not None
-    assert tool_chunks[0].tool_call_delta["arguments_delta"] == '{"q":"hi"}'
+    assert tool_chunks[0].tool_call_delta == {"index": 0, "arguments": '{"q":"hi"}'}
     await provider.aclose()
 
 
@@ -385,4 +472,147 @@ async def test_collect_stream_consumes_provider_stream() -> None:
     provider = _openai_provider(fake)
     response = await collect_stream(provider, _request())
     assert response.content == "abcdef"
+    await provider.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Lossless parity: stream reconstruction vs generate for the same output
+# ---------------------------------------------------------------------------
+
+
+async def test_openai_collect_stream_matches_generate_for_tool_call() -> None:
+    """Streamed fragments must rebuild what generate() would have returned."""
+    from avo.providers.streaming import collect_stream
+
+    body = _openai_sse(
+        {
+            "id": "chatcmpl-7",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {"name": "search", "arguments": ""},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{"index": 0, "function": {"arguments": '{"q":"hi"}'}}]
+                    },
+                    "finish_reason": None,
+                }
+            ]
+        },
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+        {"choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 7}},
+    )
+    fake = _FakeStreamingClient([_FakeResponse(200, body)])
+    provider = _openai_provider(fake)
+    streamed = await collect_stream(provider, _request())
+
+    generated = parse_openai_response(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "function": {"name": "search", "arguments": '{"q":"hi"}'},
+                            }
+                        ]
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 7},
+        }
+    )
+    assert streamed.tool_call is not None
+    assert streamed.tool_call.model_dump() == generated.tool_call.model_dump()
+    assert streamed.usage == generated.usage
+    assert streamed.response_id == "chatcmpl-7"
+    await provider.aclose()
+
+
+async def test_anthropic_collect_stream_matches_generate_for_text() -> None:
+    """Anthropic usage split across message_start/message_delta reassembles fully."""
+    from avo.providers.streaming import collect_stream
+
+    body = _anthropic_sse(
+        (
+            "message_start",
+            {"message": {"id": "msg_1", "usage": {"input_tokens": 40, "output_tokens": 1}}},
+        ),
+        (
+            "content_block_delta",
+            {"index": 0, "delta": {"type": "text_delta", "text": "The answer"}},
+        ),
+        ("message_delta", {"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 128}}),
+        ("message_stop", {}),
+    )
+    fake = _FakeStreamingClient([_FakeResponse(200, body)])
+    provider = _anthropic_provider(fake)
+    streamed = await collect_stream(provider, _request())
+
+    generated = AnthropicProvider._parse_response(
+        {
+            "content": [{"type": "text", "text": "The answer"}],
+            "usage": {"input_tokens": 40, "output_tokens": 128},
+        }
+    )
+    assert streamed.content == generated.content
+    assert streamed.usage == generated.usage
+    assert streamed.response_id == "msg_1"
+    await provider.aclose()
+
+
+async def test_anthropic_collect_stream_matches_generate_for_tool_use() -> None:
+    from avo.providers.streaming import collect_stream
+
+    body = _anthropic_sse(
+        (
+            "message_start",
+            {"message": {"id": "msg_2", "usage": {"input_tokens": 12, "output_tokens": 1}}},
+        ),
+        (
+            "content_block_start",
+            {"index": 0, "content_block": {"type": "tool_use", "id": "toolu_1", "name": "search"}},
+        ),
+        (
+            "content_block_delta",
+            {"index": 0, "delta": {"type": "input_json_delta", "partial_json": '{"q":'}},
+        ),
+        (
+            "content_block_delta",
+            {"index": 0, "delta": {"type": "input_json_delta", "partial_json": '"hi"}'}},
+        ),
+        ("message_delta", {"delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 4}}),
+        ("message_stop", {}),
+    )
+    fake = _FakeStreamingClient([_FakeResponse(200, body)])
+    provider = _anthropic_provider(fake)
+    streamed = await collect_stream(provider, _request())
+
+    generated = AnthropicProvider._parse_response(
+        {
+            "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "search", "input": {"q": "hi"}}
+            ],
+            "usage": {"input_tokens": 12, "output_tokens": 4},
+        }
+    )
+    assert streamed.tool_call is not None
+    assert streamed.tool_call.model_dump() == generated.tool_call.model_dump()
+    assert streamed.usage == generated.usage
     await provider.aclose()

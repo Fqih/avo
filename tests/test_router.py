@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from avo import ModelRequest, ModelResponse
+from avo import ModelRequest, ModelResponse, TokenUsage, ToolCall
 from avo.config import build_provider_from_env
 from avo.exceptions import ProviderError
 from avo.providers.router import FallbackRouterProvider, RaceRouterProvider
@@ -405,3 +405,79 @@ def test_race_router_speculative_delay_streaming() -> None:
 
     result = asyncio.run(run_stream())
     assert result == ["chunk 1", "chunk 2"]
+
+
+# ---------------------------------------------------------------------------
+# Lossless chunk forwarding (task 3a): routers must not collapse response
+# metadata (usage, tool calls, response id) into text-only chunks.
+# ---------------------------------------------------------------------------
+
+
+class _PlainMock:
+    """Route mock WITHOUT a ``stream`` method (non-streaming provider)."""
+
+    def __init__(self, name: str, response: ModelResponse) -> None:
+        self.name = name
+        self._response = response
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        return self._response
+
+
+def _full_response() -> ModelResponse:
+    return ModelResponse(
+        tool_call=ToolCall(tool_call_id="c1", name="n", arguments={"k": "v"}),
+        usage=TokenUsage(input_tokens=2, output_tokens=3),
+        response_id="fixed-1",
+    )
+
+
+def test_fallback_router_forwards_response_metadata_from_non_streaming_route() -> None:
+    from avo.providers.streaming import collect_stream
+
+    resp = _full_response()
+    router = FallbackRouterProvider([("a", _PlainMock("a", resp))])  # type: ignore[list-item]
+    req = ModelRequest(run_id="r-lossless", step=1, messages=[])
+    collected = asyncio.run(collect_stream(router, req))
+    assert collected.model_dump() == resp.model_dump()
+
+
+def test_race_router_forwards_response_metadata_from_single_non_streaming_route() -> None:
+    from avo.providers.streaming import collect_stream
+
+    resp = ModelResponse(content="text body", usage=TokenUsage(input_tokens=8, output_tokens=9))
+    router = RaceRouterProvider([("only", _PlainMock("only", resp))])  # type: ignore[list-item]
+    req = ModelRequest(run_id="r-race-lossless", step=1, messages=[])
+    collected = asyncio.run(collect_stream(router, req))
+    assert collected.model_dump() == resp.model_dump()
+
+
+def test_race_router_forwards_metadata_only_first_chunk() -> None:
+    class _MetaFirstProvider:
+        def __init__(self) -> None:
+            self._chunks = [
+                ModelChunk(usage=TokenUsage(input_tokens=4, output_tokens=0)),
+                ModelChunk(text="hi"),
+            ]
+
+        async def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+            raise AssertionError("generate should not be used")
+
+        async def stream(self, request: ModelRequest) -> Any:
+            for chunk in self._chunks:
+                yield chunk
+
+    loser = _MockProvider("loser", stream_error_before=ConnectionResetError("dropped"))
+    winner = _MetaFirstProvider()
+    router = RaceRouterProvider(
+        [("loser", loser), ("winner", winner)],  # type: ignore[list-item]
+        cooldown_seconds=0.0,
+    )
+    req = ModelRequest(run_id="r-meta-first", step=1, messages=[])
+
+    async def run_stream() -> list[ModelChunk]:
+        return [chunk async for chunk in router.stream(req)]
+
+    chunks = asyncio.run(run_stream())
+    assert any(c.usage is not None for c in chunks), "metadata-only first chunk was dropped"
+    assert "".join(c.text for c in chunks) == "hi"

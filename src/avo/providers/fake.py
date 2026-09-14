@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 from pydantic import JsonValue
 
 from avo.exceptions import FakeProviderExhaustedError, ProviderError
 from avo.models import ModelRequest, ModelResponse, TokenUsage
+from avo.providers.streaming import ModelChunk, response_to_chunks
 
 ScriptItem = ModelResponse | Mapping[str, Any] | Exception
 
@@ -56,6 +57,19 @@ class FakeProvider:
         if response.usage is None:
             response = response.model_copy(update={"usage": TokenUsage()})
         return response
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
+        """Replay the scripted response as a lossless chunk sequence.
+
+        Consumes the script exactly like :meth:`generate` (same cursor
+        and error semantics) and decomposes the result via
+        :func:`response_to_chunks`, so ``collect_stream`` over
+        ``stream`` is guaranteed to equal ``generate``.
+        """
+
+        response = await self.generate(request)
+        for chunk in response_to_chunks(response):
+            yield chunk
 
     def reset(self) -> None:
         """Reset replay to the first scripted item and clear captured requests."""

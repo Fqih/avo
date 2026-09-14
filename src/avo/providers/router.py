@@ -18,7 +18,7 @@ from typing import Any
 from avo import ModelRequest, ModelResponse
 from avo.exceptions import ProviderError
 from avo.providers.base import ModelProvider
-from avo.providers.streaming import ModelChunk, StreamingModelProvider
+from avo.providers.streaming import ModelChunk, StreamingModelProvider, response_to_chunks
 
 _LOG = logging.getLogger("avo.providers.router")
 
@@ -239,9 +239,11 @@ class FallbackRouterProvider(BaseRouterProvider):
                     self._record_success(name, t0)
                     return
                 # Provider does not implement streaming; fallback to generate
+                # and decompose losslessly (usage/tool call/id included).
                 resp = await provider.generate(request)
                 self._record_success(name, t0)
-                yield ModelChunk(text=resp.content or "")
+                for chunk in response_to_chunks(resp):
+                    yield chunk
                 return
             except Exception as exc:
                 self._record_failure(name, exc)
@@ -366,14 +368,17 @@ class RaceRouterProvider(BaseRouterProvider):
                         yield chunk
                 else:
                     resp = await provider.generate(request)
-                    yield ModelChunk(text=resp.content or "")
+                    for chunk in response_to_chunks(resp):
+                        yield chunk
                 self._record_success(name, t0)
                 return
             except Exception as exc:
                 self._record_failure(name, exc)
                 raise ProviderError(f"race provider {name!r} failed: {exc}") from exc
 
-        queue: asyncio.Queue[tuple[str, ModelChunk | None, Any, Exception | None]] = asyncio.Queue()
+        queue: asyncio.Queue[tuple[str, Sequence[ModelChunk] | None, Any, Exception | None]] = (
+            asyncio.Queue()
+        )
 
         async def _worker(r_name: str, r_prov: ModelProvider, delay: float) -> None:
             try:
@@ -382,12 +387,12 @@ class RaceRouterProvider(BaseRouterProvider):
                 if isinstance(r_prov, StreamingModelProvider):
                     it = r_prov.stream(request).__aiter__()
                     first = await it.__anext__()
-                    await queue.put((r_name, first, it, None))
+                    await queue.put((r_name, [first], it, None))
                 else:
                     r_resp = await r_prov.generate(request)
-                    await queue.put((r_name, ModelChunk(text=r_resp.content or ""), None, None))
+                    await queue.put((r_name, response_to_chunks(r_resp), None, None))
             except StopAsyncIteration:
-                await queue.put((r_name, ModelChunk(text=""), None, None))
+                await queue.put((r_name, [], None, None))
             except asyncio.CancelledError:
                 raise
             except Exception as worker_exc:
@@ -403,14 +408,14 @@ class RaceRouterProvider(BaseRouterProvider):
 
         winner_name: str | None = None
         winner_iter: Any = None
-        first_chunk: ModelChunk | None = None
+        first_chunks: Sequence[ModelChunk] = []
         errors: list[str] = []
         t0 = time.monotonic()
 
         try:
             completed_workers = 0
             while completed_workers < len(candidates):
-                res_name, res_chunk, res_iter, res_err = await queue.get()
+                res_name, res_chunks, res_iter, res_err = await queue.get()
                 completed_workers += 1
                 if res_err is not None:
                     self._record_failure(res_name, res_err)
@@ -418,7 +423,7 @@ class RaceRouterProvider(BaseRouterProvider):
                     _LOG.warning("streaming race candidate %r failed: %s", res_name, res_err)
                 else:
                     winner_name = res_name
-                    first_chunk = res_chunk
+                    first_chunks = list(res_chunks or [])
                     winner_iter = res_iter
                     self._record_success(res_name, t0)
                     _LOG.info("streaming race won by provider %r", res_name)
@@ -431,8 +436,10 @@ class RaceRouterProvider(BaseRouterProvider):
                 if not t.done():
                     t.cancel()
 
-            if first_chunk and first_chunk.text:
-                yield first_chunk
+            # Forward every pre-fetched chunk (metadata-only first chunks
+            # must not be dropped, or usage/tool-call fidelity is lost).
+            for chunk in first_chunks:
+                yield chunk
 
             if winner_iter is not None:
                 try:

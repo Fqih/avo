@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from avo import ModelRequest, ModelResponse, TokenUsage, ToolCall
 from avo.exceptions import ProviderError
-from avo.providers.streaming import ModelChunk
+from avo.providers.streaming import ModelChunk, response_to_chunks
 
 from .http_common import (
     _AsyncHTTPClient,
@@ -134,7 +134,8 @@ class AnthropicProvider:
             )
         if not hasattr(self._client, "stream"):
             response = await self.generate(request)
-            yield ModelChunk(text=response.content or "")
+            for chunk in response_to_chunks(response):
+                yield chunk
             return
         payload = self._build_payload(request)
         payload["stream"] = True
