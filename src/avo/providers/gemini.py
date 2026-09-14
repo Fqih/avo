@@ -260,13 +260,23 @@ class GeminiProvider:
                 raise ValueError("parts must be a list")
 
             usage = _parse_gemini_usage(payload.get("usageMetadata"))
+            # Adopt the provider's response id when present; the model's
+            # default_factory only fires when it is absent.
+            id_kwargs: dict[str, str] = {}
+            raw_id = payload.get("responseId")
+            if isinstance(raw_id, str) and raw_id:
+                id_kwargs["response_id"] = raw_id
 
             for part in parts:
                 if not isinstance(part, dict):
                     raise ValueError("content parts must be objects")
                 call = part.get("functionCall")
                 if isinstance(call, dict):
-                    return ModelResponse(tool_call=_parse_gemini_function_call(call), usage=usage)
+                    return ModelResponse(
+                        tool_call=_parse_gemini_function_call(call),
+                        usage=usage,
+                        **id_kwargs,
+                    )
 
             text_parts: list[str] = []
             for part in parts:
@@ -279,7 +289,7 @@ class GeminiProvider:
             content = "".join(text_parts)
             if not content:
                 raise ValueError("response contained no text or functionCall parts")
-            return ModelResponse(content=content, usage=usage)
+            return ModelResponse(content=content, usage=usage, **id_kwargs)
         except ProviderError:
             raise
         except (KeyError, TypeError, ValueError) as exc:

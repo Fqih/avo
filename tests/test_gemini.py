@@ -333,6 +333,53 @@ async def test_gemini_parses_text_and_usage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_adopts_provider_response_id() -> None:
+    client = FakeClient(
+        json_payload={
+            "responseId": "resp-7",
+            "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
+        }
+    )
+    provider = GeminiProvider(_config(model="gemini-2.5-pro"), client=client)
+
+    response = await provider.generate(_request())
+
+    assert response.response_id == "resp-7"
+
+
+@pytest.mark.asyncio
+async def test_gemini_adopts_response_id_on_function_call() -> None:
+    client = FakeClient(
+        json_payload={
+            "responseId": "resp-8",
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"functionCall": {"name": "echo", "args": {"text": "ping"}}}]
+                    }
+                }
+            ],
+        }
+    )
+    provider = GeminiProvider(_config(model="gemini-2.5-pro"), client=client)
+
+    response = await provider.generate(_request())
+
+    assert response.tool_call is not None
+    assert response.response_id == "resp-8"
+
+
+@pytest.mark.asyncio
+async def test_gemini_keeps_generated_response_id_without_payload_id() -> None:
+    client = FakeClient(json_payload={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+    provider = GeminiProvider(_config(model="gemini-2.5-pro"), client=client)
+
+    response = await provider.generate(_request())
+
+    assert response.response_id
+
+
+@pytest.mark.asyncio
 async def test_gemini_parses_function_call() -> None:
     client = FakeClient(
         json_payload={
@@ -590,6 +637,7 @@ async def test_gemini_stream_falls_back_to_generate_without_stream_support() -> 
 @pytest.mark.asyncio
 async def test_gemini_collect_stream_matches_generate() -> None:
     payload: dict[str, Any] = {
+        "responseId": "resp-42",
         "candidates": [{"content": {"parts": [{"text": "same"}]}}],
         "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 3},
     }
@@ -604,6 +652,9 @@ async def test_gemini_collect_stream_matches_generate() -> None:
     )
     assert streamed.content == generated.content == "same"
     assert streamed.usage == generated.usage
+    # Both paths must adopt the provider id, not mint divergent local UUIDs.
+    assert generated.response_id == "resp-42"
+    assert streamed.response_id == generated.response_id
 
 
 # ---------------------------------------------------------------------------
