@@ -181,6 +181,7 @@ def test_provider_models_catalog_has_all_providers() -> None:
         "groq",
         "cerebras",
         "openrouter",
+        "gemini",
         "router",
     }
     for catalog in PROVIDER_MODELS.values():

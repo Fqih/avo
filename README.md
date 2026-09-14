@@ -115,7 +115,7 @@ All knobs live in `AVO_*` env vars. The chat REPL's first-run wizard can persist
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `AVO_PROVIDER` | yes | `ollama` \| `minimax` \| `anthropic` \| `openai` \| `groq` \| `cerebras` |
+| `AVO_PROVIDER` | yes | `ollama` \| `minimax` \| `anthropic` \| `openai` \| `groq` \| `cerebras` \| `openrouter` \| `gemini` |
 | `AVO_MODEL` | yes | Default model name for the active provider |
 | `AVO_OLLAMA_BASE_URL` | no | Ollama endpoint (default `http://localhost:11434`) |
 | `AVO_OLLAMA_MODEL` | no | Ollama-specific model override |
@@ -136,6 +136,12 @@ All knobs live in `AVO_*` env vars. The chat REPL's first-run wizard can persist
 | `AVO_CEREBRAS_API_KEY` | yes for cerebras | Cerebras API key |
 | `AVO_CEREBRAS_BASE_URL` | no | Default `https://api.cerebras.ai/v1` |
 | `AVO_CEREBRAS_MODEL` | no | Provider-specific override |
+| `AVO_OPENROUTER_API_KEY` | yes for openrouter | OpenRouter API key |
+| `AVO_OPENROUTER_BASE_URL` | no | Default `https://openrouter.ai/api/v1` |
+| `AVO_OPENROUTER_MODEL` | no | Provider-specific override |
+| `AVO_GEMINI_API_KEY` | yes for gemini | Gemini API key |
+| `AVO_GEMINI_BASE_URL` | no | Default `https://generativelanguage.googleapis.com` |
+| `AVO_GEMINI_MODEL` | no | Provider-specific override |
 
 ### Runtime + policy
 
@@ -166,8 +172,10 @@ See [`.env.example`](.env.example) for a copy-paste template.
 | OpenAI | `OpenAICompatibleProvider` | Any `/v1/chat/completions` endpoint — OpenAI, vLLM, llama.cpp. |
 | Groq | `GroqProvider` | OpenAI-compatible Llama / Mixtral inference, low latency. |
 | Cerebras | `CerebrasProvider` | OpenAI-compatible inference on Cerebras wafer-scale hardware. |
+| OpenRouter | `OpenRouterProvider` | OpenAI-compatible gateway to 300+ models, free tier included. |
+| Google Gemini | `GeminiProvider` | Native Gemini `generateContent` REST API with function calling. |
 
-All six implement the same `ModelProvider` Protocol. Swapping providers is one line.
+All eight implement the same `ModelProvider` Protocol. Swapping providers is one line.
 
 ---
 

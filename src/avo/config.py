@@ -18,7 +18,15 @@ from collections.abc import Mapping
 from typing import Any, Literal, cast
 
 ProviderName = Literal[
-    "ollama", "minimax", "anthropic", "openai", "groq", "cerebras", "openrouter", "router"
+    "ollama",
+    "minimax",
+    "anthropic",
+    "openai",
+    "groq",
+    "cerebras",
+    "openrouter",
+    "gemini",
+    "router",
 ]
 _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "ollama",
@@ -28,6 +36,7 @@ _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "groq",
     "cerebras",
     "openrouter",
+    "gemini",
     "router",
 )
 
@@ -97,6 +106,12 @@ PROVIDER_MODELS: dict[ProviderName, tuple[str, ...]] = {
         "anthropic/claude-3.5-sonnet",
         "openai/gpt-4o",
         "openai/gpt-4o-mini",
+    ),
+    "gemini": (
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
     ),
     "router": (
         "auto",
@@ -246,6 +261,16 @@ def build_provider_from_env(
             request_timeout_seconds=request_timeout_seconds,
         )
 
+    if name == "gemini":
+        from avo.providers.gemini import GeminiConfig, GeminiProvider
+
+        gemini_config = GeminiConfig.from_avo_env(env, fallback_model=model)
+        return GeminiProvider(
+            gemini_config,
+            max_completion_tokens=max_completion_tokens,
+            request_timeout_seconds=request_timeout_seconds,
+        )
+
     # name == "openai"
     from avo.providers.openai_compatible import (
         OpenAICompatibleConfig,
@@ -288,6 +313,8 @@ def _build_router_from_env(
             requested.append("anthropic")
         if env.get("AVO_OPENAI_API_KEY", "").strip():
             requested.append("openai")
+        if env.get("AVO_GEMINI_API_KEY", "").strip():
+            requested.append("gemini")
         if len(requested) == 1:
             requested.append("openrouter")
 

@@ -27,6 +27,7 @@ _PROVIDER_LABELS = {
     "groq": "Groq",
     "cerebras": "Cerebras",
     "openrouter": "OpenRouter",
+    "gemini": "Google Gemini",
     "router": "Multi-Provider Router",
 }
 
@@ -38,6 +39,7 @@ _REQUIRED_BY_PROVIDER: dict[str, tuple[str, ...]] = {
     "groq": ("AVO_PROVIDER", "AVO_MODEL", "AVO_GROQ_API_KEY"),
     "cerebras": ("AVO_PROVIDER", "AVO_MODEL", "AVO_CEREBRAS_API_KEY"),
     "openrouter": ("AVO_PROVIDER", "AVO_MODEL", "AVO_OPENROUTER_API_KEY"),
+    "gemini": ("AVO_PROVIDER", "AVO_MODEL", "AVO_GEMINI_API_KEY"),
     "router": ("AVO_PROVIDER",),
 }
 
@@ -139,6 +141,15 @@ def _endpoint_for(env: Mapping[str, str], provider: str) -> tuple[str | None, st
         except (ValueError, KeyError):
             return None, None
         return openrouter_cfg.endpoint, None
+
+    if provider == "gemini":
+        from avo.providers.gemini import GeminiConfig
+
+        try:
+            gemini_cfg: Any = GeminiConfig.from_avo_env(env, fallback_model=fallback_model)
+        except (ValueError, KeyError):
+            return None, None
+        return gemini_cfg.endpoint, None
 
     if provider == "router":
         chain = (
