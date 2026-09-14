@@ -306,6 +306,48 @@ async def test_anthropic_parses_text_and_usage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_anthropic_adopts_provider_response_id() -> None:
+    client = FakeClient(
+        json_payload={
+            "id": "msg_9f2c",
+            "content": [{"type": "text", "text": "done"}],
+        }
+    )
+    config = AnthropicConfig(model="claude-sonnet-4-6")
+    config._api_key = "ant-key"
+    provider = AnthropicProvider(config, client=client)
+
+    response = await provider.generate(_request())
+
+    assert response.response_id == "msg_9f2c"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_adopts_response_id_on_tool_use_block() -> None:
+    client = FakeClient(
+        json_payload={
+            "id": "msg_tool",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "ant-call",
+                    "name": "echo",
+                    "input": {"text": "ping"},
+                }
+            ],
+        }
+    )
+    config = AnthropicConfig(model="claude-sonnet-4-6")
+    config._api_key = "ant-key"
+    provider = AnthropicProvider(config, client=client)
+
+    response = await provider.generate(_request())
+
+    assert response.tool_call is not None
+    assert response.response_id == "msg_tool"
+
+
+@pytest.mark.asyncio
 async def test_anthropic_missing_usage_leaves_none() -> None:
     client = FakeClient(json_payload={"content": [{"type": "text", "text": "no usage"}]})
     config = AnthropicConfig(model="claude-sonnet-4-6")
@@ -377,6 +419,65 @@ async def test_openai_compatible_parses_text_response() -> None:
     assert response.usage == TokenUsage(input_tokens=2, output_tokens=3)
     sent_headers = client.calls[0]["headers"]
     assert sent_headers["Authorization"] == "Bearer sk-test"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_adopts_provider_response_id() -> None:
+    client = FakeClient(
+        json_payload={
+            "id": "chatcmpl-42",
+            "choices": [{"message": {"content": "hello"}}],
+        }
+    )
+    config = OpenAICompatibleConfig(model="gpt-4o-mini")
+    config._api_key = "sk-test"
+    provider = OpenAICompatibleProvider(config, client=client)
+
+    response = await provider.generate(_request())
+
+    assert response.response_id == "chatcmpl-42"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_adopts_response_id_on_tool_call() -> None:
+    client = FakeClient(
+        json_payload={
+            "id": "chatcmpl-tool",
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "function": {"name": "echo", "arguments": '{"text":"ping"}'},
+                            }
+                        ]
+                    }
+                }
+            ],
+        }
+    )
+    config = OpenAICompatibleConfig(model="gpt-4o-mini")
+    config._api_key = "sk-test"
+    provider = OpenAICompatibleProvider(config, client=client)
+
+    response = await provider.generate(_request())
+
+    assert response.tool_call is not None
+    assert response.tool_call.name == "echo"
+    assert response.response_id == "chatcmpl-tool"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_keeps_generated_response_id_without_payload_id() -> None:
+    client = FakeClient(json_payload={"choices": [{"message": {"content": "ok"}}]})
+    config = OpenAICompatibleConfig(model="gpt-4o-mini")
+    config._api_key = "sk-test"
+    provider = OpenAICompatibleProvider(config, client=client)
+
+    response = await provider.generate(_request())
+
+    assert response.response_id
 
 
 @pytest.mark.asyncio

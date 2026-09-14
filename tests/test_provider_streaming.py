@@ -523,6 +523,7 @@ async def test_openai_collect_stream_matches_generate_for_tool_call() -> None:
 
     generated = parse_openai_response(
         {
+            "id": "chatcmpl-7",
             "choices": [
                 {
                     "message": {
@@ -542,6 +543,7 @@ async def test_openai_collect_stream_matches_generate_for_tool_call() -> None:
     assert streamed.tool_call.model_dump() == generated.tool_call.model_dump()
     assert streamed.usage == generated.usage
     assert streamed.response_id == "chatcmpl-7"
+    assert generated.response_id == streamed.response_id
     await provider.aclose()
 
 
@@ -567,6 +569,7 @@ async def test_anthropic_collect_stream_matches_generate_for_text() -> None:
 
     generated = AnthropicProvider._parse_response(
         {
+            "id": "msg_1",
             "content": [{"type": "text", "text": "The answer"}],
             "usage": {"input_tokens": 40, "output_tokens": 128},
         }
@@ -574,6 +577,7 @@ async def test_anthropic_collect_stream_matches_generate_for_text() -> None:
     assert streamed.content == generated.content
     assert streamed.usage == generated.usage
     assert streamed.response_id == "msg_1"
+    assert generated.response_id == streamed.response_id
     await provider.aclose()
 
 
@@ -606,6 +610,7 @@ async def test_anthropic_collect_stream_matches_generate_for_tool_use() -> None:
 
     generated = AnthropicProvider._parse_response(
         {
+            "id": "msg_2",
             "content": [
                 {"type": "tool_use", "id": "toolu_1", "name": "search", "input": {"q": "hi"}}
             ],
@@ -615,4 +620,5 @@ async def test_anthropic_collect_stream_matches_generate_for_tool_use() -> None:
     assert streamed.tool_call is not None
     assert streamed.tool_call.model_dump() == generated.tool_call.model_dump()
     assert streamed.usage == generated.usage
+    assert generated.response_id == streamed.response_id
     await provider.aclose()

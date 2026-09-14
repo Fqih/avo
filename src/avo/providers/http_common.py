@@ -149,16 +149,22 @@ def parse_openai_response(payload: object) -> ModelResponse:
         choice = _require_dict(choices[0])
         message = _require_dict(choice["message"])
         usage = _parse_usage(response.get("usage"))
+        # Adopt the provider's response id when present; the model's
+        # default_factory only fires when it is absent.
+        id_kwargs: dict[str, str] = {}
+        raw_id = response.get("id")
+        if isinstance(raw_id, str) and raw_id:
+            id_kwargs["response_id"] = raw_id
 
         tool_calls = message.get("tool_calls")
         if tool_calls is not None:
             tool_call = _parse_tool_call(tool_calls)
-            return ModelResponse(tool_call=tool_call, usage=usage)
+            return ModelResponse(tool_call=tool_call, usage=usage, **id_kwargs)
 
         content = message.get("content")
         if not isinstance(content, str):
             raise ValueError("message content must be a string")
-        return ModelResponse(content=content, usage=usage)
+        return ModelResponse(content=content, usage=usage, **id_kwargs)
     except ProviderError:
         raise
     except (KeyError, TypeError, ValueError) as exc:

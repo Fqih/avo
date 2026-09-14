@@ -231,6 +231,12 @@ class AnthropicProvider:
                 raise ValueError("content must be a list of blocks")
 
             usage = AnthropicProvider._parse_usage(payload.get("usage"))
+            # Adopt the provider's message id when present; the model's
+            # default_factory only fires when it is absent.
+            id_kwargs: dict[str, str] = {}
+            raw_id = payload.get("id")
+            if isinstance(raw_id, str) and raw_id:
+                id_kwargs["response_id"] = raw_id
 
             text_parts: list[str] = []
             for block in blocks:
@@ -245,7 +251,7 @@ class AnthropicProvider:
                         name=block["name"],
                         arguments=arguments,
                     )
-                    return ModelResponse(tool_call=tool_call, usage=usage)
+                    return ModelResponse(tool_call=tool_call, usage=usage, **id_kwargs)
                 if block.get("type") == "text":
                     text = block["text"]
                     if not isinstance(text, str):
@@ -254,7 +260,7 @@ class AnthropicProvider:
 
             if not text_parts:
                 raise ValueError("response contained no text or tool_use blocks")
-            return ModelResponse(content="".join(text_parts), usage=usage)
+            return ModelResponse(content="".join(text_parts), usage=usage, **id_kwargs)
         except ProviderError:
             raise
         except (KeyError, TypeError, ValueError) as exc:
