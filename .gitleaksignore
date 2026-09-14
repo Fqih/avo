@@ -1,0 +1,6 @@
+# False positives: dummy/fixture secrets used in test assertions.
+# These are NOT real credentials — they test audit log redaction
+# and doctor config masking.
+9dd5607f491818d990527541b21255043701c021:tests/test_audit.py:stripe-access-token:73
+9dd5607f491818d990527541b21255043701c021:tests/test_audit.py:gitlab-pat:71
+79f538af0603a2c94bcc4d630beed68a3a612498:tests/test_doctor.py:generic-api-key:127
