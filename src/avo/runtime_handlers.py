@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 from pydantic import JsonValue, ValidationError
@@ -32,7 +33,8 @@ from avo.exceptions import (
     UnsafeResumeError,
 )
 from avo.hooks import HookAction, HookContext, HookEvent
-from avo.models import ModelRequest, ToolResult, utc_now
+from avo.models import ModelRequest, ModelResponse, ToolResult, utc_now
+from avo.providers.streaming import StreamAssembler, StreamingModelProvider
 from avo.state import RunState, StopReason
 from avo.tools import tool_call_fingerprint
 
@@ -86,15 +88,26 @@ async def handle_model_pending(runtime: AgentRuntime, context: _RunContext) -> N
             )
             return
 
+    provider = runtime.provider
+    callback = runtime.stream_callback
     try:
-        provider_call = runtime.provider.generate(request)
-        if context.policy.provider_timeout_seconds is None:
-            generated = await provider_call
-        else:
-            generated = await asyncio.wait_for(
-                provider_call,
-                timeout=context.policy.provider_timeout_seconds,
+        if callback is not None and isinstance(provider, StreamingModelProvider):
+            generated = await _stream_with_callback(
+                runtime,
+                context,
+                request,
+                provider,
+                callback,
             )
+        else:
+            provider_call = runtime.provider.generate(request)
+            if context.policy.provider_timeout_seconds is None:
+                generated = await provider_call
+            else:
+                generated = await asyncio.wait_for(
+                    provider_call,
+                    timeout=context.policy.provider_timeout_seconds,
+                )
         from avo.models import ModelResponse
 
         response = ModelResponse.model_validate(generated)
@@ -174,6 +187,45 @@ async def handle_model_pending(runtime: AgentRuntime, context: _RunContext) -> N
     )
     if token_reason is not None:
         await runtime._trigger_policy(context, token_reason)
+
+
+async def _stream_with_callback(
+    runtime: AgentRuntime,
+    context: _RunContext,
+    request: ModelRequest,
+    provider: StreamingModelProvider,
+    callback: Callable[[str], None],
+) -> ModelResponse:
+    """Consume ``provider.stream`` while forwarding text deltas to ``callback``.
+
+    The assembled response is byte-identical to ``generate`` for the same
+    provider output (task 3a protocol). Mirrors the generate path's
+    timeout and breaker contract: exceptions re-raise unchanged so the
+    caller's except blocks classify them. If the stream dies after deltas
+    were already displayed, ``stream_interrupt_callback`` fires once
+    before the re-raise so the display can flag the upcoming retry.
+    """
+    forwarded_text = False
+
+    async def _consume() -> ModelResponse:
+        nonlocal forwarded_text
+        assembler = StreamAssembler()
+        async for chunk in provider.stream(request):
+            if chunk.text:
+                forwarded_text = True
+                callback(chunk.text)
+            assembler.feed(chunk)
+        return assembler.build()
+
+    timeout = context.policy.provider_timeout_seconds
+    try:
+        if timeout is None:
+            return await _consume()
+        return await asyncio.wait_for(_consume(), timeout=timeout)
+    except Exception:
+        if forwarded_text and runtime.stream_interrupt_callback is not None:
+            runtime.stream_interrupt_callback()
+        raise
 
 
 async def handle_provider_error(

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, TextIO
 
 from avo.app_tools.file_tools import bind_workspace
 from avo.chat_session import render_session_row
+from avo.chat_stream import LiveAnswerPrinter
 from avo.config import (
     ConfigError,
     available_models,
@@ -179,16 +180,27 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
         )
         ctx.pending_preamble = None
 
-    with bind_workspace(ctx.workspace):
-        try:
+    printer: LiveAnswerPrinter | None = None
+    if ctx.stream_enabled:
+        printer = LiveAnswerPrinter(out)
+        ctx.runtime.stream_callback = printer.feed
+        ctx.runtime.stream_interrupt_callback = printer.on_interrupt
+    try:
+        with bind_workspace(ctx.workspace):
             result = await ctx.runtime.run(effective_task)
-        except AvoError as exc:
-            err.write(f"runtime error: {exc}\n")
-            return
-        except Exception as exc:
-            err.write(f"unexpected error: {type(exc).__name__}: {exc}\n")
-            return
+    except AvoError as exc:
+        err.write(f"runtime error: {exc}\n")
+        return
+    except Exception as exc:
+        err.write(f"unexpected error: {type(exc).__name__}: {exc}\n")
+        return
+    finally:
+        if printer is not None:
+            ctx.runtime.stream_callback = None
+            ctx.runtime.stream_interrupt_callback = None
+            printer.finish()
 
+    streamed_answer = printer is not None and printer.answered
     assistant_content = result.output or ""
     thought, clean_answer = split_thinking(assistant_content)
 
@@ -211,10 +223,11 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
         for thought_line in thought.splitlines():
             out.write(f"  │ {thought_line}\n")
         out.write("\n")
-    if clean_answer:
-        out.write(f"Avo> {clean_answer}\n")
-    elif result.output:
-        out.write(f"Avo> {result.output}\n")
+    if not streamed_answer:
+        if clean_answer:
+            out.write(f"Avo> {clean_answer}\n")
+        elif result.output:
+            out.write(f"Avo> {result.output}\n")
 
     from avo.context_advisor import evaluate_session_context
 

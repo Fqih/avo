@@ -94,6 +94,8 @@ class AgentRuntime:
         approval_callback: ApprovalCallback | None = None,
         memory: LetheMemoryAdapter | None = None,
         hooks: HookRegistry | None = None,
+        stream_callback: Callable[[str], None] | None = None,
+        stream_interrupt_callback: Callable[[], None] | None = None,
     ) -> None:
         self.provider = provider
         self.tools = ToolRegistry(tools)
@@ -101,6 +103,12 @@ class AgentRuntime:
         self.event_store = event_store or InMemoryEventStore()
         self._clock = clock
         self._approval_callback = approval_callback or _always_approve
+        # Purely observational display plumbing (see handle_model_pending);
+        # public so callers can swap it per turn like ``provider``.
+        # ``stream_interrupt_callback`` fires when a stream that already
+        # forwarded text deltas dies mid-tokens, before the retry's deltas.
+        self.stream_callback = stream_callback
+        self.stream_interrupt_callback = stream_interrupt_callback
         self.memory = memory
         self.hooks = hooks if hooks is not None else HookRegistry()
         self._breaker: CircuitBreaker | None = (

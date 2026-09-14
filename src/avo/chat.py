@@ -77,6 +77,7 @@ from avo.chat_shell_rc import (  # re-export
     _quote_for_shell,
     persist_env_to_shell_rc,
 )
+from avo.chat_stream import chat_stream_enabled
 from avo.chat_turn import (  # re-export
     _maybe_offer_resume_prompt,
     _prompt_with_jobs,
@@ -134,6 +135,7 @@ class ChatContext:
     permission_policy: PermissionPolicy = field(default_factory=PermissionPolicy)
     persona: PersonaManager = field(default_factory=PersonaManager)
     history: ReplHistoryManager | None = None
+    stream_enabled: bool = False
 
 
 def build_chat_context(
@@ -212,6 +214,7 @@ def build_chat_context(
             permission_policy=resolved_policy,
             persona=persona_mgr,
             history=history_mgr,
+            stream_enabled=chat_stream_enabled(environ),
         )
     if not session.session_exists(session_id):
         session.close()
@@ -230,6 +233,7 @@ def build_chat_context(
         permission_policy=resolved_policy,
         persona=persona_mgr,
         history=history_mgr,
+        stream_enabled=chat_stream_enabled(environ),
     )
 
 
