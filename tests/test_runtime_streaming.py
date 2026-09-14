@@ -8,6 +8,7 @@ provider supports streaming, the model call is consumed through
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 from pydantic import JsonValue
@@ -190,3 +191,124 @@ async def test_truncated_tool_call_stream_fails_run_without_crashing() -> None:
     assert result.status.value == "failed"
     assert result.error is not None
     assert "tool call" in result.error.lower()
+
+
+class _RetryGateStreamProvider:
+    """First stream blocks on a gate then dies pre-text (retryable); second streams."""
+
+    def __init__(self, response: ModelResponse) -> None:
+        self._response = response
+        self.attempts = 0
+        self.entered = asyncio.Event()
+        self.gate = asyncio.Event()
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        del request
+        return self._response
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
+        del request
+        self.attempts += 1
+        if self.attempts == 1:
+            self.entered.set()
+            await self.gate.wait()
+            raise ProviderError("connection reset before any text", retryable=True)
+        for chunk in response_to_chunks(self._response):
+            yield chunk
+
+
+class _CountingStreamProvider(_FragmentingStreamProvider):
+    """Counts provider-side stream invocations (each starts from generate)."""
+
+    def __init__(self, responses: list[ModelResponse]) -> None:
+        super().__init__(responses)
+        self.stream_calls = 0
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
+        self.stream_calls += 1
+        async for chunk in super().stream(request):
+            yield chunk
+
+
+class _RecordingBreaker:
+    """Duck-typed breaker capturing allow/success/failure charges."""
+
+    def __init__(self) -> None:
+        self.successes = 0
+        self.failures = 0
+
+    def allow(self) -> None:
+        return None
+
+    def record_success(self) -> None:
+        self.successes += 1
+
+    def record_failure(self) -> None:
+        self.failures += 1
+
+
+async def test_callback_installed_mid_run_cannot_bind_to_in_flight_run() -> None:
+    """Per-run snapshot: a late install (next turn's printer) must not hijack the run."""
+
+    early: list[str] = []
+    late: list[str] = []
+    provider = _RetryGateStreamProvider(
+        ModelResponse(
+            content="the final answer",
+            usage=TokenUsage(input_tokens=2, output_tokens=4),
+            response_id="sr-snap",
+        )
+    )
+    runtime = AgentRuntime(
+        provider=provider,
+        event_store=InMemoryEventStore(),
+        stream_callback=early.append,
+    )
+
+    in_flight = asyncio.create_task(runtime.run("hi", run_id="run-snap"))
+    await provider.entered.wait()
+    # A background job holds the runtime; ``_run_turn`` installs its
+    # printer on the shared attributes while that run is mid-model-call.
+    runtime.stream_callback = late.append
+    provider.gate.set()
+    result = await in_flight
+
+    # The retried model call inside the in-flight run must still use the
+    # callback snapshotted when that run started.
+    assert result.status.value == "completed"
+    assert late == []
+    assert "".join(early) == "the final answer"
+
+    # A new run starting now captures the newly installed callback.
+    result2 = await runtime.run("hi again", run_id="run-snap2")
+    assert result2.status.value == "completed"
+    assert "".join(late) == "the final answer"
+
+
+async def test_display_callback_error_is_not_charged_to_the_provider() -> None:
+    """An OSError from the printer (dying pipe) must not retry or hit the breaker."""
+
+    def boom(delta: str) -> None:
+        del delta
+        raise OSError("[Errno 32] Broken pipe")
+
+    provider = _CountingStreamProvider(_scripted())
+    store = InMemoryEventStore()
+    runtime = AgentRuntime(
+        provider=provider,
+        event_store=store,
+        stream_callback=boom,
+    )
+    breaker = _RecordingBreaker()
+    runtime._breaker = breaker  # type: ignore[assignment]
+
+    result = await runtime.run("hi", run_id="run-cb")
+
+    assert result.status.value == "completed"
+    assert result.output == "hello there you"
+    # Single model call, no retry, breaker sees a healthy provider.
+    assert provider.stream_calls == 1
+    assert breaker.failures == 0
+    assert breaker.successes == 1
+    events = await store.get_events("run-cb")
+    assert not [e for e in events if e.event_type.value == "model_failed"]

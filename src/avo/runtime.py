@@ -73,6 +73,11 @@ class _RunContext:
     completed_tool_call_ids: set[str]
     user_state: dict[str, JsonValue]
     pending_response: ModelResponse | None = None
+    # Snapshotted from the runtime at run entry (under the execution
+    # lock) so installing a printer for a later turn cannot bind to an
+    # in-flight run sharing this runtime.
+    stream_callback: Callable[[str], None] | None = None
+    stream_interrupt_callback: Callable[[], None] | None = None
 
 
 class AgentRuntime:
@@ -104,7 +109,9 @@ class AgentRuntime:
         self._clock = clock
         self._approval_callback = approval_callback or _always_approve
         # Purely observational display plumbing (see handle_model_pending);
-        # public so callers can swap it per turn like ``provider``.
+        # public so callers can swap them per turn like ``provider``.
+        # Each run/resume snapshots both at entry, so a swap only binds
+        # from the next run — never to an in-flight one.
         # ``stream_interrupt_callback`` fires when a stream that already
         # forwarded text deltas dies mid-tokens, before the retry's deltas.
         self.stream_callback = stream_callback
@@ -163,6 +170,8 @@ class AgentRuntime:
                 detector=ProgressDetector(),
                 completed_tool_call_ids=set(),
                 user_state=dict(user_state or {}),
+                stream_callback=self.stream_callback,
+                stream_interrupt_callback=self.stream_interrupt_callback,
             )
             created = AgentEvent(
                 run_id=record.run_id,
@@ -237,6 +246,8 @@ class AgentRuntime:
                 completed_tool_call_ids=set(checkpoint_obj.completed_tool_call_ids),
                 user_state=dict(checkpoint_obj.user_state),
                 pending_response=checkpoint_obj.pending_response,
+                stream_callback=self.stream_callback,
+                stream_interrupt_callback=self.stream_interrupt_callback,
             )
             runtime_persistence.restore_provider(self, checkpoint_obj.provider_metadata)
             await runtime_persistence.reconcile_after_checkpoint(self, context, checkpoint_obj)

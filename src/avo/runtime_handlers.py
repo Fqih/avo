@@ -17,6 +17,7 @@ defined on ``AgentRuntime``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import time
 from collections.abc import Callable
@@ -89,11 +90,12 @@ async def handle_model_pending(runtime: AgentRuntime, context: _RunContext) -> N
             return
 
     provider = runtime.provider
-    callback = runtime.stream_callback
+    # Per-run snapshot taken at run entry: a callback installed by a
+    # later turn cannot hijack this run's model calls.
+    callback = context.stream_callback
     try:
         if callback is not None and isinstance(provider, StreamingModelProvider):
             generated = await _stream_with_callback(
-                runtime,
                 context,
                 request,
                 provider,
@@ -190,7 +192,6 @@ async def handle_model_pending(runtime: AgentRuntime, context: _RunContext) -> N
 
 
 async def _stream_with_callback(
-    runtime: AgentRuntime,
     context: _RunContext,
     request: ModelRequest,
     provider: StreamingModelProvider,
@@ -200,10 +201,13 @@ async def _stream_with_callback(
 
     The assembled response is byte-identical to ``generate`` for the same
     provider output (task 3a protocol). Mirrors the generate path's
-    timeout and breaker contract: exceptions re-raise unchanged so the
-    caller's except blocks classify them. If the stream dies after deltas
-    were already displayed, ``stream_interrupt_callback`` fires once
-    before the re-raise so the display can flag the upcoming retry.
+    timeout and breaker contract: provider exceptions re-raise unchanged
+    so the caller's except blocks classify them, but the callback is
+    purely observational — a display failure (e.g. OSError on a dying
+    pipe) is swallowed here and never charged to the provider. If the
+    stream dies after deltas were already displayed,
+    ``stream_interrupt_callback`` fires once before the re-raise so the
+    display can flag the upcoming retry.
     """
     forwarded_text = False
 
@@ -213,7 +217,8 @@ async def _stream_with_callback(
         async for chunk in provider.stream(request):
             if chunk.text:
                 forwarded_text = True
-                callback(chunk.text)
+                with contextlib.suppress(Exception):
+                    callback(chunk.text)
             assembler.feed(chunk)
         return assembler.build()
 
@@ -223,8 +228,9 @@ async def _stream_with_callback(
             return await _consume()
         return await asyncio.wait_for(_consume(), timeout=timeout)
     except Exception:
-        if forwarded_text and runtime.stream_interrupt_callback is not None:
-            runtime.stream_interrupt_callback()
+        if forwarded_text and context.stream_interrupt_callback is not None:
+            with contextlib.suppress(Exception):
+                context.stream_interrupt_callback()
         raise
 
 
