@@ -452,6 +452,32 @@
           </tbody>
         </table>
       </div>
+
+      <!-- Real-time Event Stream & Logging Inspector Card -->
+      <div class="glass rounded-xl p-5 border border-gray-800 space-y-4">
+        <div class="flex justify-between items-center">
+          <div class="flex items-center gap-3">
+            <h3 class="text-base font-semibold text-white">Live Event Stream &amp; Log Inspection</h3>
+            <span id="liveEventsStatusBadge" class="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono bg-gray-900 border border-gray-800 text-gray-400">
+              <span class="w-2 h-2 rounded-full bg-gray-500"></span> Offline
+            </span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="toggleStreamBtn" onclick="toggleLiveEventStream()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
+              <span>⚡ Start Live Stream</span>
+            </button>
+            <button onclick="clearLiveEventsLog()" class="px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs border border-gray-700 transition">
+              Clear
+            </button>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <input type="text" id="liveEventsFilterInput" oninput="filterLiveEvents()" placeholder="Filter events by type or keyword (e.g. TOOL, MODEL, error)..." class="flex-1 bg-gray-900 border border-gray-800 text-xs text-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500 font-mono text-[11px]">
+        </div>
+        <div id="liveEventsLogContainer" class="max-h-72 overflow-y-auto space-y-1 rounded-lg bg-gray-950/90 border border-gray-800/80 p-3 font-mono text-xs text-gray-300 leading-relaxed select-text">
+          <div class="text-gray-500 italic p-2">Live event streaming is offline. Click &ldquo;Start Live Stream&rdquo; to begin real-time SSE listening.</div>
+        </div>
+      </div>
     </div>
 
     <!-- SESSIONS TAB -->
@@ -576,14 +602,40 @@
   <!-- Run Detail Modal -->
   <div id="traceModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
     <div class="glass rounded-2xl max-w-4xl w-full max-h-[85vh] flex flex-col overflow-hidden border border-gray-700 shadow-2xl">
-      <div class="p-4 border-b border-gray-800 flex justify-between items-center">
+      <div class="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-950/40">
         <div>
-          <h3 id="modalTitle" class="text-base font-bold text-white">Run Trace</h3>
-          <p id="modalSub" class="text-xs text-gray-400">Detailed chronological event log</p>
+          <div class="flex items-center gap-2">
+            <h3 id="modalTitle" class="text-base font-bold text-white">Run Trace</h3>
+            <span id="modalRunStateBadge" class="hidden font-mono text-[10px] font-bold px-2 py-0.5 rounded border"></span>
+          </div>
+          <p id="modalSub" class="text-xs text-gray-400 mt-0.5">Detailed chronological event log &amp; execution timeline</p>
         </div>
-        <button onclick="closeModal()" class="px-3 py-1 text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg">✕</button>
+        <div class="flex items-center gap-2">
+          <div class="flex items-center bg-gray-900 rounded-lg p-0.5 border border-gray-800 text-xs">
+            <button id="modalTabBtnTimeline" onclick="switchModalTab('timeline')" class="px-2.5 py-1 rounded font-semibold text-white bg-indigo-600 transition text-[11px]">Timeline</button>
+            <button id="modalTabBtnRaw" onclick="switchModalTab('raw')" class="px-2.5 py-1 rounded font-semibold text-gray-400 hover:text-white transition text-[11px]">Raw</button>
+            <button id="modalTabBtnJson" onclick="switchModalTab('json')" class="px-2.5 py-1 rounded font-semibold text-gray-400 hover:text-white transition text-[11px]">JSON</button>
+          </div>
+          <button onclick="closeModal()" class="px-3 py-1 text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg">✕</button>
+        </div>
       </div>
-      <div id="modalBody" class="p-6 overflow-y-auto space-y-4 text-xs font-mono">
+      <!-- Stats KPI Bar -->
+      <div id="modalStatsBar" class="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 border-b border-gray-800 bg-gray-950/30 text-xs font-mono">
+        <div class="bg-gray-900/60 p-2 rounded-lg border border-gray-800">
+          <span class="text-gray-400 text-[10px]">STEPS:</span> <strong id="modalKpiSteps" class="text-white">-</strong>
+        </div>
+        <div class="bg-gray-900/60 p-2 rounded-lg border border-gray-800">
+          <span class="text-gray-400 text-[10px]">DURATION:</span> <strong id="modalKpiDuration" class="text-emerald-400">-</strong>
+        </div>
+        <div class="bg-gray-900/60 p-2 rounded-lg border border-gray-800">
+          <span class="text-gray-400 text-[10px]">STOP REASON:</span> <strong id="modalKpiReason" class="text-indigo-300">-</strong>
+        </div>
+        <div class="bg-gray-900/60 p-2 rounded-lg border border-gray-800">
+          <span class="text-gray-400 text-[10px]">TOKENS:</span> <strong id="modalKpiTokens" class="text-purple-300">-</strong>
+        </div>
+      </div>
+      <!-- Modal Content Body -->
+      <div id="modalBody" class="p-5 overflow-y-auto space-y-3 text-xs">
         Loading trace...
       </div>
     </div>

@@ -27,6 +27,7 @@ from avo.auth import load_all_tokens
 from avo.chat_session import SessionLifecycle
 from avo.cost import aggregate_costs, report_to_dict
 from avo.doctor import run_doctor
+from avo.events import AgentEvent
 from avo.persona import PersonaManager
 from avo.storage.sqlite import SQLiteEventStore
 from avo.tracing import TraceInspector
@@ -247,6 +248,40 @@ class AvoWebHandler(BaseHTTPRequestHandler):
         if path == "/api/runs":
             runs = self.server.get_sync_runs()
             self._send_json({"runs": runs})
+            return
+
+        if path == "/api/events":
+            event_params = urllib.parse.parse_qs(parsed.query)
+            run_filter = event_params.get("run_id", [None])[0]
+            limit_str = event_params.get("limit", ["50"])[0]
+            limit = int(limit_str) if limit_str.isdigit() else 50
+            limit = max(1, min(limit, 200))
+            is_stream = "stream" in event_params or "text/event-stream" in self.headers.get(
+                "Accept", ""
+            )
+
+            if is_stream:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "close")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.close_connection = True
+
+                events = self.server.get_sync_recent_events(limit=limit, run_id=run_filter)
+                events.reverse()
+                for ev in events:
+                    msg = f"data: {json.dumps(ev)}\n\n"
+                    self.wfile.write(msg.encode("utf-8"))
+                self.wfile.write(
+                    f"data: {json.dumps({'done': True, 'count': len(events)})}\n\n".encode()
+                )
+                self.wfile.flush()
+                return
+
+            events = self.server.get_sync_recent_events(limit=limit, run_id=run_filter)
+            self._send_json({"events": events, "count": len(events)})
             return
 
         if path.startswith("/api/runs/"):
@@ -1056,6 +1091,21 @@ class AvoWebServer(ThreadingHTTPServer):
                     "duration_seconds": trace.duration_seconds,
                     "tokens": trace.token_usage.model_dump(),
                     "text": trace.to_text(),
+                    "entries": [
+                        {
+                            "sequence": e.sequence,
+                            "created_at": e.created_at.isoformat(),
+                            "event_type": e.event_type.value,
+                            "summary": e.summary,
+                            "from_state": e.from_state.value if e.from_state else None,
+                            "to_state": e.to_state.value if e.to_state else None,
+                            "duration_ms": e.duration_ms,
+                            "error": e.error,
+                            "policy": e.policy,
+                            "payload": e.payload,
+                        }
+                        for e in trace.entries
+                    ],
                 }
             except Exception:
                 return None
@@ -1066,6 +1116,58 @@ class AvoWebServer(ThreadingHTTPServer):
             return asyncio.run(_fetch())
         except Exception:
             return None
+
+    def get_sync_recent_events(
+        self, limit: int = 50, run_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Query recent events across all runs or for a specific run."""
+        import sqlite3
+
+        if not self.database_path.exists():
+            return []
+
+        try:
+            conn = sqlite3.connect(f"file:{self.database_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            if run_id:
+                rows = cursor.execute(
+                    "SELECT event_json FROM events WHERE run_id = ? ORDER BY sequence DESC LIMIT ?",
+                    (run_id, limit),
+                ).fetchall()
+            else:
+                rows = cursor.execute(
+                    "SELECT event_json FROM events ORDER BY rowid DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            conn.close()
+
+            results: list[dict[str, Any]] = []
+            for row in rows:
+                raw_json = str(row["event_json"])
+                try:
+                    event = AgentEvent.model_validate_json(raw_json)
+                    entry = TraceInspector._entry(event)
+                    results.append(
+                        {
+                            "event_id": event.event_id,
+                            "run_id": event.run_id,
+                            "sequence": event.sequence,
+                            "created_at": event.created_at.isoformat(),
+                            "event_type": event.event_type.value,
+                            "summary": entry.summary,
+                            "duration_ms": entry.duration_ms,
+                            "error": entry.error,
+                            "policy": entry.policy,
+                            "payload": event.payload,
+                        }
+                    )
+                except Exception:
+                    continue
+            return results
+        except Exception as exc:
+            _LOG.warning("Could not read recent events: %s", exc)
+            return []
 
     def get_sync_sessions(self) -> list[dict[str, Any]]:
         """Query chat sessions synchronously."""
