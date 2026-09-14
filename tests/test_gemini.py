@@ -542,6 +542,7 @@ async def test_gemini_stream_tool_call_delta_is_normalized() -> None:
         stream_chunks=[
             _sse(
                 {
+                    "responseId": "resp-13",
                     "candidates": [
                         {
                             "content": {
@@ -556,7 +557,7 @@ async def test_gemini_stream_tool_call_delta_is_normalized() -> None:
                             },
                             "finishReason": "STOP",
                         }
-                    ]
+                    ],
                 }
             ),
         ]
@@ -568,6 +569,10 @@ async def test_gemini_stream_tool_call_delta_is_normalized() -> None:
     assert response.tool_call is not None
     assert response.tool_call.name == "echo"
     assert response.tool_call.arguments == {"text": "ping"}
+    # The functionCall frame carries no text/usage chunk besides the tool
+    # delta, so this is the only assertion that the parser threads the
+    # carried responseId onto tool-call chunks.
+    assert response.response_id == "resp-13"
 
 
 @pytest.mark.asyncio
