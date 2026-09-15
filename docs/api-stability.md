@@ -116,15 +116,19 @@ Stable since 0.1.0:
 ```python
 class ToolRegistry:
     def register(self, tool: FunctionTool) -> None: ...
-    def invoke(self, call: ToolCall, *, completed_tool_call_ids: set[str] = ...) -> ToolResult: ...
+    async def invoke(
+        self, call: ToolCall, *, completed_tool_call_ids: set[str]
+    ) -> ToolResult: ...
 ```
 
 ## State machine
 
 Stable since 0.1.0:
 
-- `RunState` enum: `INIT`, `RUNNING`, `WAITING_TOOL`, `WAITING_APPROVAL`,
-  `COMPACTING`, `COMPLETED`, `FAILED`, `CANCELLED`, `APPROVAL_PENDING`.
+- `RunState` enum (12 values): `CREATED`, `MODEL_PENDING`,
+  `DECISION_RECEIVED`, `TOOL_PENDING`, `APPROVAL_PENDING`,
+  `TOOL_EXECUTING`, `OBSERVATION_RECORDED`, `PAUSED`, `COMPLETED`,
+  `FAILED`, `STOPPED`, `CANCELLED`.
 - `StopReason` enum (13 values): see `avo.state.StopReason`.
 
 ## Event log

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/avo-reference.md` — the complete project API reference
+  `CLAUDE.md` had always cited but never existed: 23 sections, every
+  signature, enum member, env var, and container config read verbatim
+  from source. Section numbering is frozen; CLAUDE.md cites it by
+  number.
+- Docs site branding: `logo.svg`/`logo.webp` copied into
+  `docs/assets/`, wired as the Material `theme.logo` and `favicon`,
+  and a centered logo banner on the docs home page.
 - `avo-native` now publishes to PyPI: `native-release.yml` gained a
   `sdist` job and a `publish` job using the same Trusted Publishing
   setup as `release.yml` (environment `pypi`, OIDC `id-token`, no

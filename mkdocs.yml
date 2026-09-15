@@ -83,6 +83,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Reference:
+    - Project reference: avo-reference.md
     - API stability: api-stability.md
     - SemVer policy: semver.md
     - Parity vs CC/Codex: parity-vs-cc-codex.md
