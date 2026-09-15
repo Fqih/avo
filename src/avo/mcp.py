@@ -141,7 +141,10 @@ class MCPServer:
             "params": params,
         }
         await self._send(envelope)
-        return await asyncio.wait_for(future, timeout=30.0)
+        # 90s covers spawning the server on a cold CI runner: every
+        # stdio spawn re-imports the full avo package, and the first
+        # (initialize) request therefore waits on interpreter startup.
+        return await asyncio.wait_for(future, timeout=90.0)
 
     async def _notify(self, method: str, params: JsonDict) -> None:
         if self._proc is None or self._proc.stdin is None:
