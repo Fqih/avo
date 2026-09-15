@@ -30,7 +30,13 @@ def _run_repl_shell(
     *,
     timeout_seconds: float = 120.0,
 ) -> None:
-    """Execute a shell command in workspace and display streaming/captured output."""
+    """Execute a shell command in workspace and display streaming/captured output.
+
+    ``shell=True`` is deliberate: this is the interactive REPL escape
+    (``!COMMAND`` / ``/shell COMMAND``) where the command string comes
+    from the typing user themselves, scoped to their own workspace, and
+    is never model- or network-supplied.
+    """
     import subprocess
     import time
 
@@ -47,7 +53,7 @@ def _run_repl_shell(
     try:
         proc = subprocess.run(
             cmd,
-            shell=True,
+            shell=True,  # nosec B602 - user-typed REPL escape, not remote input
             cwd=str(workspace_root),
             capture_output=True,
             text=True,
