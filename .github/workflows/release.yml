@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install build tooling
-        run: python -m pip install -e ".[dev,providers,sandbox,otel]" && python -m pip install twine build
+        run: python -m pip install -e ".[dev,providers,sandbox,otel]" && python -m pip install build
       - name: Run quality gates
         run: |
           ruff check .
@@ -36,7 +36,8 @@ jobs:
           mypy src/avo
           pytest
           bandit -r src/avo -c pyproject.toml --severity-level medium
-          # Audit dependencies only — avo itself isn't on PyPI yet.
+          # Audit dependencies only — auditing avo from PyPI here
+          # would race with the version being published.
           # Reading from pyproject.toml guarantees a reproducible list.
           pip-audit --strict --requirement <(python -c "import tomllib; print('\n'.join(tomllib.loads(open('pyproject.toml').read())['project']['dependencies']))")
       - name: Build wheel and sdist (reproducible)
@@ -87,14 +88,6 @@ jobs:
           path: |
             dist/*.whl
             dist/*.tar.gz
-      - name: Publish to PyPI
-        if: env.PYPI_TOKEN != ''
-        env:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          twine upload dist/*.whl dist/*.tar.gz
       - name: Attach artifacts to GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -108,3 +101,25 @@ jobs:
         uses: actions/attest-build-provenance@v1
         with:
           subject-path: dist/avo-*.whl
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Dedicated publishing environment. The name must match the
+    # "Environment name" registered as the trusted publisher on
+    # pypi.org (owner Fqih, repo avo, workflow release.yml,
+    # environment pypi). No PYPI_TOKEN secret: the action
+    # authenticates with the job's GitHub OIDC id-token.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      # The "dist" artifact stores entries under a dist/ prefix, so
+      # extracting with no path lands the files in ./dist/ — which is
+      # the pypa action's default packages-dir.
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+      - name: Publish (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
