@@ -91,6 +91,10 @@ jobs:
       - name: Attach artifacts to GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          # On workflow_dispatch runs the git ref is the branch, not a
+          # tag — resolve the tag from the dispatch input so this step
+          # (and the provenance attestation below) still work.
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
             dist/*.whl
             dist/*.tar.gz
