@@ -1,3 +1,9 @@
+<div align="center">
+
+<img src="assets/logo.svg" width="200" alt="Avo logo">
+
+</div>
+
 # Avo
 
 **Provider-agnostic reliability runtime for bounded, observable, resumable, replayable AI agent loops.**
