@@ -183,11 +183,16 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
     printer: LiveAnswerPrinter | None = None
     if ctx.stream_enabled:
         printer = LiveAnswerPrinter(out)
-        ctx.runtime.stream_callback = printer.feed
-        ctx.runtime.stream_interrupt_callback = printer.on_interrupt
+    # Bound per call rather than on the runtime attributes: a background
+    # run() entering the shared runtime while this turn streams can no
+    # longer snapshot the chat printer (the reverse race).
     try:
         with bind_workspace(ctx.workspace):
-            result = await ctx.runtime.run(effective_task)
+            result = await ctx.runtime.run(
+                effective_task,
+                stream_callback=printer.feed if printer is not None else None,
+                stream_interrupt_callback=(printer.on_interrupt if printer is not None else None),
+            )
     except AvoError as exc:
         err.write(f"runtime error: {exc}\n")
         return
@@ -196,8 +201,6 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
         return
     finally:
         if printer is not None:
-            ctx.runtime.stream_callback = None
-            ctx.runtime.stream_interrupt_callback = None
             printer.finish()
 
     streamed_answer = printer is not None and printer.answered

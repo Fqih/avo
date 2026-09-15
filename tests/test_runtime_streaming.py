@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
+import pytest
 from pydantic import JsonValue
 
 from avo import ModelRequest, ModelResponse, TokenUsage
@@ -283,6 +284,78 @@ async def test_callback_installed_mid_run_cannot_bind_to_in_flight_run() -> None
     result2 = await runtime.run("hi again", run_id="run-snap2")
     assert result2.status.value == "completed"
     assert "".join(late) == "the final answer"
+
+
+async def test_per_call_stream_callback_bypasses_shared_attribute() -> None:
+    """A run carrying its own printer must neither use nor be hijacked by
+    the instance attributes — the reverse race is a background run()
+    entering while a chat turn's printer sits on the shared runtime."""
+
+    instance: list[str] = []
+    turn: list[str] = []
+    runtime = AgentRuntime(
+        provider=_FragmentingStreamProvider(_scripted()),
+        event_store=InMemoryEventStore(),
+        stream_callback=instance.append,
+    )
+    result = await runtime.run("hi", run_id="run-percall", stream_callback=turn.append)
+
+    assert result.status.value == "completed"
+    assert "".join(turn) == "hello there you"
+    assert instance == []
+
+
+async def test_run_without_per_call_callback_inherits_instance_callback() -> None:
+    instance: list[str] = []
+    runtime = AgentRuntime(
+        provider=_FragmentingStreamProvider(_scripted()),
+        event_store=InMemoryEventStore(),
+        stream_callback=instance.append,
+    )
+    await runtime.run("hi", run_id="run-inherit")
+    assert "".join(instance) == "hello there you"
+
+
+async def test_resume_accepts_per_call_stream_callback() -> None:
+    from avo import EventType, ToolCall
+    from tests.helpers import value_tool
+    from tests.test_resume import InjectedInterruption, InterruptOnEventRuntime
+
+    answer = ModelResponse(content="hello there you", usage=TokenUsage())
+    store = InMemoryEventStore()
+    first = InterruptOnEventRuntime(
+        provider=FakeProvider(
+            [
+                ModelResponse(
+                    tool_call=ToolCall(tool_call_id="pc-1", name="value", arguments={"value": 1}),
+                    usage=TokenUsage(),
+                ),
+                answer,
+            ]
+        ),
+        tools=[value_tool()],
+        event_store=store,
+        interrupt_event=EventType.TOOL_COMPLETED,
+    )
+    with pytest.raises(InjectedInterruption):
+        await first.run("side effect once", run_id="run-percall-resume")
+
+    instance: list[str] = []
+    turn: list[str] = []
+    # resume() restores the checkpointed script (both items) with the
+    # cursor at 1, so the resumed model call streams the scripted answer;
+    # the provider here only supplies the fragmenting stream transport.
+    resumed = AgentRuntime(
+        provider=_FragmentingStreamProvider([]),
+        tools=[value_tool()],
+        event_store=store,
+        stream_callback=instance.append,
+    )
+    result = await resumed.resume("run-percall-resume", stream_callback=turn.append)
+
+    assert result.status.value == "completed"
+    assert "".join(turn) == "hello there you"
+    assert instance == []
 
 
 async def test_display_callback_error_is_not_charged_to_the_provider() -> None:

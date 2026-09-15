@@ -73,9 +73,12 @@ class _RunContext:
     completed_tool_call_ids: set[str]
     user_state: dict[str, JsonValue]
     pending_response: ModelResponse | None = None
-    # Snapshotted from the runtime at run entry (under the execution
-    # lock) so installing a printer for a later turn cannot bind to an
-    # in-flight run sharing this runtime.
+    # The callbacks effective for this run: per-call arguments from
+    # run()/resume() when given, otherwise snapshotted from the runtime
+    # attributes at entry (under the execution lock). Per-call binding
+    # keeps a chat turn's printer out of reach of background runs on the
+    # shared runtime; the snapshot keeps a later install from hijacking
+    # an in-flight run.
     stream_callback: Callable[[str], None] | None = None
     stream_interrupt_callback: Callable[[], None] | None = None
 
@@ -135,8 +138,16 @@ class AgentRuntime:
         *,
         user_state: dict[str, JsonValue] | None = None,
         run_id: str | None = None,
+        stream_callback: Callable[[str], None] | None = None,
+        stream_interrupt_callback: Callable[[], None] | None = None,
     ) -> RunResult:
-        """Create and execute a run until it reaches one explicit terminal state."""
+        """Create and execute a run until it reaches one explicit terminal state.
+
+        ``stream_callback``/``stream_interrupt_callback`` passed here win
+        over the instance attributes for this run only, so a chat turn can
+        bind its printer without a concurrent background run — or a later
+        turn — ever inheriting it. ``None`` means "inherit the instance".
+        """
 
         async with self._execution_lock:
             now = self._now()
@@ -170,8 +181,14 @@ class AgentRuntime:
                 detector=ProgressDetector(),
                 completed_tool_call_ids=set(),
                 user_state=dict(user_state or {}),
-                stream_callback=self.stream_callback,
-                stream_interrupt_callback=self.stream_interrupt_callback,
+                stream_callback=(
+                    stream_callback if stream_callback is not None else self.stream_callback
+                ),
+                stream_interrupt_callback=(
+                    stream_interrupt_callback
+                    if stream_interrupt_callback is not None
+                    else self.stream_interrupt_callback
+                ),
             )
             created = AgentEvent(
                 run_id=record.run_id,
@@ -212,8 +229,18 @@ class AgentRuntime:
                     )
                 return self._result(context.run)
 
-    async def resume(self, run_id: str) -> RunResult:
-        """Resume a persisted non-terminal run from its latest safe checkpoint."""
+    async def resume(
+        self,
+        run_id: str,
+        *,
+        stream_callback: Callable[[str], None] | None = None,
+        stream_interrupt_callback: Callable[[], None] | None = None,
+    ) -> RunResult:
+        """Resume a persisted non-terminal run from its latest safe checkpoint.
+
+        Per-call stream callbacks override the instance attributes for this
+        resumed run exactly as in :meth:`run`.
+        """
 
         async with self._execution_lock:
             record = await self.event_store.get_run(run_id)
@@ -246,8 +273,14 @@ class AgentRuntime:
                 completed_tool_call_ids=set(checkpoint_obj.completed_tool_call_ids),
                 user_state=dict(checkpoint_obj.user_state),
                 pending_response=checkpoint_obj.pending_response,
-                stream_callback=self.stream_callback,
-                stream_interrupt_callback=self.stream_interrupt_callback,
+                stream_callback=(
+                    stream_callback if stream_callback is not None else self.stream_callback
+                ),
+                stream_interrupt_callback=(
+                    stream_interrupt_callback
+                    if stream_interrupt_callback is not None
+                    else self.stream_interrupt_callback
+                ),
             )
             runtime_persistence.restore_provider(self, checkpoint_obj.provider_metadata)
             await runtime_persistence.reconcile_after_checkpoint(self, context, checkpoint_obj)
