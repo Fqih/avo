@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `OpenSSF Scorecard` workflow failed on every run: its action
+  image moved from `gcr.io/openssf` (project shut down — pulls
+  return "requires billing") to `ghcr.io` in action v2.4.4. Bumped
+  `ossf/scorecard-action` v2.4.0 → v2.4.4.
 - The `Docs` workflow built the site and uploaded it as a run
   artifact but published it nowhere — the Pages site was a 404.
   Main pushes now ship `site/` through `upload-pages-artifact` +
