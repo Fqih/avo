@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-09-15
+
 ### Added
 
+- `avo.providers.gemini` — Google Gemini adapter over the native
+  `generateContent` / `streamGenerateContent` REST APIs with bearer
+  auth, tool calls, and `stream()` support. The non-streaming parser
+  adopts the per-chunk `responseId` so both paths agree.
+- Live token streaming in `avo chat` — assistant text prints as it
+  arrives, gated by `AVO_CHAT_STREAM` (off by default). The event
+  log stays byte-identical with or without streaming.
+- Lossless streaming protocol — `ModelChunk` carries `responseId`
+  and tool-call argument deltas so `collect_stream()` matches
+  `generate()` field-for-field.
+- `avo chat` and the web UI decomposed: `chat.py` and `web_ui.py`
+  are re-export shims over focused submodules; the public API
+  surface (`__all__`) is unchanged.
 - `avo.providers.groq` and `avo.providers.cerebras` — OpenAI-compatible
   HTTP adapters for Groq (`https://api.groq.com/openai/v1`) and
   Cerebras (`https://api.cerebras.ai/v1`) with bearer auth and an
@@ -20,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   working plugin directory: `pyproject.toml` declaring an `avo.tools`
   entry point, a `register()` stub returning a sample `FunctionTool`,
   `README.md`, and `.gitignore`.
-- `avo --version` — prints the package version (`avo 0.1.3`).
+- `avo --version` — prints the package version (`avo 0.1.4`).
 - `.github/workflows/ci.yml` CycloneDX SBOM job — generates the SBOM
   on every push + PR and uploads it as an artifact.
 - `avo.mcp_server` — MCP (Model Context Protocol) stdio server exposing
@@ -42,10 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ci.yml` extended with `bandit`, `pip-audit`, and SBOM steps.
 - `pyproject.toml` `[build]` target switched to `reproducible = true`
   to honor `SOURCE_DATE_EPOCH`.
-- `release.yml` publish step is now conditional on
-  `secrets.PYPI_TOKEN`; the wheel + sdist + SBOM attach to the GitHub
-  release regardless, so the release is verifiable even without a
-  PyPI token configured.
+- `release.yml` publishes to PyPI via Trusted Publishing: the
+  `publish` job downloads the build artifact and authenticates with
+  the job's GitHub OIDC `id-token` on the `pypi` environment
+  (`pypa/gh-action-pypi-publish`); no `PYPI_TOKEN` secret needed.
+  The wheel + sdist + SBOM still attach to the GitHub release.
 - `release.yml` quality gates include the `[dev,providers,sandbox,otel]`
   extras so mypy sees httpx / docker / opentelemetry stubs.
 - README updated with the 0.1.3 surface: `[otel]` extra, groq +

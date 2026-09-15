@@ -83,8 +83,10 @@ def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc:
         cli_main(["--version"])
     assert exc.value.code == 0
+    from avo import __version__
+
     out = capsys.readouterr().out.strip()
-    assert out == "avo 0.1.3"
+    assert out == f"avo {__version__}"
 
 
 def test_cli_login_status(capsys: pytest.CaptureFixture[str]) -> None:

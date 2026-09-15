@@ -35,7 +35,7 @@ from avo.tools import (
 )
 from avo.tracing import RunTrace, TraceEntry, TraceInspector
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 # Public API surface freeze — see ``docs/api-stability.md``. Any change
 # to the list below requires a SemVer bump per ``docs/semver.md``.
