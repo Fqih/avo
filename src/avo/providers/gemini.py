@@ -40,9 +40,9 @@ from avo.providers.streaming import ModelChunk, response_to_chunks
 
 from .http_common import (
     _AsyncHTTPClient,
-    iter_sse_lines,
     json_safe_content,
     redact_text,
+    stream_sse_chunks,
 )
 
 try:  # pragma: no cover - exercised indirectly by the optional dependency
@@ -159,23 +159,20 @@ class GeminiProvider:
             return
 
         client = self._client
-        stream_ctx = client.stream(
+
+        def parse_line(line: str) -> list[ModelChunk]:
+            return list(_parse_gemini_stream_event(_load_json(line)))
+
+        async for chunk in stream_sse_chunks(
+            client,
             self._config.stream_endpoint,
-            headers=self._config.headers(),
-            json=self._build_payload(request),
-            timeout=self._request_timeout_seconds,
-        )
-        async with stream_ctx as response:
-            status = int(response.status_code)
-            if status >= 400:
-                detail = redact_text(str(getattr(response, "text", "")))
-                raise ProviderError(
-                    f"Gemini stream failed with status {status}: {detail}",
-                    retryable=status == 429 or status >= 500,
-                )
-            async for line in iter_sse_lines(response.aiter_bytes()):
-                for chunk in _parse_gemini_stream_event(_load_json(line)):
-                    yield chunk
+            self._config.headers(),
+            self._build_payload(request),
+            self._request_timeout_seconds,
+            transport_name="Gemini",
+            parse_line=parse_line,
+        ):
+            yield chunk
 
     def _build_payload(self, request: ModelRequest) -> dict[str, Any]:
         system_parts: list[str] = []

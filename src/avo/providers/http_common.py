@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Iterable
 from typing import Any, Protocol, cast, runtime_checkable
 
 from pydantic import JsonValue
@@ -411,20 +411,22 @@ def _parse_anthropic_stream_usage(value: object) -> TokenUsage | None:
     )
 
 
-async def stream_openai_chunks(
+async def stream_sse_chunks(
     client: _AsyncHTTPClient,
     endpoint: str,
     headers: dict[str, str],
     payload: dict[str, object],
     timeout: float,  # noqa: ASYNC109 - mirrors the httpx client signature
     *,
-    transport_name: str = "OpenAI",
+    transport_name: str,
+    parse_line: Callable[[str], Iterable[ModelChunk]],
 ) -> AsyncIterator[ModelChunk]:
-    """Open a streaming POST and yield :class:`ModelChunk` events.
+    """Open a streaming POST and yield chunks parsed from each SSE line.
 
-    Used by every OpenAI-compatible provider (openai, groq, cerebras,
-    minimax-openai). Surfaces ``ProviderError`` for non-2xx responses so
-    callers can let the runtime decide whether to retry.
+    Shared control flow behind every SSE transport helper: open, gate on
+    ``status >= 400`` with a :class:`ProviderError` (429/5xx retryable) so
+    the runtime decides whether to retry, then feed each SSE ``data:``
+    payload through ``parse_line``, which returns zero or more chunks.
     """
 
     stream_ctx = client.stream(
@@ -442,9 +444,39 @@ async def stream_openai_chunks(
                 retryable=status == 429 or status >= 500,
             )
         async for line in iter_sse_lines(response.aiter_bytes()):
-            chunk = parse_openai_stream_payload(line)
-            if chunk is not None:
+            for chunk in parse_line(line):
                 yield chunk
+
+
+async def stream_openai_chunks(
+    client: _AsyncHTTPClient,
+    endpoint: str,
+    headers: dict[str, str],
+    payload: dict[str, object],
+    timeout: float,  # noqa: ASYNC109 - mirrors the httpx client signature
+    *,
+    transport_name: str = "OpenAI",
+) -> AsyncIterator[ModelChunk]:
+    """Open a streaming POST and yield :class:`ModelChunk` events.
+
+    Used by every OpenAI-compatible provider (openai, groq, cerebras,
+    minimax-openai). Thin specialization of :func:`stream_sse_chunks`.
+    """
+
+    def parse_line(line: str) -> Iterable[ModelChunk]:
+        chunk = parse_openai_stream_payload(line)
+        return [] if chunk is None else [chunk]
+
+    async for chunk in stream_sse_chunks(
+        client,
+        endpoint,
+        headers,
+        payload,
+        timeout,
+        transport_name=transport_name,
+        parse_line=parse_line,
+    ):
+        yield chunk
 
 
 async def stream_anthropic_chunks(

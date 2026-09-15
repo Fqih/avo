@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docs site branding: `logo.svg`/`logo.webp` copied into
   `docs/assets/`, wired as the Material `theme.logo` and `favicon`,
   and a centered logo banner on the docs home page.
+- `AgentRuntime.run()`/`resume()` accept per-call
+  `stream_callback`/`stream_interrupt_callback` that override the
+  instance attributes for that run only. The chat REPL now binds its
+  live printer per call instead of mutating the shared runtime, so a
+  background `run()` can no longer snapshot the chat printer (the
+  reverse of the existing in-flight-swap race).
+- `stream_sse_chunks` in `avo.providers.http_common` — shared
+  open → status-gate → iterate control flow for SSE transports, with
+  the per-line interpretation injected as `parse_line`.
+  `stream_openai_chunks` and `GeminiProvider.stream()` are now thin
+  specializations of it (Gemini's duplicated status block removed).
 - `avo-native` now publishes to PyPI: `native-release.yml` gained a
   `sdist` job and a `publish` job using the same Trusted Publishing
   setup as `release.yml` (environment `pypi`, OIDC `id-token`, no
