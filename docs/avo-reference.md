@@ -49,24 +49,16 @@ crash-safe resume, and policies (step caps, token budgets, loop
 detectors, circuit breakers) bound runaway loops with deterministic
 `StopReason`s.
 
-```
-                 +----------------------+
-   task ───────▶ |     AgentRuntime     |  one asyncio.Lock per runtime
-                 |  run() / resume()    |
-                 +----------+-----------+
-                            |
-      +----------+----------+-----------+------------+
-      |          |          |           |            |
-      v          v          v           v            v
- ModelProvider LoopPolicy EventStore ToolRegistry  ProgressDetector
- (fake,        (steps,    (SQLite /   (Function    (repeated action,
-  anthropic,    tokens,    InMemory)   Tools,       no progress)
-  openai,       timeouts,             approval)
-  ollama,       circuit
-  groq, ...)    breaker)
-      |                                     |
-      v                                     v
- HTTP (httpx, [providers] extra)     sandbox (docker-py, [sandbox] extra)
+```mermaid
+flowchart TD
+    task(["task"]) --> RT["AgentRuntime<br/>run() / resume()<br/><i>one asyncio.Lock per runtime</i>"]
+    RT --> MP["ModelProvider<br/>fake, anthropic, openai,<br/>ollama, groq, ..."]
+    RT --> LP["LoopPolicy<br/>steps, tokens, timeouts,<br/>circuit breaker"]
+    RT --> ES["EventStore<br/>SQLite / InMemory"]
+    RT --> TR["ToolRegistry<br/>FunctionTools, approval"]
+    RT --> PD["ProgressDetector<br/>repeated action, no progress"]
+    MP --> HTTP["HTTP<br/>(httpx, [providers] extra)"]
+    TR --> SB["sandbox<br/>(docker-py, [sandbox] extra)"]
 ```
 
 Message flow for one step:
