@@ -32,7 +32,10 @@ jobs:
       - name: Bandit
         run: bandit -r src/avo -c pyproject.toml --severity-level medium
       - name: pip-audit
-        run: pip-audit --strict
+        # Audit dependencies only — auditing avo itself against PyPI
+        # fails for the unreleased version editable-installed from the
+        # repo (the same race release.yml already avoids).
+        run: pip-audit --strict --requirement <(python -c "import tomllib; print('\n'.join(tomllib.loads(open('pyproject.toml').read())['project']['dependencies']))")
       - name: Tests
         run: pytest
       - name: Build
