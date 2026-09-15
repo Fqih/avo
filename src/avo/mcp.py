@@ -166,12 +166,16 @@ class MCPServer:
     async def _read_loop(self) -> None:
         if self._proc is None or self._proc.stdout is None:
             return
-        stdout = self._proc.stdout
+        try:
+            await self._read_messages(self._proc.stdout)
+        except (asyncio.IncompleteReadError, MCPError, ValueError):
+            pass  # EOF, malformed framing — treated as connection loss below
+        finally:
+            self._fail_pending(MCPError("MCP server closed its stdout (process exited?)"))
+
+    async def _read_messages(self, stdout: asyncio.StreamReader) -> None:
         while True:
-            try:
-                content_length = await _read_header(stdout)
-            except asyncio.IncompleteReadError:
-                return
+            content_length = await _read_header(stdout)
             body = await stdout.readexactly(content_length)
             try:
                 envelope = json.loads(body)
@@ -192,6 +196,18 @@ class MCPServer:
                 if not isinstance(result, dict):
                     result = {"value": result}
                 pending.future.set_result(result)
+
+    def _fail_pending(self, error: MCPError) -> None:
+        """Wake every outstanding request when the connection is dead.
+
+        Without this, a server that dies leaves :meth:`_request` waiting
+        its full timeout budget instead of failing immediately.
+        """
+
+        for request_id in list(self._pending):
+            pending = self._pending.pop(request_id)
+            if not pending.future.done():
+                pending.future.set_exception(error)
 
     async def _drain_stderr(self) -> None:
         if self._proc is None or self._proc.stderr is None:

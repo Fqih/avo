@@ -34,6 +34,28 @@ def _spawn(module: str, *extra: str) -> MCPServer:
     return MCPServer(command=[PYTHON, "-m", module, *extra])
 
 
+@pytest.mark.asyncio
+async def test_server_that_dies_on_startup_fails_fast() -> None:
+    """A crashed server must not leave requests waiting the full timeout.
+
+    Regression: the read loop returned on stdout EOF without failing the
+    pending futures, so ``_request`` sat in ``wait_for`` for its whole
+    90s budget — on loaded CI runners this turned transient startup
+    crashes into suite-wide timeouts.
+    """
+
+    import asyncio
+
+    from avo.exceptions import ToolExecutionError
+
+    server = MCPServer(command=[PYTHON, "-c", "import sys; sys.exit(3)"])
+    try:
+        with pytest.raises(ToolExecutionError):
+            await asyncio.wait_for(server.start(), timeout=10.0)
+    finally:
+        await server.stop()
+
+
 def _payload(call_result: dict[str, object]) -> dict[str, object]:
     """Decode the MCP ``content[0].text`` JSON envelope into a dict."""
 

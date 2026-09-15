@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `MCPServer` requests hung for the full 90 s timeout when the server
+  subprocess died: the stdio read loop returned on EOF without waking
+  the pending futures. The loop now fails every outstanding request
+  with an `MCPError` as soon as the connection closes, which also
+  removes the `test_mcp_servers.py` timeouts that flaked CI on loaded
+  runners.
 - The `OpenSSF Scorecard` workflow failed on every run: its action
   image moved from `gcr.io/openssf` (project shut down — pulls
   return "requires billing") to `ghcr.io` in action v2.4.4. Bumped
