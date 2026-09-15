@@ -18,6 +18,10 @@ on:
 permissions:
   contents: read
 
+# Pages is configured with "GitHub Actions" as its source (and a
+# CNAME for fqih.cloud), so the site must ship through the
+# upload-pages-artifact + deploy-pages pattern; branch pushes to
+# gh-pages (``mkdocs gh-deploy``) would be ignored.
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -39,3 +43,26 @@ jobs:
           name: mkdocs-site
           path: site
           retention-days: 7
+      - name: Upload Pages artifact
+        # The artifact the deploy-pages action consumes; distinct from
+        # the retained browsable artifact above.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    # Publish only from main pushes; PRs just verify the strict build.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

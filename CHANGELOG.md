@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `Docs` workflow built the site and uploaded it as a run
+  artifact but published it nowhere — the Pages site was a 404.
+  Main pushes now ship `site/` through `upload-pages-artifact` +
+  `deploy-pages` (matching the repo's Pages source = GitHub Actions,
+  CNAME `fqih.cloud`); `mkdocs.yml` `site_url` updated accordingly.
 - Native release matrix ran every target on `ubuntu-latest`, so the
   darwin legs failed (`cc: error: unrecognized command-line option
   '-arch'`) and the MSVC legs could not link at all. macOS builds run

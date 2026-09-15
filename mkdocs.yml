@@ -1,6 +1,6 @@
 site_name: Avo
 site_description: Provider-agnostic reliability runtime for bounded, observable, resumable AI agent loops.
-site_url: https://fqih.github.io/avo/
+site_url: https://fqih.cloud/
 repo_url: https://github.com/Fqih/avo
 repo_name: Fqih/avo
 edit_uri: edit/main/docs/
