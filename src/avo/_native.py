@@ -26,7 +26,7 @@ def _try_load() -> None:
 
     global _cache_key_hash, _ext_version, _import_error
     try:
-        import avo_native as _ext  # type: ignore[import-untyped]
+        import avo_native as _ext
     except ImportError as exc:
         _import_error = exc
         return

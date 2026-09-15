@@ -206,3 +206,10 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+# Optional native wheel: absent in most CI environments, untyped when
+# present. Treat as Any either way so the lazy loader type-checks in
+# every environment.
+[[tool.mypy.overrides]]
+module = "avo_native"
+ignore_missing_imports = true

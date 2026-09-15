@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install build tooling
-        run: python -m pip install -e ".[dev,providers,sandbox,otel]" && python -m pip install build
+        run: python -m pip install -e ".[dev,providers,sandbox,otel,langchain]" && python -m pip install build
       - name: Run quality gates
         run: |
           ruff check .
