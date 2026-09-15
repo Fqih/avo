@@ -214,7 +214,15 @@ def _confirm(prompt: str, *, assume_yes: bool) -> bool:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    # parse_known_args + merge: on Python <=3.11 argparse cannot
+    # interleave the variadic `command` positionals after the `--env`
+    # optionals (they land in the extras list); on 3.12+/3.13 it can.
+    # Merging the extras back in makes the trailing-argv semantics
+    # identical across all supported interpreters.
+    args, extras = parser.parse_known_args(argv)
+    if args.mcp_command == "add" and extras:
+        args.command = [*args.command, *extras]
 
     if args.mcp_command == "add":
         env: dict[str, str] = {}
