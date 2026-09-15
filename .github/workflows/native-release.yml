@@ -22,26 +22,31 @@ jobs:
       matrix:
         include:
           # Linux glibc wheels — cover Fedora, Ubuntu, Debian, Alpine
-          # with glibc, plus RHEL and Amazon Linux.
+          # with glibc, plus RHEL and Amazon Linux. Built on ubuntu
+          # with the action's zig-powered cross toolchains.
           - target: x86_64-unknown-linux-gnu
-            args: --release --out dist
+            os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
-            args: --release --out dist
+            os: ubuntu-latest
           - target: x86_64-unknown-linux-musl
-            args: --release --out dist
+            os: ubuntu-latest
           - target: aarch64-unknown-linux-musl
-            args: --release --out dist
-          # macOS — both Intel and Apple Silicon.
+            os: ubuntu-latest
+          # macOS — Apple clang cross-compiles x86_64 from the arm64
+          # runner, so both legs share macos-latest. GNU cc on the
+          # Linux runners does not accept `-arch`, which is what the
+          # previous ubuntu-hosted darwin legs failed on.
           - target: x86_64-apple-darwin
-            args: --release --out dist
+            os: macos-latest
           - target: aarch64-apple-darwin
-            args: --release --out dist
-          # Windows.
+            os: macos-latest
+          # Windows MSVC — needs the Visual Studio linker; cannot build
+          # on Linux. aarch64-pc-windows-msvc is not in the matrix: the
+          # ARM64 MSVC toolchain is not reliably present on the runner
+          # image, and the abi3 sdist covers that platform.
           - target: x86_64-pc-windows-msvc
-            args: --release --out dist
-          - target: aarch64-pc-windows-msvc
-            args: --release --out dist
-    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,7 +56,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: ${{ matrix.args }}
+          args: --release --out dist
           working-directory: native
           sccache: "true"
           rust-toolchain: stable
@@ -61,6 +66,26 @@ jobs:
           name: native-${{ matrix.target }}
           path: |
             native/dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build source distribution
+        working-directory: native
+        run: |
+          python -m pip install "maturin>=1.5"
+          maturin sdist --out dist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-sdist
+          path: native/dist/*.tar.gz
           if-no-files-found: error
 
   attach:
@@ -81,3 +106,25 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: native-flat/*.whl
+
+  publish:
+    name: Publish to PyPI
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    # Same publishing environment as release.yml — trusted publisher
+    # for `avo-native` on pypi.org matches (owner Fqih, repo avo,
+    # workflow native-release.yml, environment pypi). No token secret.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      # upload-artifact@v4 strips common parents, so every leg's wheel
+      # and the sdist land flat under ./dist — exactly what the pypa
+      # action expects as packages-dir.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: dist
+          merge-multiple: true
+      - name: Publish (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1

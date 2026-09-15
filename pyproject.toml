@@ -66,11 +66,12 @@ docs = [
   "pymdown-extensions>=10.8",
 ]
 native = [
-  # Build the optional Rust extension from ./native via maturin. The
+  # Prebuilt abi3 wheels (cp311+) for Linux/macOS/Windows published
+  # from native-release.yml; sdist fallback for other platforms. The
   # pure-Python fallback in ``avo.providers.prompt_cache`` always
   # produces identical cache keys; install this extra only when the
-  # native streaming digest is worth the extra build dependency.
-  "maturin>=1.5",
+  # native streaming digest is worth an extra dependency.
+  "avo-native>=0.1.4",
 ]
 live-benchmark = [
   "httpx>=0.27",

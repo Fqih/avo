@@ -1,6 +1,6 @@
 [package]
 name = "avo-native"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Native speedups for the Avo agent runtime (PyO3)"
 license = "MIT"

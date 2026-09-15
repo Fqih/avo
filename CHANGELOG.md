@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `avo-native` now publishes to PyPI: `native-release.yml` gained a
+  `sdist` job and a `publish` job using the same Trusted Publishing
+  setup as `release.yml` (environment `pypi`, OIDC `id-token`, no
+  token secret). `avo[native]` installs the prebuilt abi3 wheel
+  (`avo-native>=0.1.4`, cp311+) instead of building from source with
+  maturin; the sdist covers platforms outside the matrix.
+
+### Fixed
+
+- Native release matrix ran every target on `ubuntu-latest`, so the
+  darwin legs failed (`cc: error: unrecognized command-line option
+  '-arch'`) and the MSVC legs could not link at all. macOS builds run
+  on `macos-latest` (Apple clang crosses x86_64 from arm64), Windows
+  on `windows-latest`. `aarch64-pc-windows-msvc` dropped from the
+  matrix — the ARM64 MSVC toolchain is not reliably on the runner
+  image; sdist covers it.
+- Native extension version bumped to 0.1.4 to match the `avo`
+  release line (it was never published, so no version is burned).
+
 ## [0.1.4] — 2026-09-15
 
 ### Added
