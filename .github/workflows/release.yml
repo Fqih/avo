@@ -58,7 +58,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sbom
-          path: "*spdx.json,*cdx.json,*sbom*"
+          path: "*spdx.json,*cdx.json,*cyclonedx.json,*sbom*"
       # Sigstore signing uses the `sigstore` Python client directly
       # instead of `sigstore/gh-action-sigstore-python@v3`. That action
       # ships stale TUF trust-root metadata and fails verification in
@@ -68,16 +68,17 @@ jobs:
       - name: Install Sigstore client
         run: python -m pip install "sigstore>=3.0,<4"
       - name: Sign wheels with Sigstore
-        # ``ACTIONS_ID_TOKEN`` is auto-populated by the runner when the
-        # workflow has ``id-token: write`` permission (set at the top
-        # of this job). ``sigstore.sign`` reads it directly via env.
+        # ``sigstore sign`` (space, not ``sigstore.sign`` — the module
+        # has no CLI entry point and exits silently) resolves the
+        # runner's OIDC identity from the ambient
+        # ACTIONS_ID_TOKEN_REQUEST_* env vars, which exist because the
+        # job has ``id-token: write``. Each wheel gets a
+        # ``<wheel>.sigstore.json`` bundle in dist/sigstore/.
         run: |
           mkdir -p dist/sigstore
           for wheel in dist/*.whl; do
             echo "signing $wheel"
-            python -m sigstore.sign \
-              --oidc-provider github \
-              --identity-token "${ACTIONS_ID_TOKEN}" \
+            python -m sigstore sign \
               --output-directory dist/sigstore \
               "$wheel"
           done
@@ -99,7 +100,7 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
             dist/sigstore/*
-            *sbom*
+            *.cyclonedx.json
           generate_release_notes: true
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v1
