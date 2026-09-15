@@ -115,11 +115,13 @@ jobs:
     permissions:
       id-token: write
     steps:
-      # The "dist" artifact stores entries under a dist/ prefix, so
-      # extracting with no path lands the files in ./dist/ — which is
-      # the pypa action's default packages-dir.
+      # upload-artifact@v4 strips the common `dist/` parent when
+      # storing, so the entries are flat wheel/sdist names — extract
+      # them into ./dist/ to match the pypa action's default
+      # packages-dir.
       - uses: actions/download-artifact@v4
         with:
           name: dist
+          path: dist
       - name: Publish (trusted publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
