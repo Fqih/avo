@@ -18,7 +18,7 @@ from avo.providers.streaming import ModelChunk, StreamingModelProvider, response
 
 _LOG = logging.getLogger("avo.combo.provider")
 
-ComboEventCallback = Callable[[dict[str, Any]], None | Awaitable[None]]
+ComboEventCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
 ComboNotifier = Callable[..., None]
 
 
