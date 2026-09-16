@@ -238,3 +238,55 @@ async def test_codex_provider_stream_fallback() -> None:
     assert len(chunks) > 0
     full_text = "".join(c.text for c in chunks if c.text)
     assert full_text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_codex_provider_parses_sse_stream() -> None:
+    item_payload = json.dumps(
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "id": "msg_1",
+                "type": "message",
+                "content": [{"type": "output_text", "text": "hello from sse"}],
+            },
+        }
+    )
+    completed_payload = json.dumps(
+        {
+            "type": "response.completed",
+            "response": {
+                "id": "resp_123",
+                "usage": {"input_tokens": 5, "output_tokens": 3},
+            },
+        }
+    )
+    sse_text = (
+        "event: response.created\n"
+        'data: {"type":"response.created","response":{"id":"resp_123"}}\n\n'
+        f"event: response.output_item.done\ndata: {item_payload}\n\n"
+        f"event: response.completed\ndata: {completed_payload}\n\n"
+    )
+
+    class SseResp:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.status_code = 200
+
+    class SseClient:
+        def __init__(self, resp: SseResp) -> None:
+            self.resp = resp
+
+        async def post(self, *args: Any, **kwargs: Any) -> Any:
+            return self.resp
+
+    provider = CodexProvider(
+        CodexConfig(model="gpt-5.6-sol"),
+        token_provider=_token,
+        client=SseClient(SseResp(sse_text)),  # type: ignore[arg-type]
+    )
+    res = await provider.generate(_req())
+    assert res.content == "hello from sse"
+    assert res.usage is not None
+    assert res.usage.input_tokens == 5
+    assert res.usage.output_tokens == 3

@@ -220,6 +220,41 @@ class CodexProvider:
                 retryable=status == 429 or status >= 500,
             )
 
+        text = str(getattr(response, "text", ""))
+        items: list[dict[str, Any]] = []
+        completed_response: dict[str, Any] = {}
+        has_sse = False
+
+        for line in text.splitlines():
+            sline = line.strip()
+            if sline.startswith("data: "):
+                has_sse = True
+                data_str = sline[6:].strip()
+                if data_str == "[DONE]":
+                    continue
+                try:
+                    obj = json.loads(data_str)
+                    if isinstance(obj, dict):
+                        event_type = obj.get("type")
+                        if event_type == "response.output_item.done":
+                            item = obj.get("item")
+                            if isinstance(item, dict):
+                                items.append(item)
+                        elif event_type == "response.completed":
+                            resp = obj.get("response")
+                            if isinstance(resp, dict):
+                                completed_response = resp
+                except Exception:
+                    pass
+
+        if has_sse:
+            if completed_response:
+                if not completed_response.get("output"):
+                    completed_response["output"] = items
+                return completed_response
+            if items:
+                return {"output": items}
+
         try:
             return response.json()
         except (json.JSONDecodeError, ValueError, TypeError) as exc:

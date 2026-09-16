@@ -272,6 +272,41 @@ class GeminiCliProvider:
                 retryable=status == 429 or status >= 500,
             )
 
+        text = str(getattr(response, "text", ""))
+        merged_parts: list[dict[str, Any]] = []
+        final_raw: dict[str, Any] = {}
+        has_sse = False
+
+        for line in text.splitlines():
+            sline = line.strip()
+            if sline.startswith("data: "):
+                has_sse = True
+                data_str = sline[6:].strip()
+                if data_str == "[DONE]":
+                    continue
+                try:
+                    obj = json.loads(data_str)
+                    if isinstance(obj, dict):
+                        final_raw = obj
+                        candidates = obj.get("candidates")
+                        if isinstance(candidates, list) and candidates:
+                            cand = candidates[0]
+                            if isinstance(cand, dict):
+                                msg = cand.get("content")
+                                if isinstance(msg, dict):
+                                    parts = msg.get("parts")
+                                    if isinstance(parts, list):
+                                        merged_parts.extend(parts)
+                except Exception:
+                    pass
+
+        if has_sse and final_raw:
+            if merged_parts:
+                candidates = final_raw.get("candidates", [{}])
+                candidates[0].setdefault("content", {})["parts"] = merged_parts
+                final_raw["candidates"] = candidates
+            return final_raw
+
         try:
             return response.json()
         except (json.JSONDecodeError, ValueError, TypeError) as exc:

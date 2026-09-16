@@ -246,3 +246,40 @@ async def test_gemini_cli_provider_stream_fallback() -> None:
     assert len(chunks) > 0
     full_text = "".join(c.text for c in chunks if c.text)
     assert full_text == "halo"
+
+
+@pytest.mark.asyncio
+async def test_gemini_cli_provider_parses_sse_stream() -> None:
+    chunk1 = json.dumps(
+        {"candidates": [{"content": {"parts": [{"text": "halo from "}], "role": "model"}}]}
+    )
+    chunk2 = json.dumps(
+        {
+            "candidates": [{"content": {"parts": [{"text": "sse"}], "role": "model"}}],
+            "usageMetadata": {"promptTokenCount": 4, "candidatesTokenCount": 3},
+        }
+    )
+    sse_text = f"data: {chunk1}\n\ndata: {chunk2}\n\n"
+
+    class SseResp:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.status_code = 200
+
+    class SseClient:
+        def __init__(self, resp: SseResp) -> None:
+            self.resp = resp
+
+        async def post(self, *args: Any, **kwargs: Any) -> Any:
+            return self.resp
+
+    provider = GeminiCliProvider(
+        GeminiCliConfig(model="gemini-2.5-pro"),
+        token_provider=_token,
+        client=SseClient(SseResp(sse_text)),  # type: ignore[arg-type]
+    )
+    res = await provider.generate(_req())
+    assert res.content == "halo from sse"
+    assert res.usage is not None
+    assert res.usage.input_tokens == 4
+    assert res.usage.output_tokens == 3
