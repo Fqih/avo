@@ -54,7 +54,26 @@ def _read_environ() -> dict[str, str]:
 def _resolve_provider_label(environ: dict[str, str]) -> tuple[str, str]:
     """Return ``(provider_name, model_name)`` without exposing secrets."""
 
-    provider = environ.get("AVO_PROVIDER", "").strip() or "(unset)"
+    provider = environ.get("AVO_PROVIDER", "").strip()
+    if not provider:
+        try:
+            from avo.oauth.store import get_credential
+
+            for candidate, candidate_provider, def_model in (
+                ("claude", "anthropic", "claude-sonnet-4-5"),
+                ("codex", "codex", "gpt-5.6-sol"),
+                ("gemini", "gemini_cli", "gemini-2.5-pro"),
+                ("openrouter", "openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
+            ):
+                if get_credential(candidate) is not None:
+                    environ["AVO_PROVIDER"] = candidate_provider
+                    environ.setdefault("AVO_MODEL", def_model)
+                    provider = candidate_provider
+                    break
+        except Exception:
+            pass
+
+    provider = provider or "(unset)"
     if provider == "router":
         chain = environ.get("AVO_ROUTER_PROVIDERS", "").strip()
         models = environ.get("AVO_ROUTER_MODELS", "").strip()

@@ -273,8 +273,18 @@ def test_codex_provider_without_subscription_gate_raises(
             {
                 "AVO_PROVIDER": "codex",
                 "AVO_MODEL": "gpt-5.6-sol",
+                "AVO_ALLOW_SUBSCRIPTION": "0",
             }
         )
+
+    # By default (without AVO_ALLOW_SUBSCRIPTION), stored web login succeeds
+    provider = build_provider_from_env(
+        {
+            "AVO_PROVIDER": "codex",
+            "AVO_MODEL": "gpt-5.6-sol",
+        }
+    )
+    assert provider is not None
 
 
 def test_openai_falls_back_to_codex_oauth(
@@ -325,3 +335,23 @@ def test_gemini_falls_back_to_gemini_cli_oauth(
         }
     )
     assert isinstance(provider, GeminiCliProvider)
+
+
+def test_auto_detect_stored_oauth_when_provider_unset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+) -> None:
+    from avo.oauth.store import Credential, store_credential
+    from avo.providers.codex import CodexProvider
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_credential(
+        Credential(
+            provider="codex",
+            kind="oauth",
+            access_token="test-token",
+            subscription=True,
+        )
+    )
+    provider = build_provider_from_env({})
+    assert isinstance(provider, CodexProvider)
+    assert provider._config.model == "gpt-5.6-sol"

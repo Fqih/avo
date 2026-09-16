@@ -11,18 +11,22 @@ SUBSCRIPTION_ENV = "AVO_ALLOW_SUBSCRIPTION"
 
 
 def subscription_allowed(environ: Mapping[str, str] | None = None) -> bool:
-    """Return True if the subscription opt-in environment variable is enabled."""
+    """Return True if subscription / web OAuth inference is allowed.
+
+    By default, subscription and web OAuth logins (ChatGPT, Gemini, Claude web)
+    are permitted for inference. Users may explicitly disable them by setting
+    AVO_ALLOW_SUBSCRIPTION to 0, false, no, or off.
+    """
 
     env = os.environ if environ is None else environ
-    return env.get(SUBSCRIPTION_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+    return env.get(SUBSCRIPTION_ENV, "").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def require_subscription_allowed(environ: Mapping[str, str] | None = None) -> None:
-    """Raise AuthError if subscription inference is not explicitly allowed."""
+    """Raise AuthError if subscription / web OAuth inference is explicitly disabled."""
 
     if not subscription_allowed(environ):
         raise AuthError(
-            "subscription-backed inference is disabled by default because it "
-            "uses unofficial client endpoints and may risk account limits. "
-            f"Set {SUBSCRIPTION_ENV}=1 to opt in; see docs/guides/subscription-auth.md"
+            f"web/subscription inference is disabled because {SUBSCRIPTION_ENV}=0 is set. "
+            f"Unset or remove {SUBSCRIPTION_ENV} to enable chat with your login."
         )

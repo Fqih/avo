@@ -157,7 +157,7 @@ async def test_empty_candidates_raises() -> None:
         await p.generate(_req())
 
 
-def test_from_avo_env_without_subscription_gate_raises(store_dir: None) -> None:
+def test_from_avo_env_when_disabled_raises(store_dir: None) -> None:
     store_credential(
         Credential(
             provider="gemini",
@@ -167,17 +167,19 @@ def test_from_avo_env_without_subscription_gate_raises(store_dir: None) -> None:
         )
     )
     with pytest.raises(AuthError, match="AVO_ALLOW_SUBSCRIPTION"):
-        GeminiCliConfig.from_avo_env({}, fallback_model="gemini-2.5-pro")
+        GeminiCliConfig.from_avo_env(
+            {"AVO_ALLOW_SUBSCRIPTION": "0"}, fallback_model="gemini-2.5-pro"
+        )
 
 
 def test_from_avo_env_missing_credential_raises(store_dir: None) -> None:
     with pytest.raises(AuthError, match="AVO_ALLOW_SUBSCRIPTION"):
-        GeminiCliConfig.from_avo_env({}, fallback_model="gemini-2.5-pro")
+        GeminiCliConfig.from_avo_env(
+            {"AVO_ALLOW_SUBSCRIPTION": "0"}, fallback_model="gemini-2.5-pro"
+        )
 
     with pytest.raises(AuthError, match="No stored credential"):
-        GeminiCliConfig.from_avo_env(
-            {"AVO_ALLOW_SUBSCRIPTION": "1"}, fallback_model="gemini-2.5-pro"
-        )
+        GeminiCliConfig.from_avo_env({}, fallback_model="gemini-2.5-pro")
 
 
 def test_from_avo_env_with_valid_credential_succeeds(store_dir: None) -> None:
@@ -189,9 +191,7 @@ def test_from_avo_env_with_valid_credential_succeeds(store_dir: None) -> None:
             subscription=True,
         )
     )
-    config = GeminiCliConfig.from_avo_env(
-        {"AVO_ALLOW_SUBSCRIPTION": "1"}, fallback_model="gemini-2.5-pro"
-    )
+    config = GeminiCliConfig.from_avo_env({}, fallback_model="gemini-2.5-pro")
     assert config.model == "gemini-2.5-pro"
     assert (
         config.endpoint

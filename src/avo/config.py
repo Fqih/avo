@@ -213,11 +213,26 @@ def build_provider_from_env(
     env: Mapping[str, str] = os.environ if environ is None else environ
 
     name = env.get("AVO_PROVIDER", "").strip().lower()
+    auto_model = ""
+    if not name:
+        from avo.oauth.store import get_credential
+
+        for candidate, candidate_provider, def_model in (
+            ("claude", "anthropic", "claude-sonnet-4-5"),
+            ("codex", "codex", "gpt-5.6-sol"),
+            ("gemini", "gemini_cli", "gemini-2.5-pro"),
+            ("openrouter", "openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
+        ):
+            if get_credential(candidate) is not None:
+                name = candidate_provider
+                auto_model = def_model
+                break
+
     if name not in _PROVIDER_NAMES:
         allowed = ", ".join(_PROVIDER_NAMES)
         raise ConfigError(f"AVO_PROVIDER must be one of {allowed!s}; got {name!r}")
 
-    model = env.get("AVO_MODEL", "").strip()
+    model = env.get("AVO_MODEL", "").strip() or auto_model
     if not model and name not in ("router", "combo"):
         raise ConfigError("AVO_MODEL is required")
 

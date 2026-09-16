@@ -160,7 +160,7 @@ async def test_empty_output_raises() -> None:
         await p.generate(_req())
 
 
-def test_from_avo_env_without_subscription_gate_raises(store_dir: None) -> None:
+def test_from_avo_env_when_disabled_raises(store_dir: None) -> None:
     store_credential(
         Credential(
             provider="codex",
@@ -170,15 +170,15 @@ def test_from_avo_env_without_subscription_gate_raises(store_dir: None) -> None:
         )
     )
     with pytest.raises(AuthError, match="AVO_ALLOW_SUBSCRIPTION"):
-        CodexConfig.from_avo_env({}, fallback_model="gpt-5.6-sol")
+        CodexConfig.from_avo_env({"AVO_ALLOW_SUBSCRIPTION": "0"}, fallback_model="gpt-5.6-sol")
 
 
 def test_from_avo_env_missing_credential_raises(store_dir: None) -> None:
     with pytest.raises(AuthError, match="AVO_ALLOW_SUBSCRIPTION"):
-        CodexConfig.from_avo_env({}, fallback_model="gpt-5.6-sol")
+        CodexConfig.from_avo_env({"AVO_ALLOW_SUBSCRIPTION": "0"}, fallback_model="gpt-5.6-sol")
 
     with pytest.raises(AuthError, match="No stored credential"):
-        CodexConfig.from_avo_env({"AVO_ALLOW_SUBSCRIPTION": "1"}, fallback_model="gpt-5.6-sol")
+        CodexConfig.from_avo_env({}, fallback_model="gpt-5.6-sol")
 
 
 def test_from_avo_env_with_valid_credential_succeeds(store_dir: None) -> None:
@@ -190,7 +190,7 @@ def test_from_avo_env_with_valid_credential_succeeds(store_dir: None) -> None:
             subscription=True,
         )
     )
-    config = CodexConfig.from_avo_env({"AVO_ALLOW_SUBSCRIPTION": "1"}, fallback_model="gpt-5.6-sol")
+    config = CodexConfig.from_avo_env({}, fallback_model="gpt-5.6-sol")
     assert config.model == "gpt-5.6-sol"
     assert config.endpoint == "https://chatgpt.com/backend-api/codex/responses"
 

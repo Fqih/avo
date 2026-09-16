@@ -93,7 +93,7 @@ def test_from_avo_env_api_key_wins(store_dir: None) -> None:
     assert config._api_key == "env-key"
 
 
-def test_from_avo_env_stored_oauth_without_gate_raises(store_dir: None) -> None:
+def test_from_avo_env_stored_oauth_disabled_raises(store_dir: None) -> None:
     store_credential(
         Credential(
             provider="claude",
@@ -103,10 +103,12 @@ def test_from_avo_env_stored_oauth_without_gate_raises(store_dir: None) -> None:
         )
     )
     with pytest.raises(AuthError, match="AVO_ALLOW_SUBSCRIPTION"):
-        AnthropicConfig.from_avo_env({}, fallback_model="claude-sonnet-4-6")
+        AnthropicConfig.from_avo_env(
+            {"AVO_ALLOW_SUBSCRIPTION": "0"}, fallback_model="claude-sonnet-4-6"
+        )
 
 
-def test_from_avo_env_stored_oauth_with_gate_allowed(store_dir: None) -> None:
+def test_from_avo_env_stored_oauth_default_allowed(store_dir: None) -> None:
     store_credential(
         Credential(
             provider="claude",
@@ -115,8 +117,7 @@ def test_from_avo_env_stored_oauth_with_gate_allowed(store_dir: None) -> None:
             subscription=True,
         )
     )
-    env = {"AVO_ALLOW_SUBSCRIPTION": "1"}
-    config = AnthropicConfig.from_avo_env(env, fallback_model="claude-sonnet-4-6")
+    config = AnthropicConfig.from_avo_env({}, fallback_model="claude-sonnet-4-6")
     assert config.auth_mode == "oauth"
     assert config._api_key == "oauth-token"
 
