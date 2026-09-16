@@ -108,6 +108,7 @@ async def run_localhost_callback_server(
     port: int,
     callback_path: str,
     timeout_seconds: float = 120.0,
+    expected_state: str | None = None,
 ) -> dict[str, str]:
     """Run an ephemeral asyncio HTTP server to capture OAuth callback parameters."""
 
@@ -129,7 +130,10 @@ async def run_localhost_callback_server(
                 if parsed.path == callback_path:
                     query_params = urllib.parse.parse_qs(parsed.query)
                     flattened = {k: v[0] for k, v in query_params.items() if v}
-                    if not future_result.done():
+                    if expected_state is not None and flattened.get("state") != expected_state:
+                        # State mismatch: ignore non-matching callback request
+                        pass
+                    elif not future_result.done():
                         future_result.set_result(flattened)
 
                     body = (
