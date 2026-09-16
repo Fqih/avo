@@ -33,7 +33,8 @@ Messages = list[dict[str, JsonValue]]
 class SaverStage(Protocol):
     """One deterministic pass over a message list."""
 
-    name: str
+    @property
+    def name(self) -> str: ...
 
     def apply(self, messages: Messages) -> Messages: ...
 
@@ -45,7 +46,8 @@ def _render(content: JsonValue) -> str:
     return str(content)
 
 
-def _estimate(messages: Messages) -> int:
+def estimate_messages(messages: Messages) -> int:
+    """Sum the ``len//4`` token estimates over message contents."""
     return sum(estimate_text_tokens(_render(m.get("content"))) for m in messages)
 
 
@@ -185,7 +187,7 @@ class PreTrimmerStage:
     name: str = "pre_trimmer"
 
     def apply(self, messages: Messages) -> Messages:
-        estimate = _estimate(messages)
+        estimate = estimate_messages(messages)
         if estimate <= self.trigger_tokens:
             return list(messages)
         out = list(messages)
@@ -215,4 +217,5 @@ __all__ = [
     "Messages",
     "PreTrimmerStage",
     "SaverStage",
+    "estimate_messages",
 ]
