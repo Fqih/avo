@@ -11,13 +11,17 @@ The provider targets ``POST /v1/messages`` with the ``x-api-key`` and
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Mapping
-from typing import Any
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from avo import ModelRequest, ModelResponse, TokenUsage, ToolCall
 from avo.exceptions import ProviderError
+from avo.oauth.gate import require_subscription_allowed
+from avo.oauth.refresh import ensure_fresh
+from avo.oauth.registry import OAUTH
+from avo.oauth.store import get_credential
 from avo.providers.streaming import ModelChunk, response_to_chunks
 
 from .http_common import (
@@ -46,8 +50,14 @@ class AnthropicConfig(BaseModel):
 
     model: str
     base_url: str = _DEFAULT_BASE_URL
+    auth_mode: Literal["api_key", "oauth"] = "api_key"
 
     _api_key: str | None = PrivateAttr(default=None)
+
+    @classmethod
+    def oauth(cls, model: str, *, base_url: str = _DEFAULT_BASE_URL) -> AnthropicConfig:
+        """Create an AnthropicConfig in OAuth mode."""
+        return cls(model=model, base_url=base_url, auth_mode="oauth")
 
     @classmethod
     def from_avo_env(
@@ -56,35 +66,69 @@ class AnthropicConfig(BaseModel):
         *,
         fallback_model: str,
     ) -> AnthropicConfig:
-        """Build config from the AVO_ANTHROPIC_* environment variables."""
-
-        api_key = environ.get("AVO_ANTHROPIC_API_KEY", "").strip()
-        if not api_key:
-            raise ValueError("AVO_ANTHROPIC_API_KEY is required when AVO_PROVIDER=anthropic")
+        """Build config from the AVO_ANTHROPIC_* environment variables or stored credentials."""
 
         model = environ.get("AVO_ANTHROPIC_MODEL", "").strip() or (fallback_model or _DEFAULT_MODEL)
         base_url = (environ.get("AVO_ANTHROPIC_BASE_URL", "").strip() or _DEFAULT_BASE_URL).rstrip(
             "/"
         )
 
-        config = cls(model=model, base_url=base_url)
-        config._api_key = api_key
-        return config
+        api_key = environ.get("AVO_ANTHROPIC_API_KEY", "").strip()
+        if api_key:
+            config = cls(model=model, base_url=base_url, auth_mode="api_key")
+            config._api_key = api_key
+            return config
+
+        stored = get_credential("claude")
+        if stored is not None:
+            if stored.kind == "api_key":
+                config = cls(model=model, base_url=base_url, auth_mode="api_key")
+                config._api_key = stored.access_token
+                return config
+            if stored.kind == "oauth":
+                require_subscription_allowed(environ)
+                config = cls(model=model, base_url=base_url, auth_mode="oauth")
+                config._api_key = stored.access_token
+                return config
+
+        raise ValueError("AVO_ANTHROPIC_API_KEY is required when AVO_PROVIDER=anthropic")
 
     @property
     def endpoint(self) -> str:
         """Return the absolute Messages API URL."""
 
-        return f"{self.base_url}/v1/messages"
+        base = self.base_url.rstrip("/")
+        path = "" if base.endswith("/v1/messages") else "/v1/messages"
+        url = f"{base}{path}"
+        if self.auth_mode == "oauth" and "?beta=true" not in url:
+            url = f"{url}?beta=true"
+        return url
 
-    def headers(self) -> dict[str, str]:
-        """Anthropic auth, version, and content-type headers."""
+    def request_headers(self, token: str | None = None) -> dict[str, str]:
+        """Anthropic auth, version, identity, and content-type headers."""
+
+        if self.auth_mode == "oauth":
+            token_val = token or self._api_key or ""
+            headers = {
+                "Authorization": f"Bearer {token_val}",
+                "anthropic-version": _ANTHROPIC_VERSION,
+                "Content-Type": "application/json",
+            }
+            entry = OAUTH.get("claude")
+            if entry and entry.identity_headers:
+                headers.update(entry.identity_headers)
+            return headers
 
         return {
             "x-api-key": self._api_key or "",
             "anthropic-version": _ANTHROPIC_VERSION,
             "Content-Type": "application/json",
         }
+
+    def headers(self) -> dict[str, str]:
+        """Anthropic auth, version, and content-type headers."""
+
+        return self.request_headers()
 
 
 class AnthropicProvider:
@@ -99,10 +143,12 @@ class AnthropicProvider:
         request_timeout_seconds: float = 30.0,
         *,
         client: _AsyncHTTPClient | None = None,
+        token_provider: Callable[[], Awaitable[str]] | None = None,
     ) -> None:
         self._config = config
         self._max_completion_tokens = max_completion_tokens
         self._request_timeout_seconds = request_timeout_seconds
+        self._token_provider = token_provider
         self._owns_client = client is None
         if client is not None:
             self._client: _AsyncHTTPClient | None = client
@@ -110,6 +156,17 @@ class AnthropicProvider:
             self._client = httpx.AsyncClient(timeout=request_timeout_seconds)  # type: ignore[assignment]
         else:  # pragma: no cover - only when httpx is not installed
             self._client = None
+
+    async def _get_headers(self) -> dict[str, str]:
+        if self._config.auth_mode == "oauth":
+            token: str | None
+            if self._token_provider is not None:
+                token = await self._token_provider()
+            else:
+                cred = await ensure_fresh("claude")
+                token = cred.access_token
+            return self._config.request_headers(token)
+        return self._config.headers()
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         """Generate one final answer or tool-call decision via Anthropic."""
@@ -139,10 +196,11 @@ class AnthropicProvider:
             return
         payload = self._build_payload(request)
         payload["stream"] = True
+        headers = await self._get_headers()
         async for chunk in stream_anthropic_chunks(
             self._client,
             self._config.endpoint,
-            self._config.headers(),
+            headers,
             payload,
             self._request_timeout_seconds,
             transport_name="Anthropic",
@@ -187,15 +245,16 @@ class AnthropicProvider:
             payload["tools"] = tools
         return payload
 
-    async def _post(self, payload: dict[str, Any]) -> Any:
+    async def _post(self, payload: dict[str, Any], *, is_retry: bool = False) -> Any:
         assert self._client is not None
         transport_errors: tuple[type[BaseException], ...] = (
             (httpx.HTTPError,) if httpx is not None else ()
         )
+        headers = await self._get_headers()
         try:
             response = await self._client.post(
                 self._config.endpoint,
-                headers=self._config.headers(),
+                headers=headers,
                 json=payload,
                 timeout=self._request_timeout_seconds,
             )
@@ -206,6 +265,11 @@ class AnthropicProvider:
             ) from exc
 
         status = int(response.status_code)
+        if status == 401 and self._config.auth_mode == "oauth" and not is_retry:
+            if self._token_provider is None:
+                await ensure_fresh("claude", force=True)
+            return await self._post(payload, is_retry=True)
+
         if status >= 400:
             detail = redact_text(str(getattr(response, "text", "")))
             raise ProviderError(

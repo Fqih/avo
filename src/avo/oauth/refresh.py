@@ -38,7 +38,7 @@ async def refresh_credential(
     cred: Credential,
     *,
     now: datetime | None = None,
-    token_requester: Callable[[OAuthEntry, Mapping[str, str]], Any] = flows.request_token,
+    token_requester: Callable[[OAuthEntry, Mapping[str, str]], Any] | None = None,
 ) -> Credential:
     """Execute a single refresh token exchange and return the renewed Credential."""
 
@@ -53,16 +53,18 @@ async def refresh_credential(
     if entry.client_secret:
         form["client_secret"] = entry.client_secret
 
+    requester = token_requester or flows.request_token
     try:
         import inspect
 
-        call_target = token_requester
+        call_target = requester
         if inspect.iscoroutinefunction(call_target) or inspect.iscoroutinefunction(
             type(call_target).__call__
         ):
-            raw = await token_requester(entry, form)
+            out = requester(entry, form)
+            raw = await out if inspect.isawaitable(out) else out
         else:
-            res = await asyncio.to_thread(token_requester, entry, form)
+            res = await asyncio.to_thread(requester, entry, form)
             raw = await res if inspect.isawaitable(res) else res
     except AuthError:
         raise
@@ -84,8 +86,9 @@ async def refresh_credential(
 async def ensure_fresh(
     provider: str,
     *,
+    force: bool = False,
     now: datetime | None = None,
-    token_requester: Callable[[OAuthEntry, Mapping[str, str]], Any] = flows.request_token,
+    token_requester: Callable[[OAuthEntry, Mapping[str, str]], Any] | None = None,
 ) -> Credential:
     """Ensure the credential for ``provider`` is valid, refreshing it if needed.
 
@@ -115,7 +118,7 @@ async def ensure_fresh(
                     f"{provider} session expired past max age — re-login required: {hint}"
                 )
 
-        if not needs_refresh(cred, now=current_time, entry=entry):
+        if not force and not needs_refresh(cred, now=current_time, entry=entry):
             return cred
 
         last_err: Exception | None = None
