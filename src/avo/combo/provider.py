@@ -19,7 +19,7 @@ from avo.providers.streaming import ModelChunk, StreamingModelProvider, response
 _LOG = logging.getLogger("avo.combo.provider")
 
 ComboEventCallback = Callable[[dict[str, Any]], None | Awaitable[None]]
-ComboNotifier = Callable[[str, str, str], None]
+ComboNotifier = Callable[..., None]
 
 
 @dataclass
@@ -61,6 +61,15 @@ class ComboRouterProvider(StreamingModelProvider):
         self._health: dict[str, TierHealth] = {
             tier.name: TierHealth(name=tier.name) for tier, _ in self._tiers
         }
+
+    @property
+    def notifier(self) -> ComboNotifier | None:
+        """Return the current notifier callback."""
+        return self._notifier
+
+    @notifier.setter
+    def notifier(self, value: ComboNotifier | None) -> None:
+        self._notifier = value
 
     @property
     def tiers(self) -> list[tuple[ComboTier, ModelProvider]]:
@@ -157,8 +166,17 @@ class ComboRouterProvider(StreamingModelProvider):
                 _LOG.debug("failover event callback error: %s", cb_exc)
 
         if self._notifier is not None:
+            notice = (
+                f"⤾ Fallback: switched from '{from_tier.name}' ({from_tier.provider}) "
+                f"to '{to_tier.name}' ({to_tier.provider}) [{reason}]"
+            )
             try:
-                self._notifier(from_tier.name, to_tier.name, reason)
+                self._notifier(notice)
+            except TypeError:
+                try:
+                    self._notifier(from_tier.name, to_tier.name, reason)
+                except Exception as notif_exc:  # pragma: no cover
+                    _LOG.debug("failover notifier error: %s", notif_exc)
             except Exception as notif_exc:  # pragma: no cover
                 _LOG.debug("failover notifier error: %s", notif_exc)
 

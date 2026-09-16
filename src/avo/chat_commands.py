@@ -444,6 +444,95 @@ def _show_router_status(ctx: ChatContext, out: TextIO) -> None:
     out.flush()
 
 
+def _show_combo_status(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+    environ: dict[str, str],
+) -> None:
+    """Display live health status of active combo tiers, or switch active combo profile."""
+    import os
+
+    from avo.combo.provider import ComboRouterProvider
+    from avo.combo.store import get_combo, load_combos
+    from avo.config import build_provider_from_env
+
+    if len(args) > 1:
+        target = args[1].strip()
+        profile = get_combo(target)
+        if profile is None:
+            err.write(f"combo profile {target!r} not found.\n")
+            err.flush()
+            return
+        environ["AVO_PROVIDER"] = "combo"
+        environ["AVO_COMBO"] = target
+        environ["AVO_MODEL"] = target
+        os.environ["AVO_PROVIDER"] = "combo"
+        os.environ["AVO_COMBO"] = target
+        os.environ["AVO_MODEL"] = target
+        try:
+            ctx.runtime.provider = build_provider_from_env(environ)
+        except Exception as exc:
+            err.write(f"combo switch failed: {exc}\n")
+            err.flush()
+            return
+        ctx.provider_name = "combo"
+        ctx.model_name = target
+        out.write(
+            f"Switched to combo profile {target!r}. Next turn will route through its tiers.\n"
+        )
+        out.flush()
+        return
+
+    all_combos = load_combos()
+    available = ", ".join(sorted(all_combos.keys()))
+
+    provider = ctx.runtime.provider
+    if not isinstance(provider, ComboRouterProvider):
+        out.write(
+            f"Combo routing is not active (current provider: {ctx.provider_name!r}).\n"
+            f"Available profiles: {available}\n"
+            "To activate a combo, run:\n"
+            "  /combo <NAME>\n"
+        )
+        out.flush()
+        return
+
+    profile = provider.profile
+    status = provider.get_health_status()
+    out.write(f"Active Combo Profile: {profile.name}\n")
+    if profile.description:
+        out.write(f"Description: {profile.description}\n")
+    out.write("\nTiers (priority order):\n")
+    col_hdr = (
+        f"  {'Tier':<14} {'Provider':<12} {'Model':<24} "
+        f"{'Status':<9} {'Cooldown':<9} {'Latency':<8} {'Fails':<5}\n"
+    )
+    col_div = f"  {'-' * 14} {'-' * 12} {'-' * 24} {'-' * 9} {'-' * 9} {'-' * 8} {'-' * 5}\n"
+    out.write(col_hdr)
+    out.write(col_div)
+    for tier, _ in provider.tiers:
+        info = status.get(tier.name, {})
+        healthy = info.get("healthy", True)
+        in_cooling = info.get("in_cooldown", False)
+        status_label = "COOLING" if in_cooling else ("HEALTHY" if healthy else "UNHEALTHY")
+        cooldown_rem = f"{info.get('cooldown_remaining_seconds', 0.0):.1f}s" if in_cooling else "0s"
+        latency_val = info.get("last_latency_ms")
+        latency_str = f"{latency_val:.1f}ms" if latency_val is not None else "-"
+        fails = str(info.get("consecutive_failures", 0))
+
+        row = (
+            f"  {tier.name:<14} {tier.provider:<12} {tier.model:<24} {status_label:<9} "
+            f"{cooldown_rem:<9} {latency_str:<8} {fails:<5}\n"
+        )
+        out.write(row)
+
+    out.write(f"\nAvailable combo profiles: {available}\n")
+    out.write("Switch with: /combo <NAME>\n\n")
+    out.flush()
+
+
 async def _run_slash(
     ctx: ChatContext,
     args: list[str],
@@ -473,6 +562,10 @@ async def _run_slash(
 
     if cmd == "/router":
         _show_router_status(ctx, out)
+        return False
+
+    if cmd == "/combo":
+        _show_combo_status(ctx, args, out, err, environ)
         return False
 
     if cmd == "/export":

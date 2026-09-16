@@ -187,6 +187,22 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
     # Bound per call rather than on the runtime attributes: a background
     # run() entering the shared runtime while this turn streams can no
     # longer snapshot the chat printer (the reverse race).
+    from avo.combo.provider import ComboRouterProvider
+
+    prior_notifier = None
+    provider = ctx.runtime.provider
+    if isinstance(provider, ComboRouterProvider):
+        prior_notifier = provider.notifier
+
+        def _combo_failover_notice(msg: str) -> None:
+            spinner.stop_sync()
+            color = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
+            notice = f"\033[33m{msg}\033[0m" if color else msg
+            out.write(f"\n{notice}\n")
+            out.flush()
+
+        provider.notifier = _combo_failover_notice
+
     try:
         async with spinner:
             with bind_workspace(ctx.workspace):
@@ -204,6 +220,8 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
         err.write(f"unexpected error: {type(exc).__name__}: {exc}\n")
         return
     finally:
+        if isinstance(provider, ComboRouterProvider):
+            provider.notifier = prior_notifier
         if printer is not None:
             printer.finish()
 

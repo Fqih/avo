@@ -61,6 +61,23 @@ def _resolve_provider_label(environ: dict[str, str]) -> tuple[str, str]:
         model_display = f"{chain} [{models}]" if chain and models else "fallback-chain"
         return provider, model_display
 
+    if provider == "combo":
+        combo_name = (
+            environ.get("AVO_COMBO", "").strip()
+            or environ.get("AVO_MODEL", "").strip()
+            or "default"
+        )
+        try:
+            from avo.combo.store import get_combo
+
+            profile = get_combo(combo_name)
+            if profile is not None:
+                tiers_display = " -> ".join(t.name for t in profile.tiers)
+                return "combo", f"{combo_name} [{tiers_display}]"
+        except Exception:
+            pass
+        return "combo", combo_name
+
     model = (
         environ.get("AVO_MODEL")
         or environ.get("MODEL_MINIMAX")
@@ -196,6 +213,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/help", "show this command list"),
     ("/provider", "show provider/model/API-key status"),
     ("/router", "show multi-provider fallback router live status"),
+    ("/combo [NAME]", "show active combo routing tiers or switch to NAME"),
     ("/model [NAME]", "list known models, or switch to NAME or PROVIDER/MODEL"),
     ("/context", "display full context snapshot (session, model, workspace, skills)"),
     ("/persona [NAME]", "list known personas or switch active persona (coder, reviewer, etc.)"),
