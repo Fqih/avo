@@ -12,9 +12,12 @@ own spec → plan → implementation → approval cycle.
   gates, MCP, plugins/skills, cost ledger) are **done and tested** —
   see `docs/reference/` for what shipped.
 - `avo` is published on PyPI (v0.1.x, trusted publishing).
-- Docs site redesign complete on branch `docs/redesign` (5 commits,
-  strict build, 0 broken links) — pending push/merge decision.
-- Active feature branch: `feat/subscription-oauth` (S1 below).
+- Docs site redesign complete on branch `docs/redesign` (8 commits,
+  rebased on main, strict build, 0 broken links) — pending
+  push/merge decision.
+- Active feature branches: `feat/native-perf` (S5 spec+plan,
+  execution delegated), `feat/token-savers` (S6 spec+plan,
+  execution delegated).
 
 ## Subproject map
 
@@ -24,8 +27,8 @@ own spec → plan → implementation → approval cycle.
 | S2 | Combo routing: one conversation, many models (named tiers, quota fallback) | **done and tested** | `docs/superpowers/specs/2026-09-16-combo-routing-design.md` + `docs/superpowers/plans/2026-09-16-combo-routing.md` |
 | S3 | Ollama as free tier in combos | **done (folded into S2)** | — |
 | S4 | GitHub discoverability: README rewrite, topics, Acknowledgments, demo | **done and verified** | `docs/superpowers/specs/2026-09-16-github-discoverability-design.md` + `docs/superpowers/plans/2026-09-16-github-discoverability.md` |
-| S5 | Native performance: extend `avo_native` (Rust/pyo3) for benchmarked hot paths — SSE parse, token counting, event codec | parked | benchmark-first rule |
-| S6 | Token savers: RTK-style input compression pipeline, Caveman-style terse-output preset, Ponytail-style YAGNI system prompt, context pre-trimmer | parked | — |
+| S5 | Native performance: extend `avo_native` (Rust/pyo3) for benchmarked hot paths — SSE parse, token counting, event codec | spec+plan approved; execution delegated on feat/native-perf | `docs/superpowers/specs/2026-09-16-native-performance-design.md` + `docs/superpowers/plans/2026-09-16-native-performance.md` (on `feat/native-perf`) |
+| S6 | Token savers: RTK-style input compression pipeline, Caveman-style terse-output preset, Ponytail-style YAGNI system prompt, context pre-trimmer | spec+plan approved; execution delegated on feat/token-savers | `docs/superpowers/specs/2026-09-16-token-savers-design.md` + `docs/superpowers/plans/2026-09-16-token-savers.md` |
 
 ## Decisions log (user-approved, 2026-09-16)
 
