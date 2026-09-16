@@ -20,10 +20,10 @@ own spec → plan → implementation → approval cycle.
 
 | ID | Subproject | Status | Spec / plan |
 |----|------------|--------|-------------|
-| S1 | Subscription OAuth auth (Claude, ChatGPT/Codex, Gemini) + universal key login | **design approved, plan ready** | `docs/superpowers/specs/2026-09-16-subscription-oauth-auth-design.md` + `docs/superpowers/plans/2026-09-16-subscription-oauth-auth.md` |
-| S2 | Combo routing: one conversation, many models (named tiers, quota fallback) | not started | spec pending (after S1 ships) |
-| S3 | Ollama as free tier in combos | folded into S2 | — |
-| S4 | GitHub discoverability: README rewrite, topics, Acknowledgments, demo | last (demos must exist first) | pending |
+| S1 | Subscription OAuth auth (Claude, ChatGPT/Codex, Gemini) + universal key login | **done and tested** | `docs/superpowers/specs/2026-09-16-subscription-oauth-auth-design.md` + `docs/superpowers/plans/2026-09-16-subscription-oauth-auth.md` |
+| S2 | Combo routing: one conversation, many models (named tiers, quota fallback) | **done and tested** | `docs/superpowers/specs/2026-09-16-combo-routing-design.md` + `docs/superpowers/plans/2026-09-16-combo-routing.md` |
+| S3 | Ollama as free tier in combos | **done (folded into S2)** | — |
+| S4 | GitHub discoverability: README rewrite, topics, Acknowledgments, demo | **done and verified** | `docs/superpowers/specs/2026-09-16-github-discoverability-design.md` + `docs/superpowers/plans/2026-09-16-github-discoverability.md` |
 | S5 | Native performance: extend `avo_native` (Rust/pyo3) for benchmarked hot paths — SSE parse, token counting, event codec | parked | benchmark-first rule |
 | S6 | Token savers: RTK-style input compression pipeline, Caveman-style terse-output preset, Ponytail-style YAGNI system prompt, context pre-trimmer | parked | — |
 
