@@ -30,6 +30,7 @@ ProviderName = Literal[
     "gemini_cli",
     "gemini-cli",
     "router",
+    "combo",
 ]
 _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "ollama",
@@ -44,6 +45,7 @@ _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "gemini_cli",
     "gemini-cli",
     "router",
+    "combo",
 )
 
 
@@ -139,6 +141,11 @@ PROVIDER_MODELS: dict[ProviderName, tuple[str, ...]] = {
         "ollama,groq",
         "openrouter,anthropic",
     ),
+    "combo": (
+        "default",
+        "coder",
+        "budget",
+    ),
 }
 
 
@@ -211,7 +218,7 @@ def build_provider_from_env(
         raise ConfigError(f"AVO_PROVIDER must be one of {allowed!s}; got {name!r}")
 
     model = env.get("AVO_MODEL", "").strip()
-    if not model and name != "router":
+    if not model and name not in ("router", "combo"):
         raise ConfigError("AVO_MODEL is required")
 
     try:
@@ -241,6 +248,30 @@ def build_provider_from_env(
                 max_completion_tokens=max_completion_tokens,
                 request_timeout_seconds=request_timeout_seconds,
             )
+
+        if name == "combo":
+            from avo.combo import ComboRouterProvider, get_combo
+
+            combo_name = env.get("AVO_COMBO", "").strip() or model or "default"
+            profile = get_combo(combo_name)
+            if profile is None:
+                raise ConfigError(f"Combo profile {combo_name!r} not found in combos.json")
+
+            tier_routes = []
+            for tier in profile.tiers:
+                if tier.provider == "combo":
+                    raise ConfigError("Nested combo tiers are not supported")
+                tier_env = dict(env)
+                tier_env["AVO_PROVIDER"] = tier.provider
+                tier_env["AVO_MODEL"] = tier.model
+                tier_prov = build_provider_from_env(
+                    tier_env,
+                    max_completion_tokens=max_completion_tokens,
+                    request_timeout_seconds=tier.timeout_seconds,
+                )
+                tier_routes.append((tier, tier_prov))
+
+            return ComboRouterProvider(profile, tiers=tier_routes)
 
         if name == "anthropic":
             from avo.providers.anthropic import AnthropicConfig, AnthropicProvider
