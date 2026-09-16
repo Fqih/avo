@@ -107,6 +107,8 @@ class AvoMCPServer:
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": self._name, "version": self._version},
             }
+        if method == "notifications/initialized":
+            return {}
         if method == "tools/list":
             return {
                 "tools": [
@@ -208,8 +210,9 @@ class AvoMCPServer:
             # Caller pre-bound a reader; feed bytes into the same queue.
             pass
 
+        buf = bytearray()
+
         async def _read_envelope_threaded() -> JsonDict | None:
-            buf = bytearray()
             while True:
                 if buf:
                     # Try to parse what we have first; if a complete
@@ -235,6 +238,9 @@ class AvoMCPServer:
             params = envelope.get("params") or {}
             if not isinstance(params, dict):
                 params = {}
+            if request_id is None:
+                # Notifications must not receive a response per JSON-RPC 2.0.
+                continue
             try:
                 result = await self._handle(method, params)
                 response: JsonDict = {"jsonrpc": "2.0", "id": request_id, "result": result}
