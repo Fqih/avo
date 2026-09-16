@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Subproject S2 — Combo Routing: multi-tier model orchestration with named profiles
+  (`default`, `coder`, `budget`), automatic HTTP 429 and quota failover detection,
+  and local Ollama as a zero-cost reliability floor.
+- `avo combo` CLI tool with `list`, `show`, `new`, and `rm` subcommands for profile
+  management persisted to `~/.config/avo/combos.json` (chmod 0600).
+- Interactive REPL `/combo` slash command for inspecting tier health and hot-swapping
+  active combos mid-session, accompanied by live fallback visual notices.
+- SQLite durable `route_failover` event recording and invariant validation.
 - Subscription OAuth authentication and universal credential management (`avo login`):
   PKCE OAuth authorization code flows for Anthropic Claude (claude.ai subscription),
   OpenAI ChatGPT Codex (`codex`), and Google Gemini CLI (`gemini-cli`), plus universal
