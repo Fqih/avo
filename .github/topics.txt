@@ -1,0 +1,14 @@
+# GitHub Repository Topics for Avo (fqih/avo)
+# Set via: gh repo edit --add-topic "<topic>"
+ai-agents
+llm
+multi-model
+resilience
+oauth
+ollama
+failover
+python
+claude-code
+codex
+developer-tools
+agentic-ai
