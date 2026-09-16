@@ -49,10 +49,16 @@ Prints resolved provider / model / endpoint without an HTTP call — cheapest sm
 
 ## What Avo gives you
 
+- **Subscription OAuth & Universal Login** — authenticate directly via
+  browser PKCE against Claude Pro/Team, ChatGPT Plus/Team (Codex), or
+  Google Gemini CLI (`avo login`).
+- **Multi-Tier Combo Routing & Quota Failover** — organize models into
+  prioritized tiers (`subscription` &rarr; `cheap` &rarr; `free local floor`).
+  Fail over automatically on HTTP 429 or quota exhaustion mid-turn.
 - **Deterministic agent loop** — strict `StopReason` taxonomy, finite
   `AgentState` transitions, replayable event log.
 - **Provider-agnostic** — Anthropic, OpenAI-compatible, Groq, Cerebras,
-  Ollama, MiniMax; bring your own.
+  Ollama, MiniMax, Gemini, Codex; bring your own.
 - **Resilience** — bounded retry with exponential backoff, three-state
   circuit breaker, request-level circuit trip on sustained upstream
   failure.
@@ -100,6 +106,16 @@ tests/          # offline-by-default suite, 880+ tests
 benchmark/      # cross-provider benchmark harness
 docs/           # this documentation site
 ```
+
+## Acknowledgments
+
+Avo is inspired by and builds upon the work of several exceptional open-source projects:
+
+- **[decolua/9router](https://github.com/decolua/9router)** (MIT): Upstream reference and port for OAuth PKCE token exchange flow structures, vendor endpoint configurations, and token-refresh lifecycle design.
+- **[clash-ru/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)** (MIT): Upstream Go lineage for subscription flow verification.
+- **[BerriAI/liteLLM](https://github.com/BerriAI/litellm)** (MIT): Reference for provider fallback matrices and error categorization.
+- **[Textualize/rich](https://github.com/Textualize/rich)** (MIT): Inspiration for CLI formatting and terminal rendering.
+- **Anthropic, OpenAI, Google, and Ollama**: For AI models, developer APIs, and local inference engines.
 
 ## Links
 

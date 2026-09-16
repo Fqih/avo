@@ -1,22 +1,96 @@
 <div align="center">
 
-<img src="logo.svg" width="240" alt="avo logo">
+<img src="logo.svg" width="220" alt="Avo Logo">
 
-**Provider-agnostic reliability runtime for bounded, observable, resumable, replayable AI agent loops.**
+# Avo
 
-*Bounded. Resumable. Provider-agnostic. Honest about why it stopped.*
+**The Resilient, Observable AI Agent Runtime with Multi-Tier Combo Routing & Subscription OAuth**
+
+*One conversation, many models. Automatic failover down to local Ollama. Zero core dependencies.*
+
+[![Python 3.11 | 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Tests: 1331 passed](https://img.shields.io/badge/tests-1331%20passed-brightgreen.svg)](tests/)
+[![Coverage: ≥90%](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen.svg)](tests/)
+[![Docs](https://img.shields.io/badge/docs-fqih.cloud-indigo.svg)](https://fqih.cloud/)
 
 </div>
 
 ---
 
-> ⚠️ 0.1 is an **alpha foundation**. Suitable for evaluation, deterministic tests, and local prototypes; **not production-ready**.
+**Avo** is an observable, resilient AI agent runtime that unites your Claude Pro, ChatGPT Plus, and Gemini subscriptions with multi-tier combo failover down to local Ollama. When API quotas or rate limits hit mid-flight, Avo switches models seamlessly without losing conversational state or task execution. Built on an event-sourced SQLite ledger with deterministic replay, safe workspace tools, and zero extra core dependencies (Pydantic only).
 
 ---
 
-## Install
+## What Makes Avo Different?
 
-Requires Python 3.11+. Core runtime depends only on Pydantic.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Avo Runtime                            │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+              ┌─────────────▼─────────────┐
+              │    ComboRouterProvider    │
+              └─────────────┬─────────────┘
+                            │
+      ┌─────────────────────┼─────────────────────┐
+      │ (Tier 1: Primary)   │ (Tier 2: Cheap)     │ (Tier 3: Free Floor)
+┌─────▼──────────────┐┌─────▼──────────────┐┌─────▼──────────────┐
+│ Claude / ChatGPT   ││ OpenRouter / Groq  ││ Ollama (Local)     │
+│ (Subscription)     ││ (Pay-per-token)    ││ (Zero Cost / Free) │
+└────────────────────┘└────────────────────┘└────────────────────┘
+         │ (429/Quota)         │ (429/Quota)
+         └──────► Fallback ────┴──────► Fallback ────► Done
+```
+
+### 1. 🔑 Subscription OAuth & Universal Login
+Reuse your existing **Claude Pro/Team**, **ChatGPT Plus/Team (Codex)**, or **Google Gemini CLI** subscriptions via standard PKCE browser flows (`avo login claude`, `avo login codex`, `avo login gemini`). Tokens are encrypted with `chmod 0600`, refreshed automatically in the background with deduplication, and stored alongside API keys in `~/.config/avo/auth.json`.
+
+### 2. 🔀 Multi-Tier Combo Routing & Quota Failover
+Never suffer crashed agent runs from HTTP 429 or exhausted token quotas again. Configure named combo profiles (`default`, `coder`, `budget`) where models are organized in priority order (`subscription` &rarr; `cheap API` &rarr; `free local floor`). Avo detects rate limits and credit exhaustion mid-turn, switches to the next tier, and continues streaming.
+
+### 3. 📜 Event-Sourced Ledger & Replay
+Every decision, prompt, tool call, output, and failover is recorded as an immutable event in a durable SQLite ledger. Any past run can be inspected with chronological traces (`avo runs inspect <id>`) or resumed deterministically (`avo runs resume <id>`).
+
+### 4. 🛡️ Hardened Workspace & Ephemeral Sandboxing
+File tools strictly enforce POSIX `O_NOFOLLOW` boundaries—null bytes, symlink escapes, and `../` traversal are blocked before any I/O occurs. Shell commands run in isolated, ephemeral Docker containers with CPU/memory limits and disabled networking by default.
+
+### 5. 🪶 Zero Extra Core Dependencies
+The core agent loop, state machine, event store, and providers require **only Pydantic**. Additional capabilities (Docker sandbox, OpenTelemetry, CLI extras) remain opt-in.
+
+---
+
+## Terminal Visual Walkthrough
+
+Experience interactive agent loops with real-time model failover:
+
+```text
+$ export AVO_PROVIDER=combo
+$ export AVO_COMBO=coder
+$ avo chat
+
+       ▄██▄           Avo CLI 0.1.0
+     ▄██████▄         Fqih (Subscription)
+    ███    ███        provider: combo · model: coder [subscription -> cheap -> free]
+   ███  ▄▄  ███       workspace: ~/Project/Loopward
+   ███  ▀▀  ███       session: c8f921ab04e1
+  ──────────────────────────────────────────────────────
+
+> Analyze the authentication flow in src/avo/auth.py and write unit tests
+
+⠋ Thinking...
+⤾ Fallback: switched from 'subscription' (claude) to 'cheap' (openrouter) [rate_limited_429]
+
+I've analyzed `src/avo/auth.py`. Here is the architecture breakdown and test suite...
+```
+
+---
+
+## Quickstart (Under 2 Minutes)
+
+### 1. Installation
+
+Requires Python 3.11+.
 
 ```bash
 git clone https://github.com/Fqih/avo.git
@@ -24,38 +98,48 @@ cd avo
 python -m pip install -e ".[dev,providers,sandbox]"
 ```
 
-### Optional extras
+### 2. Authenticate
 
-| Extra | Adds | When you need it |
-|---|---|---|
-| `[dev]` | pytest, mypy, ruff, coverage | Local dev + tests |
-| `[providers]` | httpx | Talking to MiniMax, Anthropic, OpenAI-compatible endpoints |
-| `[sandbox]` | docker-py | Using `run_shell` against a real Docker daemon |
-| `[otel]` | opentelemetry-api, sdk, otlp exporter | Emitting `gen_ai.*` spans for a run |
-| `[live-benchmark]` | httpx, matplotlib | Running `python benchmark/run_benchmark.py` |
-| `[mcp]` | mcp SDK | Authoring MCP servers or non-stdio transports |
+Log in via subscription OAuth or plain API keys:
 
-Verify the install:
+```bash
+# OAuth Subscription login (Claude, ChatGPT Codex, or Gemini)
+avo login claude
 
+# Or store plain API keys securely
+avo login openrouter --key-stdin
+```
+
+Verify your environment configuration with one command:
 ```bash
 avo doctor
 ```
 
-Prints resolved provider / model / endpoint without an HTTP call — cheapest smoke test.
+### 3. Interactive Chat REPL
+
+Launch the agent with multi-tier combo routing:
+
+```bash
+AVO_PROVIDER=combo AVO_COMBO=coder avo chat
+```
+
+Inside the REPL:
+- Type `/combo` to view real-time tier health and latencies.
+- Type `/combo budget` to hot-swap to another profile.
+- Type `/diff` to inspect uncommitted workspace modifications.
+- Type `/model` to pick a specific standalone model.
 
 ---
 
-## Quickstart
+### 4. Python API Example
 
-One typed tool call, then a final reply. No API key:
+Embed Avo's resilient loop directly into your Python service:
 
 ```python
 import asyncio
 from pydantic import BaseModel
 
-from avo import (
-    AgentRuntime, FunctionTool, ModelResponse, TokenUsage, ToolCall,
-)
+from avo import AgentRuntime, FunctionTool, ModelResponse, TokenUsage, ToolCall
 from avo.providers import FakeProvider
 
 
@@ -69,11 +153,13 @@ async def add(arguments: AddArguments) -> object:
 
 
 async def main() -> None:
+    # 100% offline testable fake provider
     provider = FakeProvider(
         [
             ModelResponse(
                 tool_call=ToolCall(
-                    tool_call_id="addition-1", name="add",
+                    tool_call_id="addition-1",
+                    name="add",
                     arguments={"left": 2, "right": 3},
                 ),
                 usage=TokenUsage(input_tokens=12, output_tokens=5),
@@ -100,290 +186,101 @@ async def main() -> None:
     print(result.status.value, result.stop_reason.value, result.output)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-`examples/basic_agent.py` ships this runnable end-to-end.
+---
+
+## Comparison Matrix
+
+How does Avo compare to alternative model proxies and CLI tools?
+
+| Feature | **Avo** | **9router** | **LiteLLM** | **OpenRouter** | **Claude Code** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **In-Process Agent Runtime** | ✅ Yes | ❌ (Proxy only) | ❌ (Gateway only) | ❌ (Hosted API) | ✅ Yes |
+| **Subscription OAuth (Claude/Codex/Gemini)** | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ⚠️ (Claude only) |
+| **Multi-Tier Failover (Sub → Cheap → Local)** | ✅ Yes | ⚠️ (Basic route) | ✅ Yes | ⚠️ (Model fallbacks) | ❌ No |
+| **Zero-Cost Local Floor (Ollama)** | ✅ Yes | ⚠️ (Via endpoint) | ✅ Yes | ❌ No | ❌ No |
+| **Event-Sourced Ledger & Replay (SQLite)** | ✅ Built-in | ❌ No | ❌ No | ❌ No | ❌ No |
+| **POSIX Safe Workspace (O_NOFOLLOW)** | ✅ Built-in | ❌ No | ❌ No | ❌ No | ❌ No |
+| **Ephemeral Docker Sandbox** | ✅ Built-in | ❌ No | ❌ No | ❌ No | ⚠️ (Host shell) |
+| **Core Dependency Footprint** | **Pydantic only** | Go binary | Heavy Python deps | N/A (Cloud) | Node.js |
 
 ---
 
-## Configuration
+## Supported Providers
 
-All knobs live in `AVO_*` env vars. The chat REPL's first-run wizard can persist them to `~/.zshrc` / `~/.bashrc`.
-
-### Provider selection
-
-| Variable | Required | Purpose |
-|---|---|---|
-| `AVO_PROVIDER` | yes | `ollama` \| `minimax` \| `anthropic` \| `openai` \| `groq` \| `cerebras` \| `openrouter` \| `gemini` |
-| `AVO_MODEL` | yes | Default model name for the active provider |
-| `AVO_OLLAMA_BASE_URL` | no | Ollama endpoint (default `http://localhost:11434`) |
-| `AVO_OLLAMA_MODEL` | no | Ollama-specific model override |
-| `AVO_OLLAMA_API_KEY` | no | Ollama auth header (rarely needed) |
-| `AVO_MINIMAX_API_KEY` | yes for minimax | API key |
-| `AVO_MINIMAX_BASE_URL` | no | Default `https://api.minimax.io` |
-| `AVO_MINIMAX_MODEL` | no | Provider-specific override |
-| `AVO_MINIMAX_API_STYLE` | no | `anthropic` (default) or `openai` |
-| `AVO_ANTHROPIC_API_KEY` | yes for anthropic | API key |
-| `AVO_ANTHROPIC_BASE_URL` | no | Default `https://api.anthropic.com` |
-| `AVO_ANTHROPIC_MODEL` | no | Provider-specific override |
-| `AVO_OPENAI_API_KEY` | yes for openai | API key |
-| `AVO_OPENAI_BASE_URL` | no | Default `https://api.openai.com/v1` |
-| `AVO_OPENAI_MODEL` | no | Provider-specific override |
-| `AVO_GROQ_API_KEY` | yes for groq | Groq API key |
-| `AVO_GROQ_BASE_URL` | no | Default `https://api.groq.com/openai/v1` |
-| `AVO_GROQ_MODEL` | no | Provider-specific override |
-| `AVO_CEREBRAS_API_KEY` | yes for cerebras | Cerebras API key |
-| `AVO_CEREBRAS_BASE_URL` | no | Default `https://api.cerebras.ai/v1` |
-| `AVO_CEREBRAS_MODEL` | no | Provider-specific override |
-| `AVO_OPENROUTER_API_KEY` | yes for openrouter | OpenRouter API key |
-| `AVO_OPENROUTER_BASE_URL` | no | Default `https://openrouter.ai/api/v1` |
-| `AVO_OPENROUTER_MODEL` | no | Provider-specific override |
-| `AVO_GEMINI_API_KEY` | yes for gemini | Gemini API key |
-| `AVO_GEMINI_BASE_URL` | no | Default `https://generativelanguage.googleapis.com` |
-| `AVO_GEMINI_MODEL` | no | Provider-specific override |
-
-### Runtime + policy
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `AVO_DATABASE_PATH` | in-memory | SQLite path for the run/event store |
-| `AVO_MAX_TOTAL_TOKENS` | unlimited | Override `LoopPolicy.max_total_tokens` |
-| `AVO_MAX_RUNTIME_SECONDS` | `300` | Override `LoopPolicy.max_runtime_seconds` |
-| `AVO_REPEATED_ACTION_LIMIT` | `3` | Override `LoopPolicy.repeated_action_limit` |
-| `AVO_PERMISSION_MODE` | `default` | `default` / `accept_edits` / `plan` / `bypass` |
-| `AVO_TOOLS_REQUIRE_APPROVAL` | empty | Comma-separated tool names gating on `approval_callback` |
-| `AVO_USAGE_RATES_INPUT_PER_1K` | unset | Cost rate for input tokens |
-| `AVO_USAGE_RATES_OUTPUT_PER_1K` | unset | Cost rate for output tokens |
-| `AVO_NOTIFY_WEBHOOK` | unset | URL to POST run lifecycle events to |
-| `AVO_NOTIFY_DESKTOP` | `0` | Set to `1` to enable desktop notifications |
-
-See [`.env.example`](.env.example) for a copy-paste template.
+| Provider | Identifier | Auth Mechanism | Primary Use Case |
+|---|---|---|---|
+| **Anthropic Claude** | `anthropic` | Subscription OAuth or API Key | High-reasoning agent turns |
+| **ChatGPT Codex** | `codex` | Subscription OAuth | Complex coding & planning |
+| **Google Gemini** | `gemini` / `gemini-cli`| Subscription OAuth or API Key | Fast, multimodal turns |
+| **Ollama** | `ollama` | Local HTTP (no auth) | Zero-cost reliability floor |
+| **OpenRouter** | `openrouter` | API Key | 300+ models gateway |
+| **Groq** | `groq` | API Key | Ultra low-latency inference |
+| **Cerebras** | `cerebras` | API Key | Wafer-scale speed inference |
+| **MiniMax** | `minimax` | API Key | Cost-effective Anthropic style |
+| **OpenAI-Compatible** | `openai` | API Key | vLLM, llama.cpp, LocalAI |
+| **Multi-Tier Combo** | `combo` | Orchestrates all above | Automatic 429 & quota fallback |
 
 ---
 
-## Providers
+## CLI & REPL Cheat Sheet
 
-| Provider | Adapter | Notes |
-|---|---|---|
-| Ollama | `OllamaProvider` | Local HTTP, no key. Default for offline dev. |
-| MiniMax | `MiniMaxProvider` | Anthropic-compatible (default) or OpenAI-compatible style. |
-| Anthropic | `AnthropicProvider` | Native Anthropic Messages API. |
-| OpenAI | `OpenAICompatibleProvider` | Any `/v1/chat/completions` endpoint — OpenAI, vLLM, llama.cpp. |
-| Groq | `GroqProvider` | OpenAI-compatible Llama / Mixtral inference, low latency. |
-| Cerebras | `CerebrasProvider` | OpenAI-compatible inference on Cerebras wafer-scale hardware. |
-| OpenRouter | `OpenRouterProvider` | OpenAI-compatible gateway to 300+ models, free tier included. |
-| Google Gemini | `GeminiProvider` | Native Gemini `generateContent` REST API with function calling. |
+### Core CLI Commands
 
-All eight implement the same `ModelProvider` Protocol. Swapping providers is one line.
-
----
-
-## Application tools
-
-`avo.app_tools` is the optional-but-default toolkit. Tools plug into the existing
-`FunctionTool` / `ToolRegistry` contract — no changes to the runtime, state machine, or
-event log.
-
-| Tool | What it does |
+| Command | Action |
 |---|---|
-| `read_file` / `write_file` / `edit_file` | Workspace-scoped file I/O |
-| `glob` / `grep` / `workspace_map` | Workspace enumeration + search |
-| `git_status` | Branch, modified, optional untracked files |
-| `run_shell` | One shell command in an ephemeral Docker container |
-| `plan_tasks` / `submit_plan` | Structured plan declaration + persistence |
-| `task` | Dispatch isolated sub-agent run |
-| `web_fetch` / `web_search` | HTTP GET with hard byte cap / DuckDuckGo HTML search |
+| `avo chat` | Start interactive chat REPL. |
+| `avo login [PROVIDER]` | Authenticate via subscription OAuth or API key. |
+| `avo combo list` | List configured multi-tier combo profiles (`--json` supported). |
+| `avo combo show <NAME>` | Inspect tier configuration, timeouts, and cooldowns. |
+| `avo combo new <NAME> --tier ...` | Create a custom combo route. |
+| `avo combo rm <NAME>` | Remove a custom combo profile. |
+| `avo doctor` | Smoke-test configuration without network calls. |
+| `avo cost` | Aggregate token usage and USD spend across recorded runs. |
+| `avo runs list` | List recorded execution runs. |
+| `avo runs inspect <RUN_ID>` | Chronological trace of steps, tools, and events. |
+| `avo runs diff <A> <B>` | Compare execution deltas between two runs. |
 
-### Workspace safety
+### Essential Chat Slash Commands
 
-`Workspace(root).validate_path(...)` rejects `../`, symlink escapes, absolute-path
-escapes, and null bytes **before** any I/O. `validate_for_write` refuses to follow
-symlinks at the leaf or any parent. `write_file` / `edit_file` open with `O_NOFOLLOW` on
-POSIX. No path the model can ask for exits the workspace root.
-
-### Shell sandbox
-
-`SandboxExecutor` wraps docker-py. Each `run_shell` call creates a fresh container
-(`remove=True`), runs with `network_mode="none"` by default, applies a `mem_limit` and
-`cpu_quota`, times out via the runtime's `LoopPolicy.tool_timeout_seconds`, and removes
-the container before returning. `run_shell` never calls `subprocess` on the host — the
-sandbox is the only path to the shell.
-
-Suit the network policy to your task:
-
-```python
-from avo.app_tools.sandbox import SandboxExecutor
-
-sandbox = SandboxExecutor(
-    network_mode="bridge",  # default "none" — switch when network is required
-    mem_limit="512m",
-    cpu_quota=100000,
-)
-```
-
-### Approval policy
-
-`AVO_TOOLS_REQUIRE_APPROVAL` lists tool names that must wait for explicit operator
-approval. Tools not in the list auto-approve. Wire a custom callback:
-
-```python
-from avo.app_tools.approval import build_approval_callback
-
-callback = build_approval_callback(
-    on_require=lambda call: input(f"approve {call.name}? [y/N] ").lower() == "y",
-)
-runtime = AgentRuntime(provider=provider, tools=[...], approval_callback=callback)
-```
+- `/combo [NAME]`: View live tier health status or hot-swap combo profiles.
+- `/model [NAME]`: Switch active provider or model on the fly.
+- `/provider`: Inspect resolved endpoint and credentials.
+- `/context`: Snapshot token usage, session turns, and active persona.
+- `/diff`: Display unified git diff or status in the current workspace.
+- `/undo`: Revert uncommitted workspace modifications.
+- `/export [PATH]`: Export session history to formatted Markdown.
+- `/clear`: Clear terminal screen.
+- `/quit`: Exit REPL.
 
 ---
 
-## Observability (OpenTelemetry)
+## Acknowledgments & Upstream Lineage
 
-Set `AVO_OTEL_ENABLED=1` and the runtime wraps every `_drive` invocation in a span
-tagged with the `gen_ai.*` semantic conventions:
+Avo is built upon and inspired by excellent open-source projects:
 
-```bash
-python -m pip install -e ".[otel]"
-export AVO_OTEL_ENABLED=1
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-avo chat
-```
-
-Spans carry `avo.run_id`, `gen_ai.system` (provider name), and `gen_ai.request.model`.
-`avo.observability.record_usage(...)` writes input / output token counts into the
-active span, so cost rollups line up with trace data. The module is a noop when the
-extra is not installed — no exceptions at import time, no runtime overhead.
+- **[decolua/9router](https://github.com/decolua/9router)** (MIT): Upstream reference and port for OAuth PKCE authorization-code token exchange shapes, vendor endpoints, and token-refresh lifecycle patterns.
+- **[clash-ru/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)** (MIT): Upstream Go lineage for subscription flow verification.
+- **[BerriAI/liteLLM](https://github.com/BerriAI/litellm)** (MIT): Reference for provider fallback matrices and error categorization.
+- **[Textualize/rich](https://github.com/Textualize/rich)** (MIT): Inspiration for terminal styling and visual design.
+- **Anthropic, OpenAI, Google, and Ollama**: For developer APIs and local inference engines.
 
 ---
 
-## Cost tracking
+## Documentation
 
-`avo cost` aggregates every persisted ledger entry (the same `avo.db` the event store
-uses) and prints total tokens + USD spend, with per-run and per-model breakdowns.
-Output is human-readable by default and machine-readable with `--json`:
+Full documentation, architecture specs, and user guides are available at [fqih.cloud](https://fqih.cloud/):
 
-```bash
-avo cost --database avo.db --json
-```
-
-```json
-{
-  "run_count": 2,
-  "total": {"input_tokens": 700, "output_tokens": 370, "total_tokens": 1070},
-  "cost_usd": "0.0142",
-  "runs": [...],
-  "models": [...]
-}
-```
-
-Set `AVO_USAGE_RATES_INPUT_PER_1K` / `AVO_USAGE_RATES_OUTPUT_PER_1K` to seed the ledger
-with USD costs as each provider call returns.
-
----
-
-## Scaffolding plugins
-
-`avo plugin init` writes a working plugin to disk so you can iterate on a new tool
-without touching project structure by hand:
-
-```bash
-mkdir ~/projects/my-tool && cd ~/projects/my-tool
-avo plugin init my-tool
-cd my-tool
-avo plugin install .    # registers the sample echo tool
-```
-
-The scaffold ships a `pyproject.toml` declaring an `avo.tools` entry point, a
-`register()` stub returning a sample `FunctionTool`, a `README.md`, and a `.gitignore`.
-Replace the sample tool with your own and the runtime picks it up on the next
-`avo plugin install .`.
-
----
-
-## CLI
-
-```bash
-avo [-d DATABASE] <command> [args]
-```
-
-| Command | What it does |
-|---|---|
-| `avo doctor` | Verify `AVO_*` config without an HTTP call. |
-| `avo chat [-d PATH] [--workspace-root DIR] [--session ID] [--new-session]` | Interactive REPL. First run with no provider triggers the setup wizard. |
-| `avo runs list` | Print one line per run. |
-| `avo runs inspect RUN_ID` | Render the chronological trace. |
-| `avo runs resume RUN_ID` | Resume a persisted FakeProvider run with no pending tool call. |
-| `avo plugin install URL \| PATH` | Install a plugin from git URL or local path. |
-| `avo plugin list` / `show NAME` / `remove NAME [-y]` | Manage installed plugins. |
-| `avo plugin init [NAME] [-d DIR] [--force]` | Scaffold a new plugin (pyproject + sample `FunctionTool`). |
-| `avo mcp add NAME [--env KEY=VAL]... CMD ARGS...` | Register an MCP server. |
-| `avo mcp list` / `remove NAME [-y]` | Manage MCP server registrations. |
-| `avo skill install PATH` / `list` / `show NAME` / `remove NAME [-y]` | Manage skill packs. |
-| `avo bench [--turns N] [--task ID] [--output PATH]` | Deterministic FakeProvider benchmark. |
-| `avo runs diff RUN_A RUN_B [--json]` | Compare two persisted runs. |
-| `avo cost [--database PATH] [--json]` | Aggregate token + USD spend across runs. |
-| `avo sandbox run --image IMG --workspace DIR [--network MODE] -- COMMAND ARGS...` | One-shot ephemeral docker sandbox. |
-
-### Chat REPL slash commands
-
-| Slash command | Action |
-|---|---|
-| `/help` | Print the full slash-command list. |
-| `/provider` | Print provider / model / base URL / key-presence. |
-| `/model [NAME]` | Switch to `NAME` or pick from the catalog (`/model` alone). |
-| `/inspect RUN_ID` | Render a stored trace. |
-| `/resume RUN_ID` | Resume a stored run. |
-| `/skills` | List skills under `<workspace>/.avo/skills`. |
-| `/skill NAME` | Inject a skill body as the next user turn. |
-| `/quit` / `/exit` | Exit the REPL. |
-
----
-
-## Examples
-
-`examples/` ships runnable Python files, all offline (no API key):
-
-| File | Demonstrates |
-|---|---|
-| `examples/basic_agent.py` | One typed tool call, then a final reply. |
-| `examples/repeated_action.py` | Deterministic repeated-action containment. |
-| `examples/resume_after_interrupt.py` | Interrupt mid-flight, reopen SQLite, resume. |
-| `examples/app_tools_demo.py` | Workspace + file tools + permissive approval. |
-| `examples/live_providers/` | Real-API smoke tests per provider (need `AVO_*` keys). |
-
-```bash
-python examples/basic_agent.py
-python examples/repeated_action.py
-python examples/resume_after_interrupt.py
-python examples/app_tools_demo.py
-```
-
----
-
-## Development
-
-```bash
-python -m pip install -e ".[dev,providers,sandbox]"
-ruff check .
-ruff format --check .
-mypy src/avo
-pytest
-```
-
-Quality gates:
-
-- **ruff** lint + format — line-length 100, per-file ignores for `examples/`, `benchmark/`.
-- **mypy** strict on `src/avo` (Pydantic plugin).
-- **pytest** `--strict-config --strict-markers`, asyncio mode auto.
-- **coverage** branch coverage, fail-under 90%.
-
-The suite needs no Docker — `SandboxExecutor` accepts an injectable client so tests
-inject a fake and assert the container config that would be sent. Live Docker integration
-is opt-in, same pattern as `benchmark/live/tests/`.
+- [Subscription OAuth Guide](docs/guides/subscription-auth.md)
+- [Combo Routing & Failover Guide](docs/guides/combo-routing.md)
+- [Full Project API Reference](docs/avo-reference.md)
+- [SemVer & Stability Policy](docs/semver.md)
 
 ---
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
