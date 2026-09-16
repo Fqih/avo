@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from avo.combo.cli import ComboCliError
 from avo.combo.detector import classify_failover_reason, is_quota_or_rate_limit_error
 from avo.combo.models import ComboProfile, ComboTier
 from avo.combo.provider import ComboRouterProvider
@@ -14,6 +15,7 @@ from avo.combo.store import (
 )
 
 __all__ = [
+    "ComboCliError",
     "ComboProfile",
     "ComboRouterProvider",
     "ComboTier",

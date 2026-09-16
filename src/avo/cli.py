@@ -160,6 +160,11 @@ def _parser() -> argparse.ArgumentParser:
         add_help=False,
         help="Launch the local Web UI dashboard (see `avo ui --help`).",
     )
+    commands.add_parser(
+        "combo",
+        add_help=False,
+        help="Manage combo routing profiles (see `avo combo --help`).",
+    )
 
     return parser
 
@@ -175,6 +180,11 @@ async def _execute(args: argparse.Namespace, rest: list[str] | None = None) -> i
         from avo.auth import main_login
 
         return main_login(tail or _tail_argv("login"))
+
+    if args.command == "combo":
+        from avo.combo.cli import main as combo_main
+
+        return combo_main(tail or _tail_argv("combo"))
 
     if args.command == "doctor":
         # ``doctor_main`` has already-consumed argv; pass an empty list
@@ -310,6 +320,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "bench",
         "sandbox",
         "cost",
+        "combo",
     }:
         parser.error(f"unrecognized arguments: {' '.join(rest)}")
     try:
