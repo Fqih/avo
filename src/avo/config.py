@@ -261,8 +261,9 @@ def build_provider_from_env(
             for tier in profile.tiers:
                 if tier.provider == "combo":
                     raise ConfigError("Nested combo tiers are not supported")
+                tier_prov_name = "anthropic" if tier.provider == "claude" else tier.provider
                 tier_env = dict(env)
-                tier_env["AVO_PROVIDER"] = tier.provider
+                tier_env["AVO_PROVIDER"] = tier_prov_name
                 tier_env["AVO_MODEL"] = tier.model
                 tier_prov = build_provider_from_env(
                     tier_env,

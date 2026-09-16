@@ -72,6 +72,8 @@ def _parse_tier_spec(spec: str, index: int) -> ComboTier:
         raise ComboCliError(f"model cannot be blank in {spec!r}")
     if provider == "combo":
         raise ComboCliError("nested combo tiers are not supported")
+    if provider == "claude":
+        provider = "anthropic"
 
     valid_providers = set(supported_providers()) - {"combo"}
     if provider not in valid_providers:

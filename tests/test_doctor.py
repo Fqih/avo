@@ -214,3 +214,29 @@ def test_doctor_codex_subscription_ok(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert report.ok
     assert report.provider == "codex"
     assert report.endpoint == "https://chatgpt.com/backend-api/codex/responses"
+
+
+def test_doctor_combo_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from avo.combo.models import ComboProfile, ComboTier
+    from avo.combo.store import save_combo
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    profile = ComboProfile(
+        name="local_duo",
+        tiers=[
+            ComboTier(name="t1", provider="ollama", model="llama3.2"),
+            ComboTier(name="t2", provider="ollama", model="qwen2.5"),
+        ],
+    )
+    save_combo(profile)
+
+    report = run_doctor(
+        {
+            "AVO_PROVIDER": "combo",
+            "AVO_COMBO": "local_duo",
+        }
+    )
+    assert report.ok
+    assert report.provider == "combo"
+    assert report.endpoint == "combo://local_duo"
+    assert report.api_style == "tiered_failover"

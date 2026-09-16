@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import IO, Any
 
-from avo.config import _PROVIDER_NAMES, ConfigError, build_provider_from_env
+from avo.config import _PROVIDER_NAMES, build_provider_from_env
 
 _PROVIDER_LABELS = {
     "ollama": "Ollama",
@@ -32,6 +32,7 @@ _PROVIDER_LABELS = {
     "gemini_cli": "Google Gemini CLI (subscription)",
     "gemini-cli": "Google Gemini CLI (subscription)",
     "router": "Multi-Provider Router",
+    "combo": "Multi-Tier Combo Router",
 }
 
 _REQUIRED_BY_PROVIDER: dict[str, tuple[str, ...]] = {
@@ -47,6 +48,7 @@ _REQUIRED_BY_PROVIDER: dict[str, tuple[str, ...]] = {
     "gemini_cli": ("AVO_PROVIDER", "AVO_MODEL"),
     "gemini-cli": ("AVO_PROVIDER", "AVO_MODEL"),
     "router": ("AVO_PROVIDER",),
+    "combo": ("AVO_PROVIDER",),
 }
 
 
@@ -183,6 +185,12 @@ def _endpoint_for(env: Mapping[str, str], provider: str) -> tuple[str | None, st
         )
         return f"router://{chain}", "fallback"
 
+    if provider == "combo":
+        combo_name = (
+            env.get("AVO_COMBO", "").strip() or env.get("AVO_MODEL", "").strip() or "default"
+        )
+        return f"combo://{combo_name}", "tiered_failover"
+
     return None, None
 
 
@@ -233,7 +241,7 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
         if not missing:
             try:
                 build_provider_from_env(env)
-            except ConfigError as exc:
+            except Exception as exc:
                 config_error = str(exc)
 
     extra = tuple(sorted(k for k in env if k.startswith("AVO_") and k not in set(missing)))

@@ -17,7 +17,7 @@ BUILTIN_COMBOS: dict[str, ComboProfile] = {
         name="default",
         description="Subscription Claude -> OpenRouter Llama -> Local Ollama",
         tiers=[
-            ComboTier(name="subscription", provider="claude", model="claude-sonnet-5"),
+            ComboTier(name="subscription", provider="anthropic", model="claude-sonnet-5"),
             ComboTier(
                 name="cheap",
                 provider="openrouter",
@@ -30,7 +30,7 @@ BUILTIN_COMBOS: dict[str, ComboProfile] = {
         name="coder",
         description="Claude Sonnet -> OpenRouter Llama -> Local Qwen Coder",
         tiers=[
-            ComboTier(name="subscription", provider="claude", model="claude-sonnet-5"),
+            ComboTier(name="subscription", provider="anthropic", model="claude-sonnet-5"),
             ComboTier(
                 name="cheap",
                 provider="openrouter",
