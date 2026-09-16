@@ -313,13 +313,16 @@ def main_login(argv: Sequence[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="avo login",
-        description="Manage OAuth credentials for Avo.",
+        description="Manage OAuth and API key credentials for Avo.",
     )
     parser.add_argument(
         "provider",
         nargs="?",
         default="openrouter",
-        help="Provider to authenticate with (openrouter, github; default: openrouter).",
+        help=(
+            "Provider to authenticate with (claude, codex, chatgpt, "
+            "gemini, github, openrouter; default: openrouter)."
+        ),
     )
     parser.add_argument(
         "--status",
@@ -331,18 +334,48 @@ def main_login(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Remove stored credentials for provider.",
     )
+    parser.add_argument(
+        "--key-stdin",
+        action="store_true",
+        help="Read raw API key from standard input and store without OAuth.",
+    )
+    parser.add_argument(
+        "--no-browser",
+        "--headless",
+        dest="no_browser",
+        action="store_true",
+        help="Do not attempt to open a browser automatically.",
+    )
+    parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Automatically confirm prompts (e.g. importing existing CLI credentials).",
+    )
     args = parser.parse_args(argv)
 
     if args.status:
-        tokens = load_all_tokens()
-        if not tokens:
+        from avo.oauth.store import load_all_credentials
+
+        creds = load_all_credentials()
+        if not creds:
             print("No providers currently authenticated in ~/.config/avo/auth.json.")
             return 0
         print("Authenticated providers:")
-        for p in sorted(tokens.keys()):
-            val = tokens[p]
-            masked = val[:4] + "..." + val[-4:] if len(val) > 8 else "****"
-            print(f"  • {p}: {masked}")
+        for p in sorted(creds.keys()):
+            cred = creds[p]
+            if cred.kind == "oauth":
+                exp_str = (
+                    f", expires {cred.expires_at.astimezone().strftime('%H:%M')}"
+                    if cred.expires_at
+                    else ""
+                )
+                account_str = f" {cred.account}" if cred.account else ""
+                print(f"  • {p}: oauth ✓{account_str}{exp_str}")
+            else:
+                val = cred.access_token or ""
+                masked = val[:4] + "..." + val[-4:] if len(val) > 8 else "****"
+                print(f"  • {p}: {masked}")
         return 0
 
     if args.logout:
@@ -353,15 +386,67 @@ def main_login(argv: Sequence[str] | None = None) -> int:
             print(f"No stored credentials found for {args.provider}.")
         return 0
 
-    provider = args.provider.lower()
-    if provider == "openrouter":
+    raw_provider = args.provider.lower()
+    store_key = "codex" if raw_provider == "chatgpt" else raw_provider
+
+    if args.key_stdin:
+        key = sys.stdin.readline().strip()
+        if not key:
+            print("Error: Empty API key provided via --key-stdin", file=sys.stderr)
+            return 1
+        target = store_token(store_key, key)
+        print(f"✓ Stored API key for {store_key} in {target}")
+        return 0
+
+    from avo.oauth.imports import find_importable
+
+    importable = find_importable(store_key)
+    if importable is not None:
+        should_import = args.yes
+        if not should_import and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+            acc = importable.account or "active"
+            prompt_msg = f"Found existing credentials for {store_key} ({acc}). Import? [Y/n]: "
+            ans = input(prompt_msg).strip().lower()
+            should_import = ans in {"", "y", "yes"}
+        if should_import:
+            from avo.oauth.store import store_credential
+
+            target = store_credential(importable)
+            acc = importable.account or "active"
+            print(f"✓ Imported {store_key} credentials ({acc}) into {target}")
+            return 0
+
+    from avo.oauth.registry import OAUTH
+
+    open_browser = not args.no_browser
+
+    if store_key in OAUTH:
+        from avo.oauth.flows import run_pkce_login
+        from avo.oauth.store import store_credential
+
+        entry = OAUTH[store_key]
         try:
-            asyncio.run(login_openrouter())
+            cred = asyncio.run(run_pkce_login(entry, open_browser=open_browser))
+            target = store_credential(cred)
+            exp_str = (
+                f", expires {cred.expires_at.astimezone().strftime('%H:%M')}"
+                if cred.expires_at
+                else ""
+            )
+            print(f"✓ Logged in: {cred.account or 'authenticated'} ({store_key}{exp_str})")
+            print(f"Stored in {target}")
             return 0
         except AuthError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
-    elif provider == "github":
+    elif store_key == "openrouter":
+        try:
+            asyncio.run(login_openrouter(open_browser=open_browser))
+            return 0
+        except AuthError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    elif store_key == "github":
         try:
             asyncio.run(login_github_device())
             return 0
@@ -369,8 +454,10 @@ def main_login(argv: Sequence[str] | None = None) -> int:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
     else:
+        supported = sorted(["claude", "codex (chatgpt)", "gemini", "github", "openrouter"])
         print(
-            f"Unknown login provider {args.provider!r}. Supported: openrouter, github.",
+            f"Unknown login provider {args.provider!r}. Supported: {', '.join(supported)}. "
+            "(Or use --key-stdin to store an API key for any provider.)",
             file=sys.stderr,
         )
         return 2
