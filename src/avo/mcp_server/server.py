@@ -89,7 +89,7 @@ class AvoMcpServer:
         registry: ToolRegistry,
         *,
         server_name: str = "avo",
-        server_version: str = "0.1.5",
+        server_version: str = "0.1.6",
         workspace_root: Path | str | None = None,
     ) -> None:
         self._registry = registry

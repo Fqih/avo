@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-16
+
+### Fixed
+
+- Fix `CodexProvider` and `GeminiCliProvider` failing with `Expecting value: line 1 column 1`
+  caused by attempting `response.json()` on Server-Sent Events (SSE) stream responses.
+- Parse SSE `data:` payloads and aggregate completed items, text parts, and usage metadata.
+
 ## [0.1.5] - 2026-09-16
 
 ### Added
