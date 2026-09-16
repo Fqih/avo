@@ -232,3 +232,27 @@ async def test_no_event_can_follow_terminal_event() -> None:
         )
     events = await store.get_events(run.run_id)
     assert sum(event.event_type in TERMINAL_EVENT_TYPES for event in events) == 1
+
+
+@pytest.mark.asyncio
+async def test_route_failover_event_can_be_appended_during_active_run() -> None:
+    store = InMemoryEventStore()
+    run = await seed_run(store)
+    event = AgentEvent(
+        run_id=run.run_id,
+        event_type=EventType.ROUTE_FAILOVER,
+        payload={
+            "combo": "coder",
+            "from_tier": "subscription",
+            "from_provider": "claude",
+            "from_model": "claude-sonnet-5",
+            "to_tier": "cheap",
+            "to_provider": "openrouter",
+            "to_model": "meta-llama/llama-3.3-70b-instruct",
+            "reason": "rate_limited_429",
+        },
+    )
+    appended = await store.append_event(event)
+    assert appended.event_type is EventType.ROUTE_FAILOVER
+    events = await store.get_events(run.run_id)
+    assert any(e.event_type is EventType.ROUTE_FAILOVER for e in events)
