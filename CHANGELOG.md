@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-16
+
 ### Added
 
+- Direct chat inference for authenticated web OAuth accounts (ChatGPT/Codex, Gemini, Claude web)
+  allowing free and subscription users to chat without manual `AVO_ALLOW_SUBSCRIPTION` flag setting.
+- Automatic provider detection from stored credentials in `~/.config/avo/auth.json` when `AVO_PROVIDER` is unset.
+- Complete GitHub discoverability overhaul: rewritten README with hero banner, 4 core pillars,
+  comparison matrix (Avo vs 9router vs LiteLLM vs OpenRouter vs Claude Code), 2-minute quickstart,
+  curated topics, and architectural documentation.
 - Subproject S2 — Combo Routing: multi-tier model orchestration with named profiles
   (`default`, `coder`, `budget`), automatic HTTP 429 and quota failover detection,
   and local Ollama as a zero-cost reliability floor.
