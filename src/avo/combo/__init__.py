@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from avo.combo.detector import classify_failover_reason, is_quota_or_rate_limit_error
 from avo.combo.models import ComboProfile, ComboTier
+from avo.combo.provider import ComboRouterProvider
 from avo.combo.store import (
     combos_file_path,
     delete_combo,
@@ -14,6 +15,7 @@ from avo.combo.store import (
 
 __all__ = [
     "ComboProfile",
+    "ComboRouterProvider",
     "ComboTier",
     "classify_failover_reason",
     "combos_file_path",
