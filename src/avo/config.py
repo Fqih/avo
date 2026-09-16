@@ -26,6 +26,9 @@ ProviderName = Literal[
     "cerebras",
     "openrouter",
     "gemini",
+    "codex",
+    "gemini_cli",
+    "gemini-cli",
     "router",
 ]
 _PROVIDER_NAMES: tuple[ProviderName, ...] = (
@@ -37,6 +40,9 @@ _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "cerebras",
     "openrouter",
     "gemini",
+    "codex",
+    "gemini_cli",
+    "gemini-cli",
     "router",
 )
 
@@ -112,6 +118,20 @@ PROVIDER_MODELS: dict[ProviderName, tuple[str, ...]] = {
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
+    ),
+    "codex": (
+        "gpt-5.6-sol",
+        "gpt-5",
+        "gpt-4.5-preview",
+        "o3-mini",
+    ),
+    "gemini_cli": (
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+    ),
+    "gemini-cli": (
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
     ),
     "router": (
         "auto",
@@ -194,95 +214,152 @@ def build_provider_from_env(
     if not model and name != "router":
         raise ConfigError("AVO_MODEL is required")
 
-    if name == "router":
-        return _build_router_from_env(
-            env,
+    try:
+        if name == "router":
+            return _build_router_from_env(
+                env,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+
+        if name == "ollama":
+            from avo.providers.ollama import OllamaConfig, OllamaProvider
+
+            ollama_config = OllamaConfig.from_avo_env(env, fallback_model=model)
+            return OllamaProvider(
+                ollama_config,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+
+        if name == "minimax":
+            from avo.providers.minimax import MiniMaxConfig, MiniMaxProvider
+
+            minimax_config = MiniMaxConfig.from_avo_env(env, fallback_model=model)
+            return MiniMaxProvider(
+                minimax_config,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+
+        if name == "anthropic":
+            from avo.providers.anthropic import AnthropicConfig, AnthropicProvider
+
+            anthropic_config = AnthropicConfig.from_avo_env(env, fallback_model=model)
+            return AnthropicProvider(
+                anthropic_config,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+
+        if name == "groq":
+            from avo.providers.groq import GroqConfig, GroqProvider
+
+            groq_config = GroqConfig.from_avo_env(env, fallback_model=model)
+            return GroqProvider(
+                groq_config,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+
+        if name == "cerebras":
+            from avo.providers.cerebras import CerebrasConfig, CerebrasProvider
+
+            cerebras_config = CerebrasConfig.from_avo_env(env, fallback_model=model)
+            return CerebrasProvider(
+                cerebras_config,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+
+        if name == "openrouter":
+            from avo.providers.openrouter import OpenRouterConfig, OpenRouterProvider
+
+            openrouter_config = OpenRouterConfig.from_avo_env(env, fallback_model=model)
+            return OpenRouterProvider(
+                openrouter_config,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+
+        if name in ("gemini_cli", "gemini-cli"):
+            from avo.providers.gemini_cli import GeminiCliConfig, GeminiCliProvider
+
+            gemini_cli_config = GeminiCliConfig.from_avo_env(env, fallback_model=model)
+            return GeminiCliProvider(
+                gemini_cli_config,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+
+        if name == "gemini":
+            from avo.oauth.store import get_credential
+
+            gemini_key = env.get("AVO_GEMINI_API_KEY", "").strip()
+            if not gemini_key:
+                stored_gemini = get_credential("gemini")
+                if stored_gemini is not None and stored_gemini.kind == "oauth":
+                    from avo.providers.gemini_cli import GeminiCliConfig, GeminiCliProvider
+
+                    gemini_cli_config = GeminiCliConfig.from_avo_env(env, fallback_model=model)
+                    return GeminiCliProvider(
+                        gemini_cli_config,
+                        max_completion_tokens=max_completion_tokens,
+                        request_timeout_seconds=request_timeout_seconds,
+                    )
+
+            from avo.providers.gemini import GeminiConfig, GeminiProvider
+
+            gemini_config = GeminiConfig.from_avo_env(env, fallback_model=model)
+            return GeminiProvider(
+                gemini_config,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+
+        if name == "codex":
+            from avo.providers.codex import CodexConfig, CodexProvider
+
+            codex_config = CodexConfig.from_avo_env(env, fallback_model=model)
+            return CodexProvider(
+                codex_config,
+                max_completion_tokens=max_completion_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+
+        # name == "openai"
+        openai_key = env.get("AVO_OPENAI_API_KEY", "").strip()
+        if not openai_key:
+            from avo.oauth.store import get_credential
+
+            stored_codex = get_credential("codex")
+            if stored_codex is not None and stored_codex.kind == "oauth":
+                from avo.providers.codex import CodexConfig, CodexProvider
+
+                codex_config = CodexConfig.from_avo_env(env, fallback_model=model)
+                return CodexProvider(
+                    codex_config,
+                    max_completion_tokens=max_completion_tokens,
+                    request_timeout_seconds=request_timeout_seconds,
+                )
+
+        from avo.providers.openai_compatible import (
+            OpenAICompatibleConfig,
+            OpenAICompatibleProvider,
+        )
+
+        openai_config = OpenAICompatibleConfig.from_avo_env(env, fallback_model=model)
+        return OpenAICompatibleProvider(
+            openai_config,
             max_completion_tokens=max_completion_tokens,
             request_timeout_seconds=request_timeout_seconds,
         )
+    except Exception as exc:
+        from avo.auth import AuthError
 
-    if name == "ollama":
-        from avo.providers.ollama import OllamaConfig, OllamaProvider
-
-        ollama_config = OllamaConfig.from_avo_env(env, fallback_model=model)
-        return OllamaProvider(
-            ollama_config,
-            max_completion_tokens=max_completion_tokens,
-            request_timeout_seconds=request_timeout_seconds,
-        )
-
-    if name == "minimax":
-        from avo.providers.minimax import MiniMaxConfig, MiniMaxProvider
-
-        minimax_config = MiniMaxConfig.from_avo_env(env, fallback_model=model)
-        return MiniMaxProvider(
-            minimax_config,
-            max_completion_tokens=max_completion_tokens,
-            request_timeout_seconds=request_timeout_seconds,
-        )
-
-    if name == "anthropic":
-        from avo.providers.anthropic import AnthropicConfig, AnthropicProvider
-
-        anthropic_config = AnthropicConfig.from_avo_env(env, fallback_model=model)
-        return AnthropicProvider(
-            anthropic_config,
-            max_completion_tokens=max_completion_tokens,
-            request_timeout_seconds=request_timeout_seconds,
-        )
-
-    if name == "groq":
-        from avo.providers.groq import GroqConfig, GroqProvider
-
-        groq_config = GroqConfig.from_avo_env(env, fallback_model=model)
-        return GroqProvider(
-            groq_config,
-            max_completion_tokens=max_completion_tokens,
-            request_timeout_seconds=request_timeout_seconds,
-        )
-
-    if name == "cerebras":
-        from avo.providers.cerebras import CerebrasConfig, CerebrasProvider
-
-        cerebras_config = CerebrasConfig.from_avo_env(env, fallback_model=model)
-        return CerebrasProvider(
-            cerebras_config,
-            max_completion_tokens=max_completion_tokens,
-            request_timeout_seconds=request_timeout_seconds,
-        )
-
-    if name == "openrouter":
-        from avo.providers.openrouter import OpenRouterConfig, OpenRouterProvider
-
-        openrouter_config = OpenRouterConfig.from_avo_env(env, fallback_model=model)
-        return OpenRouterProvider(
-            openrouter_config,
-            max_completion_tokens=max_completion_tokens,
-            request_timeout_seconds=request_timeout_seconds,
-        )
-
-    if name == "gemini":
-        from avo.providers.gemini import GeminiConfig, GeminiProvider
-
-        gemini_config = GeminiConfig.from_avo_env(env, fallback_model=model)
-        return GeminiProvider(
-            gemini_config,
-            max_completion_tokens=max_completion_tokens,
-            request_timeout_seconds=request_timeout_seconds,
-        )
-
-    # name == "openai"
-    from avo.providers.openai_compatible import (
-        OpenAICompatibleConfig,
-        OpenAICompatibleProvider,
-    )
-
-    openai_config = OpenAICompatibleConfig.from_avo_env(env, fallback_model=model)
-    return OpenAICompatibleProvider(
-        openai_config,
-        max_completion_tokens=max_completion_tokens,
-        request_timeout_seconds=request_timeout_seconds,
-    )
+        if isinstance(exc, AuthError):
+            raise ConfigError(str(exc)) from exc
+        raise
 
 
 def _build_router_from_env(

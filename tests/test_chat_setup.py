@@ -620,3 +620,43 @@ def test_merged_env_after_setup_carries_provider_key() -> None:
     merged.update(setup_out)
     assert merged["AVO_PROVIDER"] == "minimax"
     assert merged["AVO_MINIMAX_API_STYLE"] == "openai"
+
+
+def test_setup_codex_subscription() -> None:
+    from avo.chat import interactive_first_run_setup
+
+    # 7 = codex, empty model (default)
+    stdin = io.StringIO("7\n\n")
+    stdout = io.StringIO()
+    env = interactive_first_run_setup(stdin, stdout)
+    assert env == {
+        "AVO_PROVIDER": "codex",
+        "AVO_MODEL": "gpt-5.6-sol",
+        "AVO_ALLOW_SUBSCRIPTION": "1",
+    }
+
+
+def test_setup_reuse_stored_oauth_login(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from avo.chat import interactive_first_run_setup
+    from avo.oauth.store import Credential, store_credential
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_credential(
+        Credential(
+            provider="claude",
+            kind="oauth",
+            access_token="claude-token",
+            account="user@example.com",
+            subscription=True,
+        )
+    )
+
+    # 3 = anthropic, reuse stored login = Y (default), model = default
+    stdin = io.StringIO("3\nY\n\n")
+    stdout = io.StringIO()
+    env = interactive_first_run_setup(stdin, stdout)
+    assert env == {
+        "AVO_PROVIDER": "anthropic",
+        "AVO_MODEL": "claude-sonnet-4-6",
+        "AVO_ALLOW_SUBSCRIPTION": "1",
+    }

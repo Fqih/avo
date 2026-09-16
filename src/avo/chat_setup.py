@@ -51,6 +51,16 @@ _PROVIDER_CATALOG: dict[str, dict[str, str | bool]] = {
         "default_model": "auto",
         "needs_api_key": False,
     },
+    "codex": {
+        "label": "ChatGPT (Codex)",
+        "default_model": "gpt-5.6-sol",
+        "needs_api_key": False,
+    },
+    "gemini-cli": {
+        "label": "Gemini CLI",
+        "default_model": "gemini-2.5-pro",
+        "needs_api_key": False,
+    },
 }
 
 _PROVIDER_DESCRIPTIONS: dict[str, str] = {
@@ -60,6 +70,8 @@ _PROVIDER_DESCRIPTIONS: dict[str, str] = {
     "minimax": "MiniMax cloud models (MiniMax-M3)",
     "openrouter": "OpenRouter (Free tier models & 300+ endpoints)",
     "router": "Multi-Provider Fallback Router (Auto failover: Ollama -> OpenRouter)",
+    "codex": "ChatGPT subscription via Codex backend (subscription opt-in)",
+    "gemini-cli": "Google account subscription via Cloud Code (subscription opt-in)",
 }
 
 
@@ -182,23 +194,49 @@ def interactive_first_run_setup(
         env: dict[str, str] = {"AVO_PROVIDER": provider_key}
         uppercase_key = provider_key.upper()
 
+        store_key = {
+            "anthropic": "claude",
+            "openai": "codex",
+            "gemini": "gemini",
+            "codex": "codex",
+            "gemini-cli": "gemini",
+        }.get(provider_key, provider_key)
+
+        if provider_key in ("codex", "gemini-cli"):
+            env["AVO_ALLOW_SUBSCRIPTION"] = "1"
+            from avo.oauth.store import get_credential
+
+            stored = get_credential(store_key)
+            if stored is None:
+                stdout.write(
+                    f"\nNote: No stored {store_key} login found. "
+                    f"Run 'avo login {store_key}' to authenticate.\n"
+                )
+
         if spec["needs_api_key"]:
-            if provider_key == "openrouter":
-                from avo.auth import get_stored_token
+            from avo.oauth.store import Credential, get_credential, store_credential
 
-                stored_token = get_stored_token("openrouter")
-                if stored_token:
-                    stdout.write("Found stored OpenRouter token from `avo login`.\n")
-                    use_stored = _prompt_optional(
-                        stdin,
-                        stdout,
-                        "Use stored token? [Y/n]",
-                        default="Y",
-                    )
-                    if use_stored.strip().lower() in ("y", "yes"):
-                        env["AVO_OPENROUTER_API_KEY"] = stored_token
+            stored = get_credential(store_key)
+            if stored is not None:
+                acct = f" ({stored.account})" if stored.account else ""
+                stdout.write(f"Found stored {stored.kind} login for {provider_label}{acct}.\n")
+                reuse = _prompt_optional(
+                    stdin,
+                    stdout,
+                    "Reuse stored login? [Y/n]",
+                    default="Y",
+                )
+                if reuse.strip().lower() in ("y", "yes"):
+                    if stored.kind == "oauth":
+                        env["AVO_ALLOW_SUBSCRIPTION"] = "1"
+                        if provider_key == "openai":
+                            env["AVO_PROVIDER"] = "codex"
+                        elif provider_key == "gemini":
+                            env["AVO_PROVIDER"] = "gemini-cli"
+                    elif stored.access_token:
+                        env[f"AVO_{uppercase_key}_API_KEY"] = stored.access_token
 
-            if f"AVO_{uppercase_key}_API_KEY" not in env:
+            if f"AVO_{uppercase_key}_API_KEY" not in env and "AVO_ALLOW_SUBSCRIPTION" not in env:
                 api_key = _prompt_required(
                     stdin,
                     stdout,
@@ -207,6 +245,22 @@ def interactive_first_run_setup(
                     secret_reader=secret_reader,
                 )
                 env[f"AVO_{uppercase_key}_API_KEY"] = api_key
+
+                if secret_reader is None:
+                    save_opt = _prompt_optional(
+                        stdin,
+                        stdout,
+                        "Save to ~/.config/avo/auth.json? [y/N]",
+                        default="N",
+                    )
+                    if save_opt.strip().lower() in ("y", "yes"):
+                        store_credential(
+                            Credential(
+                                provider=store_key,
+                                kind="api_key",
+                                access_token=api_key,
+                            )
+                        )
 
         # Provider-specific optional tweaks. Each field is asked for with
         # an unambiguous prompt so the operator cannot paste a URL into

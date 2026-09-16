@@ -28,6 +28,9 @@ _PROVIDER_LABELS = {
     "cerebras": "Cerebras",
     "openrouter": "OpenRouter",
     "gemini": "Google Gemini",
+    "codex": "ChatGPT Codex (subscription)",
+    "gemini_cli": "Google Gemini CLI (subscription)",
+    "gemini-cli": "Google Gemini CLI (subscription)",
     "router": "Multi-Provider Router",
 }
 
@@ -40,6 +43,9 @@ _REQUIRED_BY_PROVIDER: dict[str, tuple[str, ...]] = {
     "cerebras": ("AVO_PROVIDER", "AVO_MODEL", "AVO_CEREBRAS_API_KEY"),
     "openrouter": ("AVO_PROVIDER", "AVO_MODEL", "AVO_OPENROUTER_API_KEY"),
     "gemini": ("AVO_PROVIDER", "AVO_MODEL", "AVO_GEMINI_API_KEY"),
+    "codex": ("AVO_PROVIDER", "AVO_MODEL"),
+    "gemini_cli": ("AVO_PROVIDER", "AVO_MODEL"),
+    "gemini-cli": ("AVO_PROVIDER", "AVO_MODEL"),
     "router": ("AVO_PROVIDER",),
 }
 
@@ -141,6 +147,24 @@ def _endpoint_for(env: Mapping[str, str], provider: str) -> tuple[str | None, st
         except (ValueError, KeyError):
             return None, None
         return openrouter_cfg.endpoint, None
+
+    if provider == "codex":
+        from avo.providers.codex import CodexConfig
+
+        try:
+            codex_cfg: Any = CodexConfig.from_avo_env(env, fallback_model=fallback_model)
+        except Exception:
+            return None, None
+        return codex_cfg.endpoint, None
+
+    if provider in ("gemini_cli", "gemini-cli"):
+        from avo.providers.gemini_cli import GeminiCliConfig
+
+        try:
+            gemini_cli_cfg: Any = GeminiCliConfig.from_avo_env(env, fallback_model=fallback_model)
+        except Exception:
+            return None, None
+        return gemini_cli_cfg.endpoint, None
 
     if provider == "gemini":
         from avo.providers.gemini import GeminiConfig
@@ -262,6 +286,21 @@ def render_report(report: DoctorReport, *, out: IO[str]) -> None:
 
     if report.config_error:
         out.write(f"config error: {report.config_error}\n")
+
+    from avo.oauth.store import load_all_credentials
+
+    try:
+        stored_creds = load_all_credentials()
+        if stored_creds:
+            out.write("\nstored credentials (auth.json):\n")
+            for _key, cred in sorted(stored_creds.items()):
+                acct = f" ({cred.account})" if cred.account else ""
+                exp = ""
+                if cred.expires_at:
+                    exp = f", expires {cred.expires_at.strftime('%Y-%m-%d %H:%M')}"
+                out.write(f"  - {cred.provider}: {cred.kind}{acct}{exp}\n")
+    except Exception:
+        pass
 
     if report.ok:
         out.write("\nResult: OK. Provider config is buildable.\n")

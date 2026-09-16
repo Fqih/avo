@@ -86,6 +86,8 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Guides:
+    - Subscription OAuth: guides/subscription-auth.md
   - Reference:
     - Project reference: avo-reference.md
     - API stability: api-stability.md

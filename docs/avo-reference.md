@@ -1273,6 +1273,7 @@ package), grouped by subsystem.
 |---|---|
 | `AVO_TOOLS_REQUIRE_APPROVAL` | Comma-separated tool names needing manual approval (§10.3, §18.2) |
 | `AVO_PERMISSION_MODE` | One of `default`, `accept_edits`, `plan`, `bypass_permissions` (§18.2) |
+| `AVO_ALLOW_SUBSCRIPTION` | Explicit opt-in flag (`1`/`true`) allowing subscription OAuth backends |
 
 **Storage / configuration paths**
 

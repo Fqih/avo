@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
+
+import pytest
 
 from avo.doctor import render_report, run_doctor
 
@@ -162,3 +165,52 @@ def test_run_doctor_router_ok() -> None:
     assert report.ok
     assert report.provider == "router"
     assert report.endpoint == "router://ollama,openrouter"
+
+
+def test_doctor_renders_stored_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from avo.oauth.store import Credential, store_credential
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    secret_token = "secret-token-xyz-123"
+    store_credential(
+        Credential(
+            provider="claude",
+            kind="oauth",
+            access_token=secret_token,
+            account="fqih@example.com",
+            subscription=True,
+        )
+    )
+
+    report = run_doctor({"AVO_PROVIDER": "ollama", "AVO_MODEL": "llama3.1"})
+    out = io.StringIO()
+    render_report(report, out=out)
+    text = out.getvalue()
+
+    assert "stored credentials (auth.json):" in text
+    assert "claude: oauth (fqih@example.com)" in text
+    assert secret_token not in text
+
+
+def test_doctor_codex_subscription_ok(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from avo.oauth.store import Credential, store_credential
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_credential(
+        Credential(
+            provider="codex",
+            kind="oauth",
+            access_token="tok",
+            subscription=True,
+        )
+    )
+    report = run_doctor(
+        {
+            "AVO_PROVIDER": "codex",
+            "AVO_MODEL": "gpt-5.6-sol",
+            "AVO_ALLOW_SUBSCRIPTION": "1",
+        }
+    )
+    assert report.ok
+    assert report.provider == "codex"
+    assert report.endpoint == "https://chatgpt.com/backend-api/codex/responses"

@@ -182,6 +182,9 @@ def test_provider_models_catalog_has_all_providers() -> None:
         "cerebras",
         "openrouter",
         "gemini",
+        "codex",
+        "gemini_cli",
+        "gemini-cli",
         "router",
     }
     for catalog in PROVIDER_MODELS.values():
@@ -223,3 +226,101 @@ def test_is_known_model_accepts_catalog_and_default_variant() -> None:
     assert not is_known_model("openai", "definitely-not-a-model")
     # Unknown provider short-circuits to False.
     assert not is_known_model("mystery", "anything")
+
+
+def test_codex_provider_built_with_subscription_gate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+) -> None:
+    from avo.oauth.store import Credential, store_credential
+    from avo.providers.codex import CodexProvider
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_credential(
+        Credential(
+            provider="codex",
+            kind="oauth",
+            access_token="test-token",
+            subscription=True,
+        )
+    )
+    provider = build_provider_from_env(
+        {
+            "AVO_PROVIDER": "codex",
+            "AVO_MODEL": "gpt-5.6-sol",
+            "AVO_ALLOW_SUBSCRIPTION": "1",
+        }
+    )
+    assert isinstance(provider, CodexProvider)
+
+
+def test_codex_provider_without_subscription_gate_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+) -> None:
+    from avo.oauth.store import Credential, store_credential
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_credential(
+        Credential(
+            provider="codex",
+            kind="oauth",
+            access_token="test-token",
+            subscription=True,
+        )
+    )
+    with pytest.raises(ConfigError, match="AVO_ALLOW_SUBSCRIPTION"):
+        build_provider_from_env(
+            {
+                "AVO_PROVIDER": "codex",
+                "AVO_MODEL": "gpt-5.6-sol",
+            }
+        )
+
+
+def test_openai_falls_back_to_codex_oauth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+) -> None:
+    from avo.oauth.store import Credential, store_credential
+    from avo.providers.codex import CodexProvider
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_credential(
+        Credential(
+            provider="codex",
+            kind="oauth",
+            access_token="test-token",
+            subscription=True,
+        )
+    )
+    provider = build_provider_from_env(
+        {
+            "AVO_PROVIDER": "openai",
+            "AVO_MODEL": "gpt-5.6-sol",
+            "AVO_ALLOW_SUBSCRIPTION": "1",
+        }
+    )
+    assert isinstance(provider, CodexProvider)
+
+
+def test_gemini_falls_back_to_gemini_cli_oauth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+) -> None:
+    from avo.oauth.store import Credential, store_credential
+    from avo.providers.gemini_cli import GeminiCliProvider
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_credential(
+        Credential(
+            provider="gemini",
+            kind="oauth",
+            access_token="test-token",
+            subscription=True,
+        )
+    )
+    provider = build_provider_from_env(
+        {
+            "AVO_PROVIDER": "gemini",
+            "AVO_MODEL": "gemini-2.5-pro",
+            "AVO_ALLOW_SUBSCRIPTION": "1",
+        }
+    )
+    assert isinstance(provider, GeminiCliProvider)
