@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, TextIO
 
 from avo.app_tools.file_tools import bind_workspace
 from avo.chat_session import render_session_row
-from avo.chat_stream import LiveAnswerPrinter
+from avo.chat_stream import LiveAnswerPrinter, TerminalSpinner
 from avo.config import (
     ConfigError,
     available_models,
@@ -180,19 +180,23 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
         )
         ctx.pending_preamble = None
 
+    spinner = TerminalSpinner(out, message="Thinking...")
     printer: LiveAnswerPrinter | None = None
     if ctx.stream_enabled:
-        printer = LiveAnswerPrinter(out)
+        printer = LiveAnswerPrinter(out, on_first_content=spinner.stop_sync)
     # Bound per call rather than on the runtime attributes: a background
     # run() entering the shared runtime while this turn streams can no
     # longer snapshot the chat printer (the reverse race).
     try:
-        with bind_workspace(ctx.workspace):
-            result = await ctx.runtime.run(
-                effective_task,
-                stream_callback=printer.feed if printer is not None else None,
-                stream_interrupt_callback=(printer.on_interrupt if printer is not None else None),
-            )
+        async with spinner:
+            with bind_workspace(ctx.workspace):
+                result = await ctx.runtime.run(
+                    effective_task,
+                    stream_callback=printer.feed if printer is not None else None,
+                    stream_interrupt_callback=(
+                        printer.on_interrupt if printer is not None else None
+                    ),
+                )
     except AvoError as exc:
         err.write(f"runtime error: {exc}\n")
         return

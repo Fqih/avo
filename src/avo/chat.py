@@ -20,6 +20,7 @@ history and the chat thread.
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 import sys
 from collections.abc import Callable
@@ -347,7 +348,10 @@ async def run_repl(
     try:
         while True:
             try:
-                prompt_text = _prompt_with_jobs(prompt, ctx.background)
+                active_prompt = prompt
+                if is_interactive and prompt == "You > ":
+                    active_prompt = "\033[36m>\033[0m " if not os.environ.get("NO_COLOR") else "> "
+                prompt_text = _prompt_with_jobs(active_prompt, ctx.background)
                 if is_interactive:
                     try:
                         line = await asyncio.to_thread(input, prompt_text) + "\n"

@@ -11,7 +11,7 @@ Re-exported from :mod:`avo.chat` for backward compatibility.
 from __future__ import annotations
 
 import os
-import sys
+import subprocess
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
@@ -76,6 +76,83 @@ def _new_session_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def _format_workspace_path(path: Path) -> str:
+    """Shorten home directory prefix to ~ for compact terminal rendering."""
+
+    try:
+        home = Path.home()
+        if path == home or home in path.parents:
+            return f"~/{path.relative_to(home)}"
+    except Exception:
+        pass
+    return str(path)
+
+
+def _resolve_user_identity(provider_name: str) -> str:
+    """Return user account or display name for the banner without leaking secrets."""
+
+    try:
+        from avo.oauth.store import get_credential
+
+        cred = get_credential(provider_name)
+        if cred and cred.account:
+            tier = ""
+            if cred.subscription:
+                tier = " (Subscription)"
+            elif cred.kind == "oauth":
+                tier = " (OAuth)"
+            return f"{cred.account}{tier}"
+    except Exception:
+        pass
+
+    try:
+        res = subprocess.run(
+            ["git", "config", "user.email"],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+            check=False,
+        )
+        email = res.stdout.strip()
+        if email:
+            return email
+    except Exception:
+        pass
+
+    return os.environ.get("USER", "user")
+
+
+def _render_mascot(*, color: bool = True) -> list[str]:
+    """Render the Avo Avocado/Arch ANSI block mascot logo (7 lines)."""
+
+    def _tc(r: int, g: int, b: int, text: str) -> str:
+        if not color:
+            return text
+        return f"\033[38;2;{r};{g};{b}m{text}\033[0m"
+
+    return [
+        "     " + _tc(250, 204, 21, "▄██▄") + "     ",
+        "   " + _tc(245, 158, 11, "▄██") + _tc(249, 115, 22, "████▄") + "   ",
+        "  " + _tc(132, 204, 22, "███") + "    " + _tc(239, 68, 68, "███") + "  ",
+        " "
+        + _tc(34, 197, 94, "███")
+        + "  "
+        + _tc(217, 119, 6, "▄▄")
+        + "  "
+        + _tc(168, 85, 247, "███")
+        + " ",
+        " "
+        + _tc(16, 185, 129, "███")
+        + "  "
+        + _tc(180, 83, 9, "▀▀")
+        + "  "
+        + _tc(147, 51, 234, "███")
+        + " ",
+        "  " + _tc(6, 182, 212, "███") + "    " + _tc(99, 102, 241, "███") + "  ",
+        "   " + _tc(14, 165, 233, "▀██") + _tc(59, 130, 246, "████▀") + "   ",
+    ]
+
+
 def _print_header(
     out: TextIO,
     ctx: ChatContext,
@@ -83,53 +160,35 @@ def _print_header(
     *,
     resumed_from: str | None = None,
 ) -> None:
-    """Render the AVO banner with version, model, session, and cwd.
+    """Render the AVO banner with mascot logo, version, identity, model, and cwd."""
 
-    The header is a compact ASCII box so it survives every terminal
-    width without word-wrap damage. Labels are fixed-width so the
-    values line up. ``cwd`` is the resolved absolute path of the active
-    workspace; ``session`` is the chat thread id (uuid-prefix); and
-    ``model`` is whatever the runtime actually selected from the
-    provider config.
-    """
+    color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
+    bold_cyan = "\033[1;36m" if color_enabled else ""
+    dim = "\033[90m" if color_enabled else ""
+    rst = "\033[0m" if color_enabled else ""
 
-    cwd = Path.cwd()
-    rows: list[tuple[str, str]] = [
-        ("provider", f"{ctx.provider_name}"),
-        ("model", f"{ctx.model_name}"),
-        ("session", ctx.session_id),
-        ("workspace", str(workspace_root)),
-        ("cwd", str(cwd)),
-        ("python", f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"),
+    mascot = _render_mascot(color=color_enabled)
+    identity = _resolve_user_identity(ctx.provider_name)
+    workspace_disp = _format_workspace_path(workspace_root)
+    provider_model = f"provider: {ctx.provider_name} · model: {ctx.model_name}"
+
+    right_col = [
+        f"{bold_cyan}Avo CLI {AVO_VERSION}{rst}",
+        f"{dim}{identity}{rst}",
+        f"{dim}{provider_model}{rst}",
+        f"{dim}workspace: {workspace_disp}{rst}",
     ]
     if resumed_from:
-        rows.append(("resumed", resumed_from))
+        right_col.append(f"{dim}resumed session: {resumed_from}{rst}")
+    else:
+        right_col.append(f"{dim}session: {ctx.session_id}{rst}")
+    right_col.append(f"{dim}Type /help for commands · /quit to exit{rst}")
+    right_col.append("")
 
-    label_width = max(len(label) for label, _ in rows)
-    title_prefix = f" AVO v{AVO_VERSION} "
-    max_value_width = max(len(value) for _, value in rows)
-    inner_width = max(
-        len(title_prefix) + 4,
-        label_width + 3 + max_value_width,  # "label : value"
-    )
-    inner_width = max(inner_width, 40)
-    inner_width = min(inner_width, 100)
-
-    def _fit(value: str) -> str:
-        budget = inner_width - label_width - 3
-        if len(value) >= budget:
-            return value[: max(budget - 3, 0)] + "..."
-        return value.ljust(budget)
-
-    title_dash_count = inner_width - len(title_prefix)
     out.write("\n")
-    out.write(f"╭{title_prefix}{'─' * title_dash_count}╮\n")
-    for label, value in rows:
-        padded_label = label.ljust(label_width)
-        out.write(f"│{padded_label} : {_fit(value)}│\n")
-    out.write(f"╰{'─' * inner_width}╯\n")
-    out.write("Type /help for the full slash command list.\n")
-    out.write("Enter a task to run one AgentRuntime turn. Ctrl+D or /quit to exit.\n")
+    for left, right in zip(mascot, right_col, strict=True):
+        out.write(f"  {left}  {right}\n")
+    out.write(f"  {dim}{'─' * 54}{rst}\n")
     out.flush()
 
 
