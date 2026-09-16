@@ -1,8 +1,9 @@
-"""OAuth authentication and secure token storage for Avo.
+"""OAuth authentication, subscription tokens, and secure token storage for Avo.
 
 Supports:
 - OAuth 2.0 Device Authorization Flow (RFC 8628) for GitHub and headless environments.
 - OpenRouter OAuth (PKCE / localhost callback) for one-click browser login.
+- Subscription OAuth credentials (Claude, ChatGPT/Codex, Gemini) behind explicit gate.
 - Secure local token storage in ``~/.config/avo/auth.json`` with strict 0600 permissions.
 """
 
@@ -19,6 +20,7 @@ import secrets
 import sys
 import urllib.parse
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 from avo.exceptions import AvoError
@@ -53,74 +55,44 @@ def auth_file_path() -> Path:
 def load_all_tokens() -> dict[str, str]:
     """Read all stored provider tokens from auth.json."""
 
-    path = auth_file_path()
-    if not path.is_file():
-        return {}
+    from avo.oauth.store import load_all_credentials
 
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return {k: str(v) for k, v in data.items() if isinstance(v, str)}
-    except Exception as exc:
-        _LOG.warning("could not read %s: %s", path, exc)
-    return {}
+    out: dict[str, str] = {}
+    for k, c in load_all_credentials().items():
+        if c.access_token:
+            out[k] = c.access_token
+    return out
 
 
 def get_stored_token(provider: str) -> str | None:
     """Return stored API key/token for ``provider`` if available."""
 
-    tokens = load_all_tokens()
-    return tokens.get(provider.lower())
+    from avo.oauth.store import get_credential
+
+    cred = get_credential(provider)
+    return cred.access_token if cred is not None and cred.access_token else None
 
 
 def store_token(provider: str, token: str) -> Path:
     """Save an API key/token for ``provider`` with chmod 0600 permissions."""
 
-    target = auth_file_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
+    from avo.oauth.store import Credential, store_credential
 
-    current = load_all_tokens()
-    current[provider.lower()] = token.strip()
-
-    # Write securely with 0600 permissions
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    raw_bytes = json.dumps(current, indent=2).encode("utf-8")
-    fd = os.open(target, flags, 0o600)
-    try:
-        with open(fd, "wb", closefd=False) as fh:
-            fh.write(raw_bytes)
-    finally:
-        os.close(fd)
-
-    os.chmod(target, 0o600)
-    return target
+    cred = Credential(
+        provider=provider.lower(),
+        kind="api_key",
+        access_token=token.strip(),
+        obtained_at=datetime.now(UTC),
+    )
+    return store_credential(cred)
 
 
 def remove_stored_token(provider: str) -> bool:
     """Remove a stored token for ``provider``. Return True if a token was deleted."""
 
-    current = load_all_tokens()
-    key = provider.lower()
-    if key not in current:
-        return False
+    from avo.oauth.store import remove_credential
 
-    del current[key]
-    target = auth_file_path()
-    if not current:
-        if target.is_file():
-            target.unlink()
-        return True
-
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    raw_bytes = json.dumps(current, indent=2).encode("utf-8")
-    fd = os.open(target, flags, 0o600)
-    try:
-        with open(fd, "wb", closefd=False) as fh:
-            fh.write(raw_bytes)
-    finally:
-        os.close(fd)
-    os.chmod(target, 0o600)
-    return True
+    return remove_credential(provider)
 
 
 def generate_pkce_pair() -> tuple[str, str]:
