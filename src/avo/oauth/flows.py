@@ -103,11 +103,16 @@ def request_token(entry: OAuthEntry, form: Mapping[str, str]) -> dict[str, Any]:
     return post_form(entry.token_url, form, headers=entry.identity_headers)
 
 
-def map_tokens(raw: dict[str, Any], entry: OAuthEntry) -> Credential:
+def map_tokens(
+    raw: dict[str, Any],
+    entry: OAuthEntry,
+    *,
+    now: datetime | None = None,
+) -> Credential:
     """Map raw token endpoint JSON response into a typed Credential record."""
 
     expires_in = raw.get("expires_in")
-    now = datetime.now(UTC)
+    current_time = now if now is not None else datetime.now(UTC)
     account: str | None = None
     acc = raw.get("account")
     if isinstance(acc, dict):
@@ -117,14 +122,16 @@ def map_tokens(raw: dict[str, Any], entry: OAuthEntry) -> Credential:
     if not account and "email" in raw and isinstance(raw["email"], str):
         account = raw["email"]
 
-    expires_at = now + timedelta(seconds=float(expires_in)) if expires_in is not None else None
+    expires_at = (
+        current_time + timedelta(seconds=float(expires_in)) if expires_in is not None else None
+    )
     return Credential(
         provider=entry.provider,
         kind="oauth",
         access_token=raw.get("access_token"),
         refresh_token=raw.get("refresh_token"),
         expires_at=expires_at,
-        obtained_at=now,
+        obtained_at=current_time,
         account=account,
         scope=raw.get("scope"),
         subscription=True,
@@ -187,10 +194,16 @@ async def run_pkce_login(
         exchange_data["state"] = params["state"]
 
     try:
-        if asyncio.iscoroutinefunction(token_requester):
+        import inspect
+
+        call_target = token_requester
+        if inspect.iscoroutinefunction(call_target) or inspect.iscoroutinefunction(
+            type(call_target).__call__
+        ):
             raw = await token_requester(entry, exchange_data)
         else:
-            raw = await asyncio.to_thread(token_requester, entry, exchange_data)
+            res = await asyncio.to_thread(token_requester, entry, exchange_data)
+            raw = await res if inspect.isawaitable(res) else res
     except AuthError:
         raise
     except Exception as exc:
