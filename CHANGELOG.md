@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Subscription OAuth authentication and universal credential management (`avo login`):
+  PKCE OAuth authorization code flows for Anthropic Claude (claude.ai subscription),
+  OpenAI ChatGPT Codex (`codex`), and Google Gemini CLI (`gemini-cli`), plus universal
+  API key credential persistence in `~/.config/avo/auth.json` (chmod 0600).
+- Subscription safety gate via `AVO_ALLOW_SUBSCRIPTION=1` to ensure users acknowledge
+  platform subscription usage policies and risks.
+- Automatic background OAuth token refresh lifecycle with in-flight deduplication
+  and refresh-token rotation support.
+- Credential import for existing CLI logins from Claude Code (`~/.claude.json`) and
+  Codex CLI (`~/.codex/auth.json`).
+- Provider factory, chat setup wizard, and `avo doctor` support for subscription
+  providers and stored credential diagnostics without secret leakage.
 - `docs/avo-reference.md` — the complete project API reference
   `CLAUDE.md` had always cited but never existed: 23 sections, every
   signature, enum member, env var, and container config read verbatim

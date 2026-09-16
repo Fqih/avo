@@ -57,8 +57,11 @@ def post_json(
         for k, v in headers.items():
             req.add_header(k, v)
 
+    if not (url.startswith("https://") or url.startswith("http://")):
+        raise AuthError(f"Unsupported URL scheme: {url}")
+
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
             content = resp.read().decode("utf-8", errors="replace")
             return json.loads(content) if content else {}
     except urllib.error.HTTPError as exc:
@@ -84,8 +87,11 @@ def post_form(
         for k, v in headers.items():
             req.add_header(k, v)
 
+    if not (url.startswith("https://") or url.startswith("http://")):
+        raise AuthError(f"Unsupported URL scheme: {url}")
+
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
             content = resp.read().decode("utf-8", errors="replace")
             return json.loads(content) if content else {}
     except urllib.error.HTTPError as exc:
