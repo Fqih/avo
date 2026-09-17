@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -121,6 +123,94 @@ def test_cli_explicit_database_option_wins_over_environment(
     output = capsys.readouterr().out
     assert "explicit-run" in output
     assert "environment-run" not in output
+
+
+def test_cli_chat_entry_point_preserves_global_database_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_path = tmp_path / "environment.db"
+    explicit_path = tmp_path / "explicit.db"
+    selected_paths: list[Path] = []
+
+    async def capture_database_path(*, database_path: Path, **_: object) -> int:
+        selected_paths.append(database_path)
+        return 0
+
+    monkeypatch.setattr("avo.cli.run_repl", capture_database_path)
+    monkeypatch.setenv("AVO_DATABASE_PATH", str(env_path))
+
+    assert main(["--database", str(explicit_path), "chat", "--new-session"]) == 0
+    assert main(["chat", "--new-session"]) == 0
+    assert selected_paths == [explicit_path, env_path]
+
+
+def test_cli_cost_entry_point_forwards_global_explicit_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    env_path = tmp_path / "environment.db"
+    explicit_path = tmp_path / "explicit.db"
+    monkeypatch.setenv("AVO_DATABASE_PATH", str(env_path))
+    monkeypatch.setattr(sys, "argv", ["avo", "--unrelated-process-argument"])
+
+    assert main(["--database", str(explicit_path), "cost", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["database"] == str(explicit_path)
+
+
+def test_cli_cost_entry_point_uses_environment_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    env_path = tmp_path / "environment.db"
+    monkeypatch.setenv("AVO_DATABASE_PATH", str(env_path))
+    monkeypatch.setattr(sys, "argv", ["avo", "--unrelated-process-argument"])
+
+    assert main(["cost", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["database"] == str(env_path)
+
+
+def test_cli_runs_diff_entry_point_preserves_global_database_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_path = tmp_path / "environment.db"
+    explicit_path = tmp_path / "explicit.db"
+    selected_paths: list[Path] = []
+
+    class CapturedReport:
+        @staticmethod
+        def to_text() -> str:
+            return "captured\n"
+
+    def capture_store(store: SQLiteEventStore, *, run_a: str, run_b: str) -> CapturedReport:
+        assert (run_a, run_b) in {
+            ("explicit-a", "explicit-b"),
+            ("environment-a", "environment-b"),
+        }
+        selected_paths.append(store.path)
+        return CapturedReport()
+
+    monkeypatch.setattr("avo.diff.diff_runs", capture_store)
+    monkeypatch.setenv("AVO_DATABASE_PATH", str(env_path))
+
+    assert (
+        main(
+            [
+                "--database",
+                str(explicit_path),
+                "runs",
+                "diff",
+                "explicit-a",
+                "explicit-b",
+            ]
+        )
+        == 0
+    )
+    assert main(["runs", "diff", "environment-a", "environment-b"]) == 0
+    assert selected_paths == [explicit_path, env_path]
 
 
 def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:

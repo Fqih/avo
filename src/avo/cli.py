@@ -78,7 +78,7 @@ def _parser() -> argparse.ArgumentParser:
         "--database",
         "-d",
         type=Path,
-        default=None,
+        default=argparse.SUPPRESS,
         help="SQLite database path (default: $AVO_DATABASE_PATH or avo.db).",
     )
     chat.add_argument(
@@ -228,7 +228,10 @@ async def _execute(args: argparse.Namespace, rest: list[str] | None = None) -> i
     if args.command == "cost":
         from avo.cost import main as cost_main
 
-        return cost_main(_tail_argv("cost"))
+        cost_argv = list(tail)
+        if args.database is not None:
+            cost_argv[:0] = ["--database", str(args.database)]
+        return cost_main(cost_argv)
 
     if args.command == "serve-mcp":
         from avo.mcp_server import build_default_registry

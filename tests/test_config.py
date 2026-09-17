@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from avo.config import (
@@ -9,6 +11,7 @@ from avo.config import (
     apply_runtime_overrides,
     build_provider_from_env,
     database_path_from_env,
+    resolve_database_path,
 )
 from avo.providers.anthropic import AnthropicProvider
 from avo.providers.minimax import MiniMaxProvider
@@ -168,6 +171,10 @@ def test_database_path_from_env_default_none() -> None:
 
 def test_database_path_from_env_strips_and_returns() -> None:
     assert database_path_from_env({"AVO_DATABASE_PATH": "  /tmp/avo.db  "}) == ("/tmp/avo.db")
+
+
+def test_resolve_database_path_falls_back_to_local_database() -> None:
+    assert resolve_database_path(None, {}) == Path("avo.db")
 
 
 def test_provider_models_catalog_has_all_providers() -> None:
