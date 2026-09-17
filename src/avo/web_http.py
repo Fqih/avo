@@ -105,7 +105,7 @@ class WebHttpMixin(BaseHTTPRequestHandler):
                 cookie.load(self.headers.get("Cookie", ""))
             except CookieError:
                 cookie = SimpleCookie()
-            session = cookie.get("avo_session")
+            session = cookie.get(self.server.session_cookie_name)
             valid = bool(
                 self.headers.get("Origin")
                 and session
@@ -134,7 +134,8 @@ class WebHttpMixin(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header(
             "Set-Cookie",
-            f"avo_session={self.server.session_token}; Path=/; HttpOnly; SameSite=Strict",
+            f"{self.server.session_cookie_name}={self.server.session_token}; "
+            "Path=/; HttpOnly; SameSite=Strict",
         )
         self.end_headers()
         self.wfile.write(raw)

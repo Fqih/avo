@@ -21,6 +21,7 @@ from avo import __version__ as AVO_VERSION
 from avo.auth import load_all_tokens
 from avo.cost import aggregate_costs, report_to_dict
 from avo.doctor import run_doctor
+from avo.permissions import PermissionMode
 from avo.web_http import _LOG, WebHttpMixin
 
 
@@ -93,7 +94,7 @@ class WebApiMixin(WebHttpMixin):
                     },
                     "permissions": {
                         "mode": self.server.permission_mode,
-                        "available": ["bypass", "default", "accept_edits"],
+                        "available": [mode.value for mode in PermissionMode],
                     },
                     "env": {
                         "AVO_ROUTER_CHAIN": router_chain,
@@ -121,7 +122,7 @@ class WebApiMixin(WebHttpMixin):
             self._send_json(
                 {
                     "mode": self.server.permission_mode,
-                    "available": ["bypass", "default", "accept_edits"],
+                    "available": [mode.value for mode in PermissionMode],
                 }
             )
             return True
@@ -155,11 +156,15 @@ class WebApiMixin(WebHttpMixin):
 
             register_data = data.get("register")
             if isinstance(register_data, dict):
+                from avo.app_tools.workspace import WorkspacePathError
+
+                if not self._require_confirmation(data):
+                    return True
                 reg_name = str(register_data.get("name", "")).strip()
                 reg_prompt = str(register_data.get("prompt", "")).strip()
                 try:
                     self.server.persona_manager.register_persona(reg_name, reg_prompt, persist=True)
-                except ValueError as exc:
+                except (ValueError, OSError, WorkspacePathError) as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=400)
                     return True
 
@@ -209,7 +214,7 @@ class WebApiMixin(WebHttpMixin):
             if not self._require_confirmation(data):
                 return True
             mode = str(data.get("mode", "")).strip().lower()
-            if mode not in ("bypass", "default", "accept_edits"):
+            if mode not in {value.value for value in PermissionMode}:
                 self._send_json(
                     {"ok": False, "error": f"Invalid permission mode '{mode}'"}, status=400
                 )

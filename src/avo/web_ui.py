@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import os
 import secrets
 import sys
 import urllib.parse
@@ -30,6 +29,8 @@ from pathlib import Path
 from typing import Any
 
 from avo import __version__ as AVO_VERSION  # re-export
+from avo.config import resolve_database_path
+from avo.permissions import permission_policy_from_env
 from avo.persona import PersonaManager
 from avo.web_api import ApiServerMixin, WebApiMixin, _mask_secret  # re-export
 from avo.web_http import _LOG, WebHttpMixin  # re-export
@@ -89,6 +90,11 @@ class AvoWebServer(
 ):
     """Custom ThreadingHTTPServer holding Avo database connections."""
 
+    @property
+    def session_cookie_name(self) -> str:
+        """Cookies share a host across ports, so namespace each dashboard."""
+        return f"avo_session_{self.server_port}"
+
     def __init__(
         self,
         server_address: tuple[str, int],
@@ -106,13 +112,11 @@ class AvoWebServer(
             Path(workspace_root).resolve() if workspace_root is not None else Path.cwd().resolve()
         )
         self.persona_manager = (
-            persona_manager if persona_manager is not None else PersonaManager(database_path.parent)
+            persona_manager if persona_manager is not None else PersonaManager(self.workspace_root)
         )
-        self.permission_mode = (
-            permission_mode
-            if permission_mode is not None
-            else os.environ.get("AVO_PERMISSION_MODE", "default")
-        )
+        self.permission_mode = permission_policy_from_env(
+            {"AVO_PERMISSION_MODE": permission_mode} if permission_mode is not None else None
+        ).mode.value
 
 
 def run_web_dashboard(
@@ -124,7 +128,7 @@ def run_web_dashboard(
     output_writer: Any = sys.stdout.write,
 ) -> int:
     """Start the local Web UI server and optionally open the browser."""
-    db_path = database_path if database_path is not None else Path("avo.db")
+    db_path = resolve_database_path(database_path)
     ws_root = workspace_root if workspace_root is not None else Path.cwd()
     server = AvoWebServer(
         ("127.0.0.1", port),
@@ -171,8 +175,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--database",
         "-d",
         type=Path,
-        default=Path("avo.db"),
-        help="Path to the SQLite database (default: avo.db).",
+        default=None,
+        help="Path to the SQLite database (default: AVO_DATABASE_PATH or avo.db).",
     )
     parser.add_argument(
         "--workspace",

@@ -12,8 +12,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import secrets
-import stat as stat_module
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -455,78 +453,9 @@ class WorkspaceServerMixin:
 
     def save_sync_workspace_file(self, file_path_str: str, content: str) -> dict[str, Any]:
         """Save text content to a file inside the workspace safely."""
-        from avo.app_tools.workspace import WorkspacePathError
+        from avo.workspace_write import save_workspace_file
 
-        if "\x00" in file_path_str:
-            raise WorkspacePathError("path contains a null byte")
-        if not file_path_str.strip():
-            raise WorkspacePathError("path is empty")
-
-        candidate_path = Path(file_path_str)
-        try:
-            relative = (
-                candidate_path.relative_to(self.workspace_root)
-                if candidate_path.is_absolute()
-                else candidate_path
-            )
-        except ValueError as exc:
-            raise WorkspacePathError(f"path escapes workspace root: {file_path_str}") from exc
-        if not relative.parts or ".." in relative.parts:
-            raise WorkspacePathError(f"invalid workspace write path: {file_path_str}")
-
-        # Pin every parent directory. No path component may be followed through a
-        # symlink, even if another thread swaps it between validation and the write.
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        directory_fd = os.open(self.workspace_root, flags)
-        temporary = f".avo-write-{secrets.token_hex(16)}"
-        try:
-            for part in relative.parts[:-1]:
-                with contextlib.suppress(FileExistsError):
-                    os.mkdir(part, dir_fd=directory_fd)
-                try:
-                    child_fd = os.open(part, flags, dir_fd=directory_fd)
-                except OSError as exc:
-                    raise WorkspacePathError(f"unsafe workspace directory: {part}") from exc
-                os.close(directory_fd)
-                directory_fd = child_fd
-
-            mode = 0o600
-            try:
-                existing = os.stat(relative.name, dir_fd=directory_fd, follow_symlinks=False)
-            except FileNotFoundError:
-                pass
-            else:
-                if not stat_module.S_ISREG(existing.st_mode):
-                    raise WorkspacePathError(f"not a regular workspace file: {file_path_str}")
-                mode = stat_module.S_IMODE(existing.st_mode)
-
-            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode, dir_fd=directory_fd)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    os.fchmod(stream.fileno(), mode)
-                    stream.write(content)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(
-                    temporary, relative.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd
-                )
-                stat = os.stat(relative.name, dir_fd=directory_fd, follow_symlinks=False)
-            finally:
-                with contextlib.suppress(FileNotFoundError):
-                    os.unlink(temporary, dir_fd=directory_fd)
-        finally:
-            os.close(directory_fd)
-        rel_path = relative.as_posix()
-
-        return {
-            "ok": True,
-            "path": rel_path,
-            "filename": relative.name,
-            "size": stat.st_size,
-            "mtime": int(stat.st_mtime),
-            "line_count": len(content.splitlines()),
-            "message": f"Saved {rel_path}",
-        }
+        return save_workspace_file(self.workspace_root, file_path_str, content)
 
 
 __all__ = ["WebWorkspaceMixin", "WorkspaceServerMixin"]

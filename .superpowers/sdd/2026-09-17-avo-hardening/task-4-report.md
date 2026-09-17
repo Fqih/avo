@@ -51,3 +51,44 @@ All 17 socket-dependent cases were blocked by `PermissionError: [Errno 1] Operat
 - Full repository tests/type checking were not run, as the final user instruction limited work to focused verification and report/commit.
 
 `gitleaks git --pre-commit --staged --redact --no-banner` scanned the staged Task 4 diff: no leaks found (exit 0). `git diff --cached --check` also passed. Staging required elevation because the sandbox mounts `.git` read-only.
+
+## Fix round 1
+
+Reviewed `review-task-4.diff`, the findings recorded in `progress.md`, and the existing Task 4 worktree changes. Retained the shared atomic workspace writer, confirmation for persona registration, persistence before updating persona memory, canonical permission API/UI values, database resolver integration, port-specific session cookie names, SSE CORS removal, and literal rendering of filenames and traces. Fixed startup permission normalization by consuming the existing permission parser. Added regression cases for environment/argument legacy aliases and a real headless Chrome XSS check. Ruff formatted two files.
+
+Only Task 4 files are staged, including only the atomic-persistence hunk of `persona.py`. Its unrelated global persona/instruction loading changes remain unstaged (Ruff also normalized their formatting). Other unrelated WIP is preserved. No broad suites, subagents, resets, or pushes were used.
+
+Exact verification commands and results:
+
+```text
+.venv/bin/python -m pytest tests/test_web_security.py tests/test_web_dashboard_security.py -q
+Initial existing suite: 92 passed in 0.47s (exit 0).
+After adding regressions: 3 failed, 92 passed in 1.00s (exit 1).
+Two failures reproduced noncanonical startup permission values; Chrome failed
+with setsockopt: Operation not permitted under the sandbox. The first elevated
+retry was interrupted and produced no result.
+Final elevated run after the permission fix: 95 passed in 1.40s (exit 0).
+No skips; the Chrome filename-click and trace/JSON XSS checks ran successfully.
+
+.venv/bin/ruff format src/avo/workspace_write.py src/avo/persona.py src/avo/web_api.py src/avo/web_http.py src/avo/web_runs.py src/avo/web_ui.py src/avo/web_workspace.py tests/test_web_security.py tests/test_web_dashboard_security.py
+2 files reformatted, 7 files left unchanged (exit 0).
+
+.venv/bin/ruff check src/avo/workspace_write.py src/avo/persona.py src/avo/web_api.py src/avo/web_http.py src/avo/web_runs.py src/avo/web_ui.py src/avo/web_workspace.py tests/test_web_security.py tests/test_web_dashboard_security.py
+All checks passed! (exit 0).
+
+.venv/bin/ruff format --check src/avo/workspace_write.py src/avo/persona.py src/avo/web_api.py src/avo/web_http.py src/avo/web_runs.py src/avo/web_ui.py src/avo/web_workspace.py tests/test_web_security.py tests/test_web_dashboard_security.py
+9 files already formatted (exit 0).
+
+git diff --check
+No output (exit 0).
+
+gitleaks git --pre-commit --staged --redact --no-banner
+No leaks found (exit 0), after staging the Task 4 implementation and tests.
+
+git diff --cached --check
+No output (exit 0).
+```
+
+Verification limits: Windows fallback tests exercise real files with simulated Win32 handles on Linux; this is not native Windows validation. Chrome runs the actual dashboard DOM and inline JavaScript with local test data and no external scripts; this does not claim full browser/server integration. The retained POSIX directory descriptors prevent symlink redirection, but cannot prevent an independently authorized local process from moving an already-open directory outside the workspace. That stronger concurrent-rename containment guarantee remains outside this fix; no redesign was performed.
+
+Commit message: `fix: close web security boundary gaps`; author: `Fqih <mhmdfkih21@gmail.com>`.

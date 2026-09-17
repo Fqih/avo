@@ -131,13 +131,14 @@ class PersonaManager:
         if not clean_prompt:
             raise ValueError("Persona prompt cannot be empty.")
 
-        self._custom_personas[clean_name] = clean_prompt
-
         if persist and self._workspace_root is not None:
-            personas_dir = self._workspace_root / ".avo" / "personas"
-            personas_dir.mkdir(parents=True, exist_ok=True)
-            target = personas_dir / f"{clean_name}.md"
-            target.write_text(clean_prompt, encoding="utf-8")
+            from avo.workspace_write import save_workspace_file
+
+            save_workspace_file(
+                self._workspace_root, f".avo/personas/{clean_name}.md", clean_prompt
+            )
+
+        self._custom_personas[clean_name] = clean_prompt
 
     def set_persona(self, name: str | None) -> None:
         if name is not None:
