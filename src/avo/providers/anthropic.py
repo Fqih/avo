@@ -157,10 +157,12 @@ class AnthropicProvider:
         else:  # pragma: no cover - only when httpx is not installed
             self._client = None
 
-    async def _get_headers(self) -> dict[str, str]:
+    async def _get_headers(self, *, token_override: str | None = None) -> dict[str, str]:
         if self._config.auth_mode == "oauth":
             token: str | None
-            if self._token_provider is not None:
+            if token_override is not None:
+                token = token_override
+            elif self._token_provider is not None:
                 token = await self._token_provider()
             else:
                 cred = await ensure_fresh("claude")
@@ -245,12 +247,18 @@ class AnthropicProvider:
             payload["tools"] = tools
         return payload
 
-    async def _post(self, payload: dict[str, Any], *, is_retry: bool = False) -> Any:
+    async def _post(
+        self,
+        payload: dict[str, Any],
+        *,
+        is_retry: bool = False,
+        token_override: str | None = None,
+    ) -> Any:
         assert self._client is not None
         transport_errors: tuple[type[BaseException], ...] = (
             (httpx.HTTPError,) if httpx is not None else ()
         )
-        headers = await self._get_headers()
+        headers = await self._get_headers(token_override=token_override)
         try:
             response = await self._client.post(
                 self._config.endpoint,
@@ -266,9 +274,15 @@ class AnthropicProvider:
 
         status = int(response.status_code)
         if status == 401 and self._config.auth_mode == "oauth" and not is_retry:
+            refreshed_token: str | None = None
             if self._token_provider is None:
-                await ensure_fresh("claude", force=True)
-            return await self._post(payload, is_retry=True)
+                refreshed = await ensure_fresh("claude", force=True)
+                refreshed_token = refreshed.access_token
+            return await self._post(
+                payload,
+                is_retry=True,
+                token_override=refreshed_token,
+            )
 
         if status >= 400:
             detail = redact_text(str(getattr(response, "text", "")))
