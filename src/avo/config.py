@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, Literal, cast
 
 ProviderName = Literal[
@@ -540,6 +541,17 @@ def database_path_from_env(environ: Mapping[str, str] | None = None) -> str | No
     return value or None
 
 
+def resolve_database_path(
+    database: Path | str | None,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Resolve an explicit database path before environment and local defaults."""
+
+    if database is not None:
+        return Path(database)
+    return Path(database_path_from_env(environ) or "avo.db")
+
+
 __all__ = [
     "PROVIDER_MODELS",
     "ConfigError",
@@ -550,5 +562,6 @@ __all__ = [
     "database_path_from_env",
     "default_model",
     "is_known_model",
+    "resolve_database_path",
     "supported_providers",
 ]

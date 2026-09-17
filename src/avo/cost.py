@@ -21,6 +21,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from avo.config import resolve_database_path
 from avo.ledger import TokenLedger
 from avo.models import TokenUsage
 
@@ -262,8 +263,8 @@ def _parser() -> argparse.ArgumentParser:
         "--database",
         "-d",
         type=Path,
-        default=Path("avo.db"),
-        help="SQLite database path (default: avo.db).",
+        default=None,
+        help="SQLite database path (default: $AVO_DATABASE_PATH or avo.db).",
     )
     parser.add_argument(
         "--json",
@@ -275,7 +276,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    report = aggregate_costs(args.database)
+    report = aggregate_costs(resolve_database_path(args.database))
     if args.json:
         sys.stdout.write(report.to_json() + "\n")
     else:

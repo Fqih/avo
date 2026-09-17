@@ -35,6 +35,40 @@ def _metrics_for(
     )
 
 
+def _seed_diff_runs(path: Path, run_ids: tuple[str, str]) -> None:
+    import asyncio
+    from datetime import UTC, datetime
+
+    from avo.events import AgentEvent, EventType
+    from avo.models import RunRecord
+    from avo.storage.sqlite import SQLiteEventStore
+
+    async def seed() -> None:
+        store = SQLiteEventStore(path)
+        try:
+            for index, run_id in enumerate(run_ids, start=1):
+                record = RunRecord(
+                    run_id=run_id,
+                    task="t",
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                    steps=index,
+                )
+                await store.create_run(
+                    record,
+                    AgentEvent(
+                        run_id=run_id,
+                        event_type=EventType.RUN_CREATED,
+                        created_at=datetime.now(UTC),
+                        payload={"task": "t"},
+                    ),
+                )
+        finally:
+            await store.close()
+
+    asyncio.run(seed())
+
+
 def test_side_metrics_from_events_aggregates_usage() -> None:
     metrics = _metrics_for("a", steps=2)
     assert metrics.steps == 2
@@ -136,6 +170,43 @@ def test_diff_main_emits_text(populated_store: Path) -> None:
     out = buffer.getvalue()
     assert "Run A: run-0" in out
     assert "Run B: run-1" in out
+
+
+def test_diff_main_uses_database_path_from_environment_when_option_is_omitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_path = tmp_path / "environment.db"
+    _seed_diff_runs(env_path, ("environment-a", "environment-b"))
+    monkeypatch.setenv("AVO_DATABASE_PATH", str(env_path))
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        code = diff_main(["environment-a", "environment-b"])
+    assert code == 0
+    assert "Run A: environment-a" in buffer.getvalue()
+
+
+def test_diff_main_explicit_database_option_wins_over_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_path = tmp_path / "environment.db"
+    explicit_path = tmp_path / "explicit.db"
+    _seed_diff_runs(env_path, ("environment-a", "environment-b"))
+    _seed_diff_runs(explicit_path, ("explicit-a", "explicit-b"))
+    monkeypatch.setenv("AVO_DATABASE_PATH", str(env_path))
+
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        code = diff_main(["explicit-a", "explicit-b", "--database", str(explicit_path)])
+    assert code == 0
+    output = buffer.getvalue()
+    assert "Run A: explicit-a" in output
+    assert "environment-a" not in output
 
 
 def test_diff_main_emits_json(populated_store: Path) -> None:

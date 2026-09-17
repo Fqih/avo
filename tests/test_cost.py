@@ -117,6 +117,37 @@ def test_text_output_includes_models_and_runs(
     assert "run-a" in out
 
 
+def test_cost_main_uses_database_path_from_environment_when_option_is_omitted(
+    tmp_path: Path,
+    ledger_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("AVO_DATABASE_PATH", str(ledger_path))
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+
+    assert cost_main([]) == 0
+    output = capsys.readouterr().out
+    assert f"Database: {ledger_path}" in output
+    assert "Runs: 2" in output
+
+
+def test_cost_main_explicit_database_option_wins_over_environment(
+    tmp_path: Path,
+    ledger_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("AVO_DATABASE_PATH", str(tmp_path / "environment.db"))
+
+    assert cost_main(["--database", str(ledger_path)]) == 0
+    output = capsys.readouterr().out
+    assert f"Database: {ledger_path}" in output
+    assert "Runs: 2" in output
+
+
 def test_json_output_emits_decimal_as_string(ledger_path: Path) -> None:
     rc = cost_main(["--database", str(ledger_path), "--json"])
     assert rc == 0

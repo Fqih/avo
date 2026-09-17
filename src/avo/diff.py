@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from avo.config import resolve_database_path
 from avo.events import AgentEvent
 from avo.exceptions import AvoError
 from avo.models import TokenUsage
@@ -194,8 +195,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--database",
         "-d",
         type=Path,
-        default=Path("avo.db"),
-        help="SQLite database path (default: avo.db).",
+        default=None,
+        help="SQLite database path (default: $AVO_DATABASE_PATH or avo.db).",
     )
     parser.add_argument(
         "--json",
@@ -207,7 +208,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    store = SQLiteEventStore(args.database)
+    store = SQLiteEventStore(resolve_database_path(args.database))
     try:
         report = diff_runs(store, run_a=args.run_a, run_b=args.run_b)
     finally:

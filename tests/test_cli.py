@@ -14,6 +14,19 @@ from avo.storage import SQLiteEventStore
 from tests.test_resume import InjectedInterruption, InterruptOnEventRuntime
 
 
+def _seed_completed_run(path: Path, run_id: str) -> None:
+    async def seed() -> None:
+        store = SQLiteEventStore(path)
+        runtime = AgentRuntime(
+            provider=FakeProvider([ModelResponse(content="cli output")]),
+            event_store=store,
+        )
+        await runtime.run("cli task", run_id=run_id)
+        await store.close()
+
+    asyncio.run(seed())
+
+
 def test_cli_lists_and_inspects_sqlite_runs(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -75,6 +88,39 @@ def test_cli_resumes_persisted_fake_provider_run(
     assert main(["--database", str(path), "runs", "resume", "cli-resume"]) == 0
     output = capsys.readouterr().out
     assert "completed (completed)" in output
+
+
+def test_cli_uses_database_path_from_environment_when_option_is_omitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    env_path = tmp_path / "environment.db"
+    _seed_completed_run(env_path, "environment-run")
+    monkeypatch.setenv("AVO_DATABASE_PATH", str(env_path))
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+
+    assert main(["runs", "list"]) == 0
+    assert "environment-run" in capsys.readouterr().out
+
+
+def test_cli_explicit_database_option_wins_over_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    env_path = tmp_path / "environment.db"
+    explicit_path = tmp_path / "explicit.db"
+    _seed_completed_run(env_path, "environment-run")
+    _seed_completed_run(explicit_path, "explicit-run")
+    monkeypatch.setenv("AVO_DATABASE_PATH", str(env_path))
+
+    assert main(["--database", str(explicit_path), "runs", "list"]) == 0
+    output = capsys.readouterr().out
+    assert "explicit-run" in output
+    assert "environment-run" not in output
 
 
 def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:

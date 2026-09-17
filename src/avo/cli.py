@@ -10,6 +10,7 @@ from pathlib import Path
 
 from avo import __version__
 from avo.chat import run_repl
+from avo.config import resolve_database_path
 from avo.doctor import main as doctor_main
 from avo.exceptions import AvoError
 from avo.providers.fake import FakeProvider
@@ -46,8 +47,8 @@ def _parser() -> argparse.ArgumentParser:
         "--database",
         "-d",
         type=Path,
-        default=Path("avo.db"),
-        help="SQLite database path (default: avo.db).",
+        default=None,
+        help="SQLite database path (default: $AVO_DATABASE_PATH or avo.db).",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -77,8 +78,8 @@ def _parser() -> argparse.ArgumentParser:
         "--database",
         "-d",
         type=Path,
-        default=Path("avo.db"),
-        help="SQLite database path (default: avo.db).",
+        default=None,
+        help="SQLite database path (default: $AVO_DATABASE_PATH or avo.db).",
     )
     chat.add_argument(
         "--workspace-root",
@@ -241,15 +242,14 @@ async def _execute(args: argparse.Namespace, rest: list[str] | None = None) -> i
 
     if args.command == "chat":
         workspace_root = (args.workspace_root or Path.cwd()).resolve()
-        db_path = args.database if args.database is not None else Path("avo.db")
         return await run_repl(
-            database_path=db_path,
+            database_path=resolve_database_path(args.database),
             workspace_root=workspace_root,
             session_id=args.session,
             force_new_session=args.new_session,
         )
 
-    store = SQLiteEventStore(args.database)
+    store = SQLiteEventStore(resolve_database_path(args.database))
     try:
         if args.runs_command == "list":
             runs = await store.list_runs()
