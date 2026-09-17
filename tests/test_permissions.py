@@ -256,6 +256,11 @@ def test_permission_policy_from_env_reads_mode_and_extras() -> None:
     assert set(policy.require_approval) == {"write_file", "edit_file"}
 
 
+def test_permission_policy_from_env_accepts_legacy_bypass_alias() -> None:
+    policy = permission_policy_from_env({"AVO_PERMISSION_MODE": "bypass"})
+    assert policy.mode is PermissionMode.BYPASS_PERMISSIONS
+
+
 def test_permission_policy_from_env_rejects_unknown_mode() -> None:
     with pytest.raises(ValueError, match="AVO_PERMISSION_MODE"):
         permission_policy_from_env({"AVO_PERMISSION_MODE": "nuclear"})

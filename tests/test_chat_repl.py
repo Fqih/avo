@@ -1121,10 +1121,40 @@ def test_repl_permissions_command(
     assert code == 0
     out = stdout.getvalue()
     err = stderr.getvalue()
-    assert "Current permission mode: bypass_permissions" in out
+    assert "Current permission mode: default" in out
     assert "✓ Switched permission mode to: accept_edits" in out
     assert "Unknown permission mode 'invalid_mode'" in err
     assert "✓ Switched permission mode to: bypass_permissions" in out
+
+
+def test_repl_setup_updates_environment(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    from avo import cli_setup
+
+    environ = _environ_with_ollama()
+    process_environ: dict[str, str] = {}
+    monkeypatch.setattr("os.environ", process_environ)
+    monkeypatch.setattr(cli_setup, "GLOBAL_AVO_DIR", tmp_path / ".avo")
+
+    code = asyncio.run(
+        run_repl(
+            database_path=chat_env["db"],
+            workspace_root=chat_env["workspace"],
+            stdin=io.StringIO("/setup\n/quit\n"),
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            environ=environ,
+        )
+    )
+
+    assert code == 0
+    assert environ["AVO_PERMISSION_MODE"] == "default"
+    assert process_environ["AVO_PERMISSION_MODE"] == "default"
 
 
 def test_repl_shell_and_exclamation_commands(

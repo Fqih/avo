@@ -247,6 +247,8 @@ def permission_policy_from_env(environ: dict[str, str] | None = None) -> Permiss
     raw = env.get("AVO_PERMISSION_MODE", "").strip().lower()
     if not raw:
         return PermissionPolicy()
+    if raw == "bypass":
+        raw = PermissionMode.BYPASS_PERMISSIONS.value
     try:
         mode = PermissionMode(raw)
     except ValueError as exc:

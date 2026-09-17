@@ -105,7 +105,6 @@ from avo.chat_workspace_commands import (  # re-export
 from avo.config import ConfigError, build_provider_from_env
 from avo.exceptions import AvoError
 from avo.permissions import (
-    PermissionMode,
     PermissionPolicy,
     build_approval_callback,
     permission_policy_from_env,
@@ -189,10 +188,8 @@ def build_chat_context(
     )
     if permission_policy is not None:
         resolved_policy = permission_policy
-    elif "AVO_PERMISSION_MODE" in environ:
-        resolved_policy = permission_policy_from_env(environ)
     else:
-        resolved_policy = PermissionPolicy(mode=PermissionMode.BYPASS_PERMISSIONS)
+        resolved_policy = permission_policy_from_env(environ)
 
     skills_root = workspace_root / ".avo" / "skills"
     # Ensure the skills directory exists for first-run use, but the
@@ -263,12 +260,8 @@ async def run_repl(
     err_stream = stderr or sys.stderr
     env = environ if environ is not None else _read_environ()
 
-    if "AVO_PERMISSION_MODE" in env:
-        policy = permission_policy_from_env(env)
-        approval_cb = build_approval_callback(policy, stdin=in_stream, stdout=out_stream)
-    else:
-        policy = PermissionPolicy(mode=PermissionMode.BYPASS_PERMISSIONS)
-        approval_cb = None
+    policy = permission_policy_from_env(env)
+    approval_cb = build_approval_callback(policy, stdin=in_stream, stdout=out_stream)
 
     try:
         ctx = build_chat_context(
@@ -285,12 +278,8 @@ async def run_repl(
         if new_env is None:
             return 2
         env = {**env, **new_env}
-        if "AVO_PERMISSION_MODE" in env:
-            policy = permission_policy_from_env(env)
-            approval_cb = build_approval_callback(policy, stdin=in_stream, stdout=out_stream)
-        else:
-            policy = PermissionPolicy(mode=PermissionMode.BYPASS_PERMISSIONS)
-            approval_cb = None
+        policy = permission_policy_from_env(env)
+        approval_cb = build_approval_callback(policy, stdin=in_stream, stdout=out_stream)
         try:
             ctx = build_chat_context(
                 database_path=database_path,

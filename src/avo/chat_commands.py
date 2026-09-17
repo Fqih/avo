@@ -11,6 +11,7 @@ Re-exported from :mod:`avo.chat` for backward compatibility.
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO
@@ -182,6 +183,26 @@ def _manage_draft(
         return
 
     err.write(f"unknown draft subcommand {subcommand!r}; choose show, save, or clear\n")
+
+
+def _manage_setup_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+    environ: dict[str, str],
+    in_stream: TextIO | None = None,
+) -> None:
+    """Inspect or run setup for ~/.avo global configuration."""
+    from avo.cli_setup import load_global_avo_config, render_setup_card, setup_global_avo
+
+    color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
+    report = setup_global_avo()
+    configured_env = load_global_avo_config(report.base_dir)
+    environ.update(configured_env)
+    os.environ.update(configured_env)
+    out.write(render_setup_card(report, color=color_enabled))
+    out.flush()
 
 
 def _manage_permissions(
@@ -713,6 +734,10 @@ async def _run_slash(
         ctx.session_id = _new_session_id()
         ctx.pending_preamble = None
         out.write(f"Closed session {old}; started fresh session {ctx.session_id}.\n")
+        return False
+
+    if cmd == "/setup":
+        _manage_setup_command(ctx, args, out, err, environ, in_stream=in_stream)
         return False
 
     if cmd == "/inspect":
