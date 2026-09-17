@@ -206,6 +206,8 @@ class WebApiMixin(WebHttpMixin):
                 self._send_json({"error": "invalid JSON body"}, status=400)
                 return True
 
+            if not self._require_confirmation(data):
+                return True
             mode = str(data.get("mode", "")).strip().lower()
             if mode not in ("bypass", "default", "accept_edits"):
                 self._send_json(
@@ -245,6 +247,8 @@ class WebApiMixin(WebHttpMixin):
                 self._send_json({"error": "invalid JSON body"}, status=400)
                 return True
 
+            if not self._require_confirmation(data):
+                return True
             provider = str(data.get("provider", "")).strip()
             model = str(data.get("model", "")).strip()
             if not provider:

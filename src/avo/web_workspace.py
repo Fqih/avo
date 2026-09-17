@@ -12,6 +12,8 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import secrets
+import stat as stat_module
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -95,6 +97,8 @@ class WebWorkspaceMixin(WebHttpMixin):
                 with contextlib.suppress(Exception):
                     body_dict = json.loads(self.rfile.read(content_len).decode("utf-8"))
 
+            if not self._require_confirmation(body_dict):
+                return True
             repo = GitRepository(self.server.workspace_root)
             if not repo.is_repository():
                 self._send_json({"ok": False, "error": "Not a git repository"}, status=400)
@@ -145,6 +149,8 @@ class WebWorkspaceMixin(WebHttpMixin):
                 self._send_json({"error": "invalid JSON body"}, status=400)
                 return True
 
+            if not self._require_confirmation(data):
+                return True
             branch_name = str(data.get("branch", "")).strip()
             create = bool(data.get("create", False))
             if not branch_name:
@@ -174,12 +180,13 @@ class WebWorkspaceMixin(WebHttpMixin):
                     if isinstance(loaded, dict):
                         stash_payload = loaded
 
+            action = str(stash_payload.get("action", "list")).strip().lower()
+            if action != "list" and not self._require_confirmation(stash_payload):
+                return True
             repo = GitRepository(self.server.workspace_root)
             if not repo.is_repository():
                 self._send_json({"ok": False, "error": "Not a git repository"}, status=400)
                 return True
-
-            action = str(stash_payload.get("action", "list")).strip().lower()
             try:
                 if action in ("save", "push"):
                     stash_msg = stash_payload.get("message")
@@ -213,6 +220,8 @@ class WebWorkspaceMixin(WebHttpMixin):
                 self._send_json({"error": "invalid JSON body"}, status=400)
                 return True
 
+            if not self._require_confirmation(data):
+                return True
             file_path = str(data.get("path", "")).strip()
             content = data.get("content")
             if not file_path:
@@ -446,7 +455,7 @@ class WorkspaceServerMixin:
 
     def save_sync_workspace_file(self, file_path_str: str, content: str) -> dict[str, Any]:
         """Save text content to a file inside the workspace safely."""
-        from avo.app_tools.workspace import Workspace, WorkspacePathError
+        from avo.app_tools.workspace import WorkspacePathError
 
         if "\x00" in file_path_str:
             raise WorkspacePathError("path contains a null byte")
@@ -454,32 +463,65 @@ class WorkspaceServerMixin:
             raise WorkspacePathError("path is empty")
 
         candidate_path = Path(file_path_str)
-        base = self.workspace_root if not candidate_path.is_absolute() else None
-        target = (
-            (base / candidate_path).resolve(strict=False)
-            if base
-            else candidate_path.resolve(strict=False)
-        )
         try:
-            target.relative_to(self.workspace_root)
+            relative = (
+                candidate_path.relative_to(self.workspace_root)
+                if candidate_path.is_absolute()
+                else candidate_path
+            )
         except ValueError as exc:
             raise WorkspacePathError(f"path escapes workspace root: {file_path_str}") from exc
+        if not relative.parts or ".." in relative.parts:
+            raise WorkspacePathError(f"invalid workspace write path: {file_path_str}")
 
-        target.parent.mkdir(parents=True, exist_ok=True)
+        # Pin every parent directory. No path component may be followed through a
+        # symlink, even if another thread swaps it between validation and the write.
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory_fd = os.open(self.workspace_root, flags)
+        temporary = f".avo-write-{secrets.token_hex(16)}"
+        try:
+            for part in relative.parts[:-1]:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(part, dir_fd=directory_fd)
+                try:
+                    child_fd = os.open(part, flags, dir_fd=directory_fd)
+                except OSError as exc:
+                    raise WorkspacePathError(f"unsafe workspace directory: {part}") from exc
+                os.close(directory_fd)
+                directory_fd = child_fd
 
-        ws = Workspace(self.workspace_root)
-        resolved = ws.validate_for_write(file_path_str)
-        if resolved.is_dir():
-            raise ValueError(f"Cannot overwrite directory with file: {file_path_str}")
+            mode = 0o600
+            try:
+                existing = os.stat(relative.name, dir_fd=directory_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                if not stat_module.S_ISREG(existing.st_mode):
+                    raise WorkspacePathError(f"not a regular workspace file: {file_path_str}")
+                mode = stat_module.S_IMODE(existing.st_mode)
 
-        resolved.write_text(content, encoding="utf-8")
-        stat = resolved.stat()
-        rel_path = resolved.relative_to(self.workspace_root).as_posix()
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode, dir_fd=directory_fd)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    os.fchmod(stream.fileno(), mode)
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(
+                    temporary, relative.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd
+                )
+                stat = os.stat(relative.name, dir_fd=directory_fd, follow_symlinks=False)
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(temporary, dir_fd=directory_fd)
+        finally:
+            os.close(directory_fd)
+        rel_path = relative.as_posix()
 
         return {
             "ok": True,
             "path": rel_path,
-            "filename": resolved.name,
+            "filename": relative.name,
             "size": stat.st_size,
             "mtime": int(stat.st_mtime),
             "line_count": len(content.splitlines()),

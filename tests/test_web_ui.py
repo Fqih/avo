@@ -18,6 +18,21 @@ from avo.storage.sqlite import SQLiteEventStore
 from avo.web_ui import AvoWebServer
 from avo.web_ui import main as web_ui_main
 
+_SERVER_TOKENS: dict[int, str] = {}
+
+
+def _mutation_headers(base_url: str) -> dict[str, str]:
+    port = urllib.parse.urlsplit(base_url).port
+    assert port is not None
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {_SERVER_TOKENS[port]}",
+    }
+
+
+def _confirmed_json(data: dict[str, Any]) -> str:
+    return json.dumps({**data, "confirm": True})
+
 
 @pytest.fixture
 def web_server(tmp_path: Path):
@@ -25,6 +40,7 @@ def web_server(tmp_path: Path):
     # Start server on dynamic port (port 0 selects available port)
     server = AvoWebServer(("127.0.0.1", 0), database_path=db_path)
     port = server.server_port
+    _SERVER_TOKENS[port] = server.auth_token
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -195,7 +211,7 @@ def test_web_ui_api_chat_json(
     req = urllib.request.Request(
         f"{base_url}/api/chat",
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=_mutation_headers(base_url),
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=5) as resp:
@@ -237,7 +253,7 @@ def test_web_ui_api_chat_sse(web_server: tuple[str, Path], monkeypatch: pytest.M
         f"{base_url}/api/chat",
         data=payload,
         headers={
-            "Content-Type": "application/json",
+            **_mutation_headers(base_url),
             "Accept": "text/event-stream",
         },
         method="POST",
@@ -265,8 +281,8 @@ def test_web_ui_api_chat_validation_and_options(web_server: tuple[str, Path]) ->
     # Empty message
     req_empty = urllib.request.Request(
         f"{base_url}/api/chat",
-        data=json.dumps({"message": "   "}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        data=_confirmed_json({"message": "   "}).encode("utf-8"),
+        headers=_mutation_headers(base_url),
         method="POST",
     )
     with pytest.raises(urllib.error.HTTPError) as exc_info:
@@ -280,7 +296,7 @@ def test_web_ui_api_chat_validation_and_options(web_server: tuple[str, Path]) ->
     )
     with urllib.request.urlopen(req_opt, timeout=5) as resp:
         assert resp.status == 204
-        assert resp.headers.get("Access-Control-Allow-Origin") == "*"
+        assert resp.headers.get("Access-Control-Allow-Origin") is None
 
 
 def test_web_ui_cli_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -334,7 +350,7 @@ def test_web_ui_api_persona_and_permissions(web_server: tuple[str, Path]) -> Non
         assert "available" in data["persona"]
         assert "coder" in data["persona"]["available"]
         assert "permissions" in data
-        assert data["permissions"]["mode"] == "bypass"
+        assert data["permissions"]["mode"] == "default"
         assert "accept_edits" in data["permissions"]["available"]
 
     # 2. GET /api/persona
@@ -346,10 +362,10 @@ def test_web_ui_api_persona_and_permissions(web_server: tuple[str, Path]) -> Non
     # 3. POST /api/persona - switch to coder
     req_p_post = urllib.request.Request(
         f"{base_url}/api/persona",
-        data=json.dumps({"persona": "coder", "instructions": "Write clean async code"}).encode(
+        data=_confirmed_json({"persona": "coder", "instructions": "Write clean async code"}).encode(
             "utf-8"
         ),
-        headers={"Content-Type": "application/json"},
+        headers=_mutation_headers(base_url),
         method="POST",
     )
     with urllib.request.urlopen(req_p_post, timeout=5) as resp:
@@ -362,8 +378,8 @@ def test_web_ui_api_persona_and_permissions(web_server: tuple[str, Path]) -> Non
     # 4. POST /api/persona - invalid persona returns 400
     req_p_bad = urllib.request.Request(
         f"{base_url}/api/persona",
-        data=json.dumps({"persona": "nonexistent_role"}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        data=_confirmed_json({"persona": "nonexistent_role"}).encode("utf-8"),
+        headers=_mutation_headers(base_url),
         method="POST",
     )
     with pytest.raises(urllib.error.HTTPError) as exc_info:
@@ -373,7 +389,7 @@ def test_web_ui_api_persona_and_permissions(web_server: tuple[str, Path]) -> Non
     # 4b. POST /api/persona - register custom persona
     req_p_reg = urllib.request.Request(
         f"{base_url}/api/persona",
-        data=json.dumps(
+        data=_confirmed_json(
             {
                 "register": {
                     "name": "devops",
@@ -382,7 +398,7 @@ def test_web_ui_api_persona_and_permissions(web_server: tuple[str, Path]) -> Non
                 "persona": "devops",
             }
         ).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=_mutation_headers(base_url),
         method="POST",
     )
     with urllib.request.urlopen(req_p_reg, timeout=5) as resp:
@@ -396,13 +412,13 @@ def test_web_ui_api_persona_and_permissions(web_server: tuple[str, Path]) -> Non
     req_perm_get = urllib.request.Request(f"{base_url}/api/permissions")
     with urllib.request.urlopen(req_perm_get, timeout=5) as resp:
         perm_data = json.loads(resp.read().decode("utf-8"))
-        assert perm_data["mode"] == "bypass"
+        assert perm_data["mode"] == "default"
 
     # 6. POST /api/permissions - switch to accept_edits
     req_perm_post = urllib.request.Request(
         f"{base_url}/api/permissions",
-        data=json.dumps({"mode": "accept_edits"}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        data=_confirmed_json({"mode": "accept_edits"}).encode("utf-8"),
+        headers=_mutation_headers(base_url),
         method="POST",
     )
     with urllib.request.urlopen(req_perm_post, timeout=5) as resp:
@@ -414,8 +430,8 @@ def test_web_ui_api_persona_and_permissions(web_server: tuple[str, Path]) -> Non
     # 7. POST /api/permissions - invalid mode returns 400
     req_perm_bad = urllib.request.Request(
         f"{base_url}/api/permissions",
-        data=json.dumps({"mode": "invalid_mode"}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        data=_confirmed_json({"mode": "invalid_mode"}).encode("utf-8"),
+        headers=_mutation_headers(base_url),
         method="POST",
     )
     with pytest.raises(urllib.error.HTTPError) as exc_perm_bad:
@@ -437,6 +453,7 @@ def test_web_ui_api_git(tmp_path: Path) -> None:
     db_path = tmp_path / "git_test.db"
     server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=ws)
     port = server.server_port
+    _SERVER_TOKENS[port] = server.auth_token
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base_url = f"http://127.0.0.1:{port}"
@@ -464,8 +481,8 @@ def test_web_ui_api_git(tmp_path: Path) -> None:
         # C. POST /api/git/commit
         req_commit = urllib.request.Request(
             f"{base_url}/api/git/commit",
-            data=json.dumps({"message": "feat: update tracked file"}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            data=_confirmed_json({"message": "feat: update tracked file"}).encode("utf-8"),
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with urllib.request.urlopen(req_commit, timeout=5) as resp:
@@ -484,8 +501,10 @@ def test_web_ui_api_git(tmp_path: Path) -> None:
         # D. POST /api/git/branch - create and switch
         req_branch = urllib.request.Request(
             f"{base_url}/api/git/branch",
-            data=json.dumps({"branch": "feature/dashboard-git", "create": True}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            data=_confirmed_json({"branch": "feature/dashboard-git", "create": True}).encode(
+                "utf-8"
+            ),
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with urllib.request.urlopen(req_branch, timeout=5) as resp:
@@ -514,6 +533,7 @@ def test_web_ui_api_git_non_repo(tmp_path: Path) -> None:
 
     server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=empty_dir)
     port = server.server_port
+    _SERVER_TOKENS[port] = server.auth_token
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base_url = f"http://127.0.0.1:{port}"
@@ -544,6 +564,7 @@ def test_web_ui_api_git_stash(tmp_path: Path) -> None:
     db_path = tmp_path / "git_stash_test.db"
     server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=ws)
     port = server.server_port
+    _SERVER_TOKENS[port] = server.auth_token
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base_url = f"http://127.0.0.1:{port}"
@@ -555,8 +576,8 @@ def test_web_ui_api_git_stash(tmp_path: Path) -> None:
         # 2. POST /api/git/stash (save)
         req_save = urllib.request.Request(
             f"{base_url}/api/git/stash",
-            data=json.dumps({"action": "save", "message": "save for later"}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            data=_confirmed_json({"action": "save", "message": "save for later"}).encode("utf-8"),
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with urllib.request.urlopen(req_save, timeout=5) as resp:
@@ -579,8 +600,8 @@ def test_web_ui_api_git_stash(tmp_path: Path) -> None:
         # 4. POST /api/git/stash (pop)
         req_pop = urllib.request.Request(
             f"{base_url}/api/git/stash",
-            data=json.dumps({"action": "pop", "index": 0}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            data=_confirmed_json({"action": "pop", "index": 0}).encode("utf-8"),
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with urllib.request.urlopen(req_pop, timeout=5) as resp:
@@ -599,8 +620,8 @@ def test_web_ui_api_git_stash(tmp_path: Path) -> None:
 
         req_drop = urllib.request.Request(
             f"{base_url}/api/git/stash",
-            data=json.dumps({"action": "drop", "index": 0}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            data=_confirmed_json({"action": "drop", "index": 0}).encode("utf-8"),
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with urllib.request.urlopen(req_drop, timeout=5) as resp:
@@ -636,6 +657,7 @@ def test_web_ui_api_git_commit_show(tmp_path: Path) -> None:
     db_path = tmp_path / "git_commit_test.db"
     server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=ws)
     port = server.server_port
+    _SERVER_TOKENS[port] = server.auth_token
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base_url = f"http://127.0.0.1:{port}"
@@ -682,6 +704,7 @@ def test_web_ui_api_router_and_bench(tmp_path: Path, monkeypatch: pytest.MonkeyP
     db_path = tmp_path / "router_test.db"
     server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=tmp_path)
     port = server.server_port
+    _SERVER_TOKENS[port] = server.auth_token
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base_url = f"http://127.0.0.1:{port}"
@@ -701,13 +724,13 @@ def test_web_ui_api_router_and_bench(tmp_path: Path, monkeypatch: pytest.MonkeyP
         # 2. POST /api/provider - valid switch
         req_prov = urllib.request.Request(
             f"{base_url}/api/provider",
-            data=json.dumps(
+            data=_confirmed_json(
                 {
                     "provider": "openrouter",
                     "model": "anthropic/claude-3-haiku",
                 }
             ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with urllib.request.urlopen(req_prov, timeout=5) as resp:
@@ -722,8 +745,8 @@ def test_web_ui_api_router_and_bench(tmp_path: Path, monkeypatch: pytest.MonkeyP
         # 3. POST /api/provider - invalid payload returns 400
         req_prov_bad = urllib.request.Request(
             f"{base_url}/api/provider",
-            data=json.dumps({"provider": ""}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            data=_confirmed_json({"provider": ""}).encode("utf-8"),
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_bad:
@@ -734,7 +757,7 @@ def test_web_ui_api_router_and_bench(tmp_path: Path, monkeypatch: pytest.MonkeyP
         req_probe = urllib.request.Request(
             f"{base_url}/api/router/probe",
             data=b"",
-            headers={"Content-Type": "application/json"},
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with urllib.request.urlopen(req_probe, timeout=5) as resp:
@@ -782,8 +805,8 @@ def test_web_ui_api_router_and_bench(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
         req_bench = urllib.request.Request(
             f"{base_url}/api/router/bench",
-            data=json.dumps({"prompt": "speed test"}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            data=_confirmed_json({"prompt": "speed test"}).encode("utf-8"),
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with urllib.request.urlopen(req_bench, timeout=5) as resp:
@@ -864,6 +887,7 @@ def test_web_ui_api_workspace_tree_and_editor(tmp_path: Path) -> None:
     db_path = tmp_path / "workspace_test.db"
     server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=ws)
     port = server.server_port
+    _SERVER_TOKENS[port] = server.auth_token
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base_url = f"http://127.0.0.1:{port}"
@@ -924,13 +948,13 @@ def test_web_ui_api_workspace_tree_and_editor(tmp_path: Path) -> None:
         # 4. POST /api/workspace/file - valid edit of existing file
         req_save = urllib.request.Request(
             f"{base_url}/api/workspace/file",
-            data=json.dumps(
+            data=_confirmed_json(
                 {
                     "path": "src/pkg/module.py",
                     "content": "def add(a, b):\n    return a + b + 1\n",
                 }
             ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with urllib.request.urlopen(req_save, timeout=5) as resp:
@@ -946,13 +970,13 @@ def test_web_ui_api_workspace_tree_and_editor(tmp_path: Path) -> None:
         # 5. POST /api/workspace/file - create brand new file in new subfolder
         req_create = urllib.request.Request(
             f"{base_url}/api/workspace/file",
-            data=json.dumps(
+            data=_confirmed_json(
                 {
                     "path": "docs/guide.md",
                     "content": "# User Guide\n\nWelcome to Avo.\n",
                 }
             ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with urllib.request.urlopen(req_create, timeout=5) as resp:
@@ -969,7 +993,7 @@ def test_web_ui_api_workspace_tree_and_editor(tmp_path: Path) -> None:
         req_empty = urllib.request.Request(
             f"{base_url}/api/workspace/file",
             data=b"",
-            headers={"Content-Type": "application/json"},
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_p_empty:
@@ -979,13 +1003,13 @@ def test_web_ui_api_workspace_tree_and_editor(tmp_path: Path) -> None:
         # 6b. escaping root
         req_bad_path = urllib.request.Request(
             f"{base_url}/api/workspace/file",
-            data=json.dumps(
+            data=_confirmed_json(
                 {
                     "path": "../outside.txt",
                     "content": "escape attempt",
                 }
             ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=_mutation_headers(base_url),
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_p_bad:

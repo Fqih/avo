@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import os
+import secrets
 import sys
 import urllib.parse
 from collections.abc import Sequence
@@ -42,6 +43,8 @@ class AvoWebHandler(WebPageMixin, WebApiMixin, WebWorkspaceMixin, WebRunsMixin, 
     """HTTP request handler for Avo Web UI."""
 
     def do_GET(self) -> None:
+        if not self._check_origin():
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
 
@@ -57,8 +60,14 @@ class AvoWebHandler(WebPageMixin, WebApiMixin, WebWorkspaceMixin, WebRunsMixin, 
         self._send_json({"error": "Not Found"}, status=404)
 
     def do_POST(self) -> None:
+        if not self._authenticate_mutation():
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
+
+        if path == "/api/session":
+            self._send_session()
+            return
 
         for route in (
             self._route_playground_post,
@@ -89,6 +98,9 @@ class AvoWebServer(
         workspace_root: Path | None = None,
     ) -> None:
         super().__init__(server_address, AvoWebHandler)
+        self.auth_token = secrets.token_urlsafe(32)
+        self.session_token = secrets.token_urlsafe(32)
+        self.csrf_token = secrets.token_urlsafe(32)
         self.database_path = database_path
         self.workspace_root = (
             Path(workspace_root).resolve() if workspace_root is not None else Path.cwd().resolve()
@@ -99,7 +111,7 @@ class AvoWebServer(
         self.permission_mode = (
             permission_mode
             if permission_mode is not None
-            else os.environ.get("AVO_PERMISSION_MODE", "bypass")
+            else os.environ.get("AVO_PERMISSION_MODE", "default")
         )
 
 
@@ -119,7 +131,7 @@ def run_web_dashboard(
         database_path=db_path,
         workspace_root=ws_root,
     )
-    url = f"http://localhost:{port}"
+    url = f"http://localhost:{server.server_port}/#token={server.auth_token}"
 
     output_writer(
         f"\nAvo Web UI Dashboard running at:\n"
