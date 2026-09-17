@@ -28,7 +28,7 @@ export AVO_ALLOW_SUBSCRIPTION=1
 
 If this variable is unset, false, empty, or unrecognized, any attempt to run
 inference via a subscription OAuth credential will immediately raise an error
-pointing to this guide.
+instructing you to set `AVO_ALLOW_SUBSCRIPTION=1`.
 Direct API keys (e.g. `AVO_ANTHROPIC_API_KEY`, `AVO_OPENAI_API_KEY`) are never
 gated and remain the recommended path for production workloads.
 
