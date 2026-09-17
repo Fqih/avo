@@ -92,6 +92,43 @@ I've analyzed `src/avo/auth.py`. Here is the architecture breakdown and test sui
 
 Requires Python 3.11+.
 
+#### User-global CLI installer
+
+For a user-global command, install Avo with the OS-native installer. It uses
+`uv tool` and does not require `sudo` or Administrator access.
+
+Linux, macOS, or Git Bash on Windows:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Fqih/avo/main/install.sh | bash
+```
+
+Native Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/Fqih/avo/main/install.ps1 | iex
+```
+
+The installer installs the `avo[all]` runtime bundle, ensures Python 3.13 is
+available through `uv`, and updates the user PATH for `avo`. Review the plan
+without making changes first:
+
+```bash
+bash install.sh --dry-run
+# PowerShell: .\install.ps1 -DryRun
+```
+
+For a smaller installation, override the package or Python version:
+
+```bash
+AVO_PACKAGE='avo[providers]' AVO_PYTHON_VERSION=3.12 bash install.sh
+```
+
+The global installer only installs the CLI. Run `avo setup` in each workspace
+to configure provider credentials, permissions, and the local database path.
+
+#### Development checkout
+
 ```bash
 git clone https://github.com/Fqih/avo.git
 cd avo

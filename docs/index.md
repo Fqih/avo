@@ -21,6 +21,44 @@
 
 Requires Python 3.11+. Core runtime depends only on Pydantic.
 
+### User-global CLI
+
+The recommended end-user installation uses `uv tool` and stays inside the
+current user's tool environment; it does not require `sudo` or Administrator
+access.
+
+Linux, macOS, and Git Bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Fqih/avo/main/install.sh | bash
+```
+
+Native Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/Fqih/avo/main/install.ps1 | iex
+```
+
+Both installers install `avo[all]`, provision Python 3.13 with `uv`, and
+register the user-global `avo` command. Use a dry run before installation:
+
+```bash
+bash install.sh --dry-run
+# PowerShell: .\install.ps1 -DryRun
+```
+
+After the CLI is installed, configure a workspace with:
+
+```bash
+avo setup
+avo doctor
+```
+
+The installer is also configurable with `AVO_PACKAGE` and
+`AVO_PYTHON_VERSION`, or with `--package` and `--python` on `install.sh`.
+
+### Development checkout
+
 ```bash
 git clone https://github.com/Fqih/avo.git
 cd avo
@@ -31,6 +69,7 @@ python -m pip install -e ".[dev,providers,sandbox]"
 
 | Extra              | Adds                                          | When you need it                                |
 | ------------------ | --------------------------------------------- | ----------------------------------------------- |
+| `[all]`            | Runtime integrations below                    | User-global CLI installation                    |
 | `[dev]`            | pytest, mypy, ruff, coverage                  | Local dev + tests                               |
 | `[providers]`      | httpx                                         | Talking to MiniMax, Anthropic, OpenAI endpoints |
 | `[sandbox]`        | docker-py                                     | Using `run_shell` against a real Docker daemon  |

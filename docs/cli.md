@@ -2,6 +2,23 @@
 
 Avo ships a `avo` console script with the following subcommands.
 
+## Installation and setup
+
+Install the CLI for the current user with the OS-native installer:
+
+```bash
+# Linux, macOS, or Git Bash
+curl -fsSL https://raw.githubusercontent.com/Fqih/avo/main/install.sh | bash
+
+# Native Windows PowerShell
+irm https://raw.githubusercontent.com/Fqih/avo/main/install.ps1 | iex
+```
+
+The installer is user-global and does not need root or Administrator access.
+Run `install.sh --dry-run` or `install.ps1 -DryRun` to inspect its actions.
+Afterward, run `avo setup` in the workspace that should receive its provider
+and permission configuration.
+
 | Command                | Purpose                                                  |
 | ---------------------- | -------------------------------------------------------- |
 | `avo --version`        | Print package version                                     |

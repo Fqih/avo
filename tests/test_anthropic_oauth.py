@@ -108,7 +108,7 @@ def test_from_avo_env_stored_oauth_disabled_raises(store_dir: None) -> None:
         )
 
 
-def test_from_avo_env_stored_oauth_default_allowed(store_dir: None) -> None:
+def test_from_avo_env_stored_oauth_explicitly_allowed(store_dir: None) -> None:
     store_credential(
         Credential(
             provider="claude",
@@ -117,7 +117,9 @@ def test_from_avo_env_stored_oauth_default_allowed(store_dir: None) -> None:
             subscription=True,
         )
     )
-    config = AnthropicConfig.from_avo_env({}, fallback_model="claude-sonnet-4-6")
+    config = AnthropicConfig.from_avo_env(
+        {"AVO_ALLOW_SUBSCRIPTION": "1"}, fallback_model="claude-sonnet-4-6"
+    )
     assert config.auth_mode == "oauth"
     assert config._api_key == "oauth-token"
 

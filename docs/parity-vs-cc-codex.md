@@ -33,7 +33,7 @@ and the gap vs Claude Code (CC) and Codex CLI. Status reflects the
 | Image input                        | ✅           | ✅           | ✅           | typed `ContentBlock` (text/image); per-provider translators |
 | Cost tracking                      | ✅           | ✅           | ✅           | `ledger.py` + `usage.py` |
 | Background tasks                   | ✅           | ✅           | partial      | trailing `&` + `/jobs /job /cancel` + `[jobs: N]` indicator |
-| One-line install                   | ✅ `pip install avo[all]` | ✅ brew/curl | ✅ npm | |
+| One-line install                   | ✅ `install.sh` / `install.ps1` | ✅ brew/curl | ✅ npm | user-global via `uv tool` |
 | PyPI distribution                  | ✅ `avo 0.1.1` | n/a         | n/a          | CC is closed source, Codex is npm |
 
 Legend: ✅ shipped · 🟡 partial · ❌ not yet
@@ -63,8 +63,8 @@ Legend: ✅ shipped · 🟡 partial · ❌ not yet
 ## Design choices worth flagging
 
 - **Single PyPI artifact.** Unlike CC (binary download) or Codex (npm),
-  avo is one Python package — `pip install avo[all]`. Extras cover
-  `dev`, `providers`, `sandbox`, `live-benchmark`, `mcp`. No
+  avo is one Python package — `avo[all]` through the OS-native installer. Extras cover
+  `dev`, `providers`, `sandbox`, `live-benchmark`, `mcp`, and the runtime `all` bundle. No
   companion binaries, no separate CLI distribution.
 - **Workspace is the security boundary.** File tools refuse any path
   outside the workspace root; the sandbox wraps shell execution in an
