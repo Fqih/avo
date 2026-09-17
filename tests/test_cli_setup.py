@@ -29,3 +29,11 @@ def test_load_global_config_normalizes_explicit_legacy_bypass(tmp_path: Path) ->
 
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
     assert "AVO_PERMISSION_MODE" not in load_global_avo_config(tmp_path)
+
+
+def test_setup_can_explicitly_enable_subscription_inference(tmp_path: Path) -> None:
+    setup_global_avo(tmp_path, allow_subscription=True)
+
+    config = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert config["allow_subscription"] is True
+    assert load_global_avo_config(tmp_path)["AVO_ALLOW_SUBSCRIPTION"] == "1"

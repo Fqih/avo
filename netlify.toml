@@ -11,7 +11,7 @@
 # into Netlify without these settings and the upload ignores them.
 
 [build]
-  command = "python -m pip install -e '.[dev,docs,providers,sandbox,otel,langchain]' && mkdocs build --strict"
+  command = "python -m pip install -e '.[dev,docs,providers,sandbox,otel,langchain]' && bash scripts/build_site.sh"
   publish = "site/"
 
 [build.environment]

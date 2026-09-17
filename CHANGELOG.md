@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-09-17
+
+### Added
+
+- Cross-platform user-global installer for Linux, macOS, Git Bash, and native
+  Windows PowerShell, published from `avo.faqihhakim.tech`.
+- Global `~/.avo` configuration support for provider defaults, permissions,
+  instructions, plugins, skills, MCP registrations, and persistent history.
+- Explicit `avo setup --allow-subscription` opt-in for subscription-backed OAuth
+  inference, with matching `avo doctor` diagnostics.
+- Refreshed documentation site and README branding using the new Avo logo.
+
+### Fixed
+
+- First-run chat now renders the ASCII Avo banner before the provider setup
+  wizard instead of appearing to fall back to the old CLI experience.
+- Documentation installer links no longer depend on a missing raw GitHub file;
+  Netlify publishes `install.sh` and `install.ps1` at the site root.
+
 ## [0.1.6] - 2026-09-16
 
 ### Fixed
@@ -426,7 +445,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ruff check` + `ruff format --check` clean.
 - Coverage gate: `fail_under = 90`.
 
-[Unreleased]: https://github.com/Fqih/avo/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/Fqih/avo/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/Fqih/avo/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/Fqih/avo/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/Fqih/avo/compare/v0.1.4...v0.1.5
 [0.1.3]: https://github.com/Fqih/avo/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Fqih/avo/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Fqih/avo/compare/v0.1.0...v0.1.1

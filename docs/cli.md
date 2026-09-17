@@ -8,10 +8,10 @@ Install the CLI for the current user with the OS-native installer:
 
 ```bash
 # Linux, macOS, or Git Bash
-curl -fsSL https://raw.githubusercontent.com/Fqih/avo/main/install.sh | bash
+curl -fsSL https://avo.faqihhakim.tech/install.sh | bash
 
 # Native Windows PowerShell
-irm https://raw.githubusercontent.com/Fqih/avo/main/install.ps1 | iex
+irm https://avo.faqihhakim.tech/install.ps1 | iex
 ```
 
 The installer is user-global and does not need root or Administrator access.

@@ -36,6 +36,7 @@ GLOBAL_HISTORY_FILE = GLOBAL_AVO_DIR / "history"
 _DEFAULT_CONFIG = {
     "provider": "codex",
     "model": "gpt-5.6-sol",
+    "allow_subscription": False,
     "permission_mode": "default",
     "stream": True,
 }
@@ -89,6 +90,8 @@ def load_global_avo_config(base_dir: Path | None = None) -> dict[str, str]:
         env_mapping["AVO_PERMISSION_MODE"] = permission_mode
     if "stream" in data:
         env_mapping["AVO_CHAT_STREAM"] = "1" if bool(data["stream"]) else "0"
+    if data.get("allow_subscription") is True:
+        env_mapping["AVO_ALLOW_SUBSCRIPTION"] = "1"
     if "base_url" in data and isinstance(data["base_url"], str) and data["base_url"].strip():
         prov = env_mapping.get("AVO_PROVIDER", "").upper()
         if prov:
@@ -101,6 +104,7 @@ def setup_global_avo(
     target_dir: Path | None = None,
     *,
     force: bool = False,
+    allow_subscription: bool = False,
 ) -> SetupReport:
     """Ensure ~/.avo/ structure exists and is populated with defaults."""
 
@@ -123,6 +127,16 @@ def setup_global_avo(
         created.append(config_path)
     else:
         existing.append(config_path)
+
+    if allow_subscription:
+        try:
+            current_config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current_config = {}
+        if not isinstance(current_config, dict):
+            current_config = {}
+        current_config["allow_subscription"] = True
+        config_path.write_text(json.dumps(current_config, indent=2) + "\n", encoding="utf-8")
 
     inst_path = base / "instructions.md"
     if not inst_path.exists() or force:
@@ -213,13 +227,22 @@ def main(argv: Sequence[str] | None = None, stdout: TextIO | None = None) -> int
         action="store_true",
         help="Overwrite existing configuration files with defaults.",
     )
+    parser.add_argument(
+        "--allow-subscription",
+        action="store_true",
+        help="Explicitly enable stored subscription OAuth credentials for this user.",
+    )
 
     args = parser.parse_args(argv)
     target = args.dir if args.dir is not None else GLOBAL_AVO_DIR
     color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
 
     try:
-        report = setup_global_avo(target, force=args.force)
+        report = setup_global_avo(
+            target,
+            force=args.force,
+            allow_subscription=args.allow_subscription,
+        )
         out.write(render_setup_card(report, color=color_enabled))
         out.flush()
         return 0

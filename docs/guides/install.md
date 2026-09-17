@@ -9,13 +9,13 @@ without changing the system Python or requiring `sudo`/Administrator access.
 === "Linux, macOS, or Git Bash"
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/Fqih/avo/main/install.sh | bash
+    curl -fsSL https://avo.faqihhakim.tech/install.sh | bash
     ```
 
 === "Native Windows PowerShell"
 
     ```powershell
-    irm https://raw.githubusercontent.com/Fqih/avo/main/install.ps1 | iex
+    irm https://avo.faqihhakim.tech/install.ps1 | iex
     ```
 
 The installer will:
@@ -51,6 +51,14 @@ avo doctor
 The setup wizard configures provider credentials, permission defaults, and the
 workspace database path. Secrets are stored in the user credential store with
 restricted file permissions; never commit that file.
+
+If your global provider is Codex or Gemini subscription OAuth, enable that
+credential source explicitly:
+
+```bash
+avo setup --allow-subscription
+avo doctor
+```
 
 ## Preview or customize the installer
 

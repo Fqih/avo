@@ -24,6 +24,16 @@
   box-shadow: 0 1px 0 var(--avo-border);
 }
 
+.md-header .md-logo img {
+  width: 2.15rem;
+  height: 2.15rem;
+  object-fit: contain;
+}
+
+.md-header .md-logo {
+  margin: 0 0.35rem 0 0;
+}
+
 .md-main__inner {
   max-width: 76rem;
 }
@@ -47,12 +57,37 @@
   box-shadow: var(--avo-shadow);
 }
 
+.avo-hero__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.avo-hero__brand img {
+  width: 3.4rem;
+  height: 3.4rem;
+  padding: 0.35rem;
+  border-radius: 1rem;
+  background: rgba(240, 253, 250, 0.92);
+  box-shadow: 0 8px 22px rgba(15, 118, 110, 0.16);
+  object-fit: contain;
+}
+
+.avo-hero__brand span {
+  color: var(--avo-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .avo-hero h1 {
   margin: 0.4rem 0 0.75rem;
   color: var(--avo-ink);
-  font-size: clamp(2.4rem, 7vw, 4.8rem);
-  letter-spacing: -0.055em;
-  line-height: 0.98;
+  font-size: clamp(2.2rem, 5.5vw, 4rem);
+  letter-spacing: -0.05em;
+  line-height: 1.02;
 }
 
 .avo-hero__eyebrow,

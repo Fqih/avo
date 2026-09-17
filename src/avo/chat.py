@@ -62,6 +62,7 @@ from avo.chat_render import (  # re-export
     _format_file_size,
     _new_session_id,
     _print_active_context,
+    _print_boot_banner,
     _print_header,
     _print_provider_summary,
     _print_slash_help,
@@ -276,6 +277,7 @@ async def run_repl(
             permission_policy=policy,
         )
     except ConfigError:
+        _print_boot_banner(out_stream)
         new_env = interactive_first_run_setup(in_stream, out_stream, secret_reader=secret_reader)
         if new_env is None:
             return 2

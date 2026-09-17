@@ -1,24 +1,32 @@
 <div align="center">
 
-<img src="logo.svg" width="220" alt="Avo Logo">
+<img src="logo.png" width="180" height="180" alt="Avo logo">
 
 # Avo
 
-**The Resilient, Observable AI Agent Runtime with Multi-Tier Combo Routing & Subscription OAuth**
+**Reliable agent infrastructure for observable, resumable, provider-agnostic runs.**
 
-*One conversation, many models. Automatic failover down to local Ollama. Zero core dependencies.*
+*One conversation, many models: bounded tools, durable state, and automatic failover down to local Ollama.*
 
-[![Python 3.11 | 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
+[![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests: 1331 passed](https://img.shields.io/badge/tests-1331%20passed-brightgreen.svg)](tests/)
-[![Coverage: ≥90%](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen.svg)](tests/)
+[![CI](https://github.com/Fqih/avo/actions/workflows/ci.yml/badge.svg)](https://github.com/Fqih/avo/actions/workflows/ci.yml)
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](https://avo.faqihhakim.tech/)
 [![Docs](https://img.shields.io/badge/docs-avo.faqihhakim.tech-indigo.svg)](https://avo.faqihhakim.tech/)
 
 </div>
 
 ---
 
-**Avo** is an observable, resilient AI agent runtime that unites your Claude Pro, ChatGPT Plus, and Gemini subscriptions with multi-tier combo failover down to local Ollama. When API quotas or rate limits hit mid-flight, Avo switches models seamlessly without losing conversational state or task execution. Built on an event-sourced SQLite ledger with deterministic replay, safe workspace tools, and zero extra core dependencies (Pydantic only).
+**Avo** is an observable, resilient AI agent runtime that can use API providers,
+subscription OAuth, or local models behind one execution loop. When a quota,
+rate limit, or provider outage interrupts a turn, Avo can switch tiers without
+discarding the conversation or execution state. Runs are recorded in SQLite so
+you can inspect, resume, and explain what happened.
+
+The core package stays dependency-light (**Pydantic only**). Provider clients,
+Docker sandboxing, MCP, OpenTelemetry, and the LangChain bridge are optional
+extras, so you can install only the capabilities your deployment needs.
 
 ---
 
@@ -69,7 +77,7 @@ $ export AVO_PROVIDER=combo
 $ export AVO_COMBO=coder
 $ avo chat
 
-       ▄██▄           Avo CLI 0.1.0
+       ▄██▄           Avo CLI 0.1.7
      ▄██████▄         Fqih (Subscription)
     ███    ███        provider: combo · model: coder [subscription -> cheap -> free]
    ███  ▄▄  ███       workspace: ~/Project/Loopward
@@ -100,13 +108,13 @@ For a user-global command, install Avo with the OS-native installer. It uses
 Linux, macOS, or Git Bash on Windows:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Fqih/avo/main/install.sh | bash
+curl -fsSL https://avo.faqihhakim.tech/install.sh | bash
 ```
 
 Native Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/Fqih/avo/main/install.ps1 | iex
+irm https://avo.faqihhakim.tech/install.ps1 | iex
 ```
 
 The installer installs the `avo[all]` runtime bundle, ensures Python 3.13 is
@@ -124,8 +132,17 @@ For a smaller installation, override the package or Python version:
 AVO_PACKAGE='avo[providers]' AVO_PYTHON_VERSION=3.12 bash install.sh
 ```
 
-The global installer only installs the CLI. Run `avo setup` in each workspace
-to configure provider credentials, permissions, and the local database path.
+The global installer only installs the CLI. Run `avo setup` once to create the
+global `~/.avo` configuration, then use `avo doctor` to inspect what Avo will
+resolve. Workspace state and run history remain local to the project.
+
+For subscription OAuth providers, opt in explicitly so the choice is visible
+and reproducible:
+
+```bash
+avo setup --allow-subscription
+avo doctor
+```
 
 #### Development checkout
 
@@ -135,19 +152,21 @@ cd avo
 python -m pip install -e ".[dev,providers,sandbox]"
 ```
 
-### 2. Authenticate
+### 2. Authenticate and configure
 
 Log in via subscription OAuth or plain API keys:
 
 ```bash
-# OAuth Subscription login (Claude, ChatGPT Codex, or Gemini)
+# OAuth subscription login (Claude, ChatGPT Codex, or Gemini)
 avo login claude
 
 # Or store plain API keys in permission-restricted auth.json
 avo login openrouter --key-stdin
 ```
 
-Verify your environment configuration with one command:
+Verify the resolved provider, model, endpoint, and credential requirements with
+one command. `doctor` does not make a provider request:
+
 ```bash
 avo doctor
 ```
@@ -311,10 +330,37 @@ Avo is built upon and inspired by excellent open-source projects:
 
 Full documentation, architecture specs, and user guides are available at [avo.faqihhakim.tech](https://avo.faqihhakim.tech/):
 
+- [Quickstart](docs/guides/quickstart.md)
+- [Installation & global CLI](docs/guides/install.md)
 - [Subscription OAuth Guide](docs/guides/subscription-auth.md)
 - [Combo Routing & Failover Guide](docs/guides/combo-routing.md)
+- [CLI reference](docs/cli.md)
 - [Full Project API Reference](docs/avo-reference.md)
 - [SemVer & Stability Policy](docs/semver.md)
+
+## Project status and boundaries
+
+Avo is currently **alpha software**. The durable runtime, provider adapters,
+CLI, event ledger, and offline test suite are usable for local prototypes and
+evaluation. Treat subscription OAuth, sandbox execution, and provider failover
+as evolving interfaces until the project reaches a stable release.
+
+Before deploying Avo in an unattended environment, review the permission mode,
+workspace boundaries, credential storage, and provider fallback policy for your
+own threat model.
+
+## Contributing
+
+```bash
+python -m pip install -e ".[dev,docs,providers]"
+python -m ruff check .
+python -m ruff format --check .
+python -m pytest
+```
+
+Bug reports and focused pull requests are welcome. Start with the smallest
+reproducible test, especially for provider behavior, replay, or workspace
+security changes.
 
 ---
 

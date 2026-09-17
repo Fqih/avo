@@ -127,7 +127,7 @@ avo chat
 The startup banner displays the active combo configuration:
 
 ```text
-       ▄██▄           Avo CLI 0.1.0
+       ▄██▄           Avo CLI 0.1.7
      ▄██████▄         Fqih
     ███    ███        provider: combo · model: coder [subscription -> cheap -> free]
    ███  ▄▄  ███       workspace: ~/Project/Loopward

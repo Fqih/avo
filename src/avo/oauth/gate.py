@@ -27,5 +27,6 @@ def require_subscription_allowed(environ: Mapping[str, str] | None = None) -> No
     if not subscription_allowed(environ):
         raise AuthError(
             "web/subscription inference requires explicit opt-in. "
-            f"Set {SUBSCRIPTION_ENV}=1 to enable chat with your login."
+            f"Set {SUBSCRIPTION_ENV}=1 or run `avo setup --allow-subscription` "
+            "to enable chat with your login."
         )

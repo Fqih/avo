@@ -2,7 +2,7 @@
 # Install Avo as a user-global CLI through uv.
 #
 # Examples:
-#   curl -fsSL https://raw.githubusercontent.com/Fqih/avo/main/install.sh | bash
+#   curl -fsSL https://avo.faqihhakim.tech/install.sh | bash
 #   bash install.sh --dry-run
 #   AVO_PACKAGE='.[providers]' bash install.sh
 

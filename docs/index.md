@@ -2,11 +2,14 @@
 
 <div>
 
-<div class="avo-hero__eyebrow">Reliable agent infrastructure</div>
+<div class="avo-hero__brand">
+<img src="assets/logo.png" alt="Avo logo">
+<span>Reliable agent infrastructure</span>
+</div>
 
 <h1>Avo</h1>
 
-<p class="avo-hero__lead">Build AI agent loops that can explain what happened, survive interruptions, and switch providers without losing the thread.</p>
+<p class="avo-hero__lead">Reliable runs for agents that need to keep going—observable, resumable, and safe to extend.</p>
 
 <div class="avo-hero__actions">
 <a class="md-button md-button--primary" href="guides/install/">Install Avo</a>
@@ -20,7 +23,7 @@
 
 ```bash
 curl -fsSL \
-  https://raw.githubusercontent.com/Fqih/avo/main/install.sh | bash
+  https://avo.faqihhakim.tech/install.sh | bash
 avo setup
 avo doctor
 ```

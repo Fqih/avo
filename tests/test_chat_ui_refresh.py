@@ -12,6 +12,7 @@ import pytest
 from avo import __version__ as AVO_VERSION
 from avo.chat_render import (
     _format_workspace_path,
+    _print_boot_banner,
     _print_header,
     _render_mascot,
     _resolve_user_identity,
@@ -86,6 +87,17 @@ def test_print_header_renders_mascot_and_metadata(tmp_path: Path) -> None:
     assert "workspace:" in text
     assert "session: test-session-123" in text
     assert "─" * 54 in text
+
+
+def test_print_boot_banner_renders_before_first_run_setup() -> None:
+    out = io.StringIO()
+
+    _print_boot_banner(out)
+
+    text = out.getvalue()
+    assert "Avo CLI" in text
+    assert "▄██▄" in text
+    assert "checking provider configuration" in text
 
 
 @pytest.mark.asyncio

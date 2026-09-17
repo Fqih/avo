@@ -189,6 +189,30 @@ def _render_mascot(*, color: bool = True) -> list[str]:
     ]
 
 
+def _print_boot_banner(out: TextIO) -> None:
+    """Render the mascot while the first-run provider setup is loading."""
+
+    color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
+    bold_cyan = "\033[1;36m" if color_enabled else ""
+    dim = "\033[90m" if color_enabled else ""
+    rst = "\033[0m" if color_enabled else ""
+
+    right_col = [
+        f"{bold_cyan}Avo CLI {AVO_VERSION}{rst}",
+        f"{dim}starting interactive session{rst}",
+        f"{dim}checking provider configuration{rst}",
+        f"{dim}setup wizard will appear if needed{rst}",
+        "",
+        "",
+        "",
+    ]
+    out.write("\n")
+    for left, right in zip(_render_mascot(color=color_enabled), right_col, strict=True):
+        out.write(f"  {left}  {right}\n")
+    out.write(f"  {dim}{'─' * 54}{rst}\n")
+    out.flush()
+
+
 def _print_header(
     out: TextIO,
     ctx: ChatContext,

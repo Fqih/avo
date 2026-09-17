@@ -239,6 +239,8 @@ async def test_repl_setup_succeeds_then_quits(
 
     assert code == 0
     out = stdout.getvalue()
+    assert "Avo CLI" in out
+    assert out.index("▄██▄") < out.index("Avo First-Time Setup")
     assert "Avo First-Time Setup" in out
     assert "Provider configured: Ollama" in out
     assert "/help" in out  # REPL header after setup
@@ -624,6 +626,7 @@ def test_merged_env_after_setup_carries_provider_key() -> None:
 
 def test_setup_codex_subscription() -> None:
     from avo.chat import interactive_first_run_setup
+    from avo.oauth.gate import subscription_allowed
 
     # 7 = codex, empty model (default)
     stdin = io.StringIO("7\n\n")
@@ -634,10 +637,12 @@ def test_setup_codex_subscription() -> None:
         "AVO_MODEL": "gpt-5.6-sol",
         "AVO_ALLOW_SUBSCRIPTION": "1",
     }
+    assert subscription_allowed(env) is True
 
 
 def test_setup_reuse_stored_oauth_login(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from avo.chat import interactive_first_run_setup
+    from avo.oauth.gate import subscription_allowed
     from avo.oauth.store import Credential, store_credential
 
     monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
@@ -660,3 +665,4 @@ def test_setup_reuse_stored_oauth_login(monkeypatch: pytest.MonkeyPatch, tmp_pat
         "AVO_MODEL": "claude-sonnet-4-6",
         "AVO_ALLOW_SUBSCRIPTION": "1",
     }
+    assert subscription_allowed(env) is True
