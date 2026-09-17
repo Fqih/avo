@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from avo import ModelResponse
+from avo import ModelResponse, StopReason, ToolCall
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
 from avo.chat import build_chat_context, run_repl
 from avo.config import ConfigError
@@ -142,6 +142,40 @@ def test_build_chat_context_constructs_runtime_with_tools(
         "git_diff",
         "git_commit",
     }
+
+
+@pytest.mark.asyncio
+async def test_build_chat_context_default_policy_does_not_auto_approve_mutation(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=_environ_with_ollama(),
+    )
+    ctx.runtime.provider = _ScriptedProvider(
+        [
+            ModelResponse(
+                tool_call=ToolCall(
+                    name="write_file",
+                    arguments={"path": "blocked.txt", "content": "must not be written"},
+                )
+            )
+        ]
+    )
+
+    try:
+        with bind_workspace(ctx.workspace):
+            result = await ctx.runtime.run("write blocked.txt")
+
+        assert result.stop_reason is StopReason.POLICY_DENIED
+        assert not (chat_env["workspace"] / "blocked.txt").exists()
+    finally:
+        await ctx.store.close()
+        ctx.session.close()
 
 
 def test_build_chat_context_missing_provider_raises(
@@ -1155,6 +1189,39 @@ def test_repl_setup_updates_environment(
     assert code == 0
     assert environ["AVO_PERMISSION_MODE"] == "default"
     assert process_environ["AVO_PERMISSION_MODE"] == "default"
+
+
+def test_repl_setup_failure_reports_error_and_preserves_session(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from avo import cli_setup
+
+    def fail_setup() -> None:
+        raise OSError("disk full")
+
+    environ = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", environ)
+    monkeypatch.setattr(cli_setup, "setup_global_avo", fail_setup)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = asyncio.run(
+        run_repl(
+            database_path=chat_env["db"],
+            workspace_root=chat_env["workspace"],
+            stdin=io.StringIO("/setup\n/permissions\n/quit\n"),
+            stdout=stdout,
+            stderr=stderr,
+            environ=environ,
+        )
+    )
+
+    assert code == 0
+    assert "setup failed: disk full" in stderr.getvalue()
+    assert "Current permission mode: default" in stdout.getvalue()
 
 
 def test_repl_shell_and_exclamation_commands(

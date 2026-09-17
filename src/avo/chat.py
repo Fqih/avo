@@ -166,6 +166,12 @@ def build_chat_context(
     provider = build_provider_from_env(environ)
     workspace = Workspace(workspace_root, create=False)
     store = SQLiteEventStore(db_path)
+    resolved_policy = (
+        permission_policy if permission_policy is not None else permission_policy_from_env(environ)
+    )
+    resolved_approval_callback = approval_callback
+    if resolved_approval_callback is None:
+        resolved_approval_callback = build_approval_callback(resolved_policy)
     runtime = AgentRuntime(
         provider=provider,
         event_store=store,
@@ -184,12 +190,8 @@ def build_chat_context(
             git_diff_tool(),
             git_commit_tool(),
         ],
-        approval_callback=approval_callback,
+        approval_callback=resolved_approval_callback,
     )
-    if permission_policy is not None:
-        resolved_policy = permission_policy
-    else:
-        resolved_policy = permission_policy_from_env(environ)
 
     skills_root = workspace_root / ".avo" / "skills"
     # Ensure the skills directory exists for first-run use, but the

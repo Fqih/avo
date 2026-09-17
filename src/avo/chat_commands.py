@@ -197,12 +197,16 @@ def _manage_setup_command(
     from avo.cli_setup import load_global_avo_config, render_setup_card, setup_global_avo
 
     color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
-    report = setup_global_avo()
-    configured_env = load_global_avo_config(report.base_dir)
-    environ.update(configured_env)
-    os.environ.update(configured_env)
-    out.write(render_setup_card(report, color=color_enabled))
-    out.flush()
+    try:
+        report = setup_global_avo()
+        configured_env = load_global_avo_config(report.base_dir)
+        environ.update(configured_env)
+        os.environ.update(configured_env)
+        out.write(render_setup_card(report, color=color_enabled))
+        out.flush()
+    except (AvoError, OSError) as exc:
+        err.write(f"setup failed: {exc}\n")
+        err.flush()
 
 
 def _manage_permissions(
