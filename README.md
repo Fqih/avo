@@ -44,7 +44,7 @@
 ```
 
 ### 1. 🔑 Subscription OAuth & Universal Login
-Reuse your existing **Claude Pro/Team**, **ChatGPT Plus/Team (Codex)**, or **Google Gemini CLI** subscriptions via standard PKCE browser flows (`avo login claude`, `avo login codex`, `avo login gemini`). Tokens are encrypted with `chmod 0600`, refreshed automatically in the background with deduplication, and stored alongside API keys in `~/.config/avo/auth.json`.
+Reuse your existing **Claude Pro/Team**, **ChatGPT Plus/Team (Codex)**, or **Google Gemini CLI** subscriptions via standard PKCE browser flows (`avo login claude`, `avo login codex`, `avo login gemini`). Subscription inference requires explicit opt-in with `AVO_ALLOW_SUBSCRIPTION=1`. Tokens are stored as plaintext alongside API keys in `~/.config/avo/auth.json`, protected by `0600` file permissions rather than encryption, and refreshed automatically in the background with deduplication.
 
 ### 2. 🔀 Multi-Tier Combo Routing & Quota Failover
 Never suffer crashed agent runs from HTTP 429 or exhausted token quotas again. Configure named combo profiles (`default`, `coder`, `budget`) where models are organized in priority order (`subscription` &rarr; `cheap API` &rarr; `free local floor`). Avo detects rate limits and credit exhaustion mid-turn, switches to the next tier, and continues streaming.
@@ -106,7 +106,7 @@ Log in via subscription OAuth or plain API keys:
 # OAuth Subscription login (Claude, ChatGPT Codex, or Gemini)
 avo login claude
 
-# Or store plain API keys securely
+# Or store plain API keys in permission-restricted auth.json
 avo login openrouter --key-stdin
 ```
 

@@ -19,14 +19,16 @@ Because subscription backends carry ToS risks, subscription inference is
 **disabled by default**.
 
 To enable subscription inference, you must explicitly opt in by setting the
-`AVO_ALLOW_SUBSCRIPTION` environment variable:
+`AVO_ALLOW_SUBSCRIPTION` environment variable to `1`, `true`, `yes`, or `on`
+(case-insensitive):
 
 ```bash
 export AVO_ALLOW_SUBSCRIPTION=1
 ```
 
-If this variable is not set, any attempt to run inference via a subscription
-OAuth credential will immediately raise an error pointing to this guide.
+If this variable is unset, false, empty, or unrecognized, any attempt to run
+inference via a subscription OAuth credential will immediately raise an error
+pointing to this guide.
 Direct API keys (e.g. `AVO_ANTHROPIC_API_KEY`, `AVO_OPENAI_API_KEY`) are never
 gated and remain the recommended path for production workloads.
 
@@ -56,8 +58,9 @@ avo login claude
    callback server.
 2. Your default web browser opens to the vendor's authorization page.
 3. After granting access, the vendor redirects to `http://localhost:<port>/auth/callback`.
-4. Avo exchanges the authorization code for access and refresh tokens, securely
-   storing them in `~/.config/avo/auth.json` (with `0600` file permissions).
+4. Avo exchanges the authorization code for access and refresh tokens and stores
+   them as plaintext JSON in `~/.config/avo/auth.json`, restricted to `0600` file
+   permissions. Avo does not encrypt this file.
 
 ### Headless / SSH Login
 
@@ -88,7 +91,8 @@ Answering `Y` imports the tokens immediately without needing a browser flow.
 
 ## 4. Universal API Key Login
 
-You can also store API keys securely in `auth.json` without setting environment variables:
+You can also store API keys as plaintext in the permission-restricted `auth.json`
+file without setting environment variables:
 
 ```bash
 echo "$ANTHROPIC_API_KEY" | avo login anthropic --key-stdin

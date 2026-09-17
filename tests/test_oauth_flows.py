@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import urllib.parse
 from typing import Any
 
 import pytest
 
-from avo.auth import AuthError
+from avo.auth import AuthError, auth_file_path
 from avo.oauth import flows
 from avo.oauth.registry import OAUTH
+from avo.oauth.store import Credential, store_credential
 
 
 def test_authorize_url_contains_pkce_and_state() -> None:
@@ -98,3 +100,22 @@ def test_map_account_from_claude_shape() -> None:
     cred = flows.map_tokens(raw, OAUTH["claude"])
     assert cred.account == "test@domain.com"
     assert cred.secret() == "at-x"
+
+
+def test_stored_oauth_credentials_are_plaintext_json_with_restrictive_permissions() -> None:
+    store_credential(
+        Credential(
+            provider="claude",
+            kind="oauth",
+            access_token="access-token",
+            refresh_token="refresh-token",
+            subscription=True,
+        )
+    )
+
+    path = auth_file_path()
+    stored = json.loads(path.read_text(encoding="utf-8"))
+
+    assert stored["claude"]["access_token"] == "access-token"
+    assert stored["claude"]["refresh_token"] == "refresh-token"
+    assert path.stat().st_mode & 0o777 == 0o600

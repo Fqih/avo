@@ -1,4 +1,4 @@
-"""Typed credential records (auth.json v2) with v1 string compatibility."""
+"""Plaintext JSON credential records protected by restrictive file permissions."""
 
 from __future__ import annotations
 

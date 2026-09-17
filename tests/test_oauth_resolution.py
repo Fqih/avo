@@ -51,11 +51,9 @@ def test_oauth_blocked_when_disabled(store_dir: None) -> None:
     assert resolve_credential("claude", {"AVO_ALLOW_SUBSCRIPTION": "0"}) is None
 
 
-def test_oauth_ok_by_default(store_dir: None) -> None:
+def test_oauth_blocked_by_default(store_dir: None) -> None:
     store_credential(_cred(expires_at=datetime.now(UTC) + timedelta(hours=5)))
-    cred = resolve_credential("claude", {})
-    assert cred is not None
-    assert cred.kind == "oauth"
+    assert resolve_credential("claude", {}) is None
 
 
 def test_oauth_ok_with_gate(store_dir: None) -> None:
