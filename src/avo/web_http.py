@@ -100,7 +100,7 @@ class WebHttpMixin(BaseHTTPRequestHandler):
                 authorization.encode(), f"Bearer {self.server.auth_token}".encode()
             )
         else:
-            cookie: SimpleCookie[str] = SimpleCookie()
+            cookie = SimpleCookie()
             try:
                 cookie.load(self.headers.get("Cookie", ""))
             except CookieError:

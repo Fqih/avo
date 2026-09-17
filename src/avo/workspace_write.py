@@ -20,7 +20,7 @@ def _windows_directory_handle(path: Path) -> Iterator[None]:
     import ctypes
     from ctypes import wintypes
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     create = kernel32.CreateFileW
     create.argtypes = [
         wintypes.LPCWSTR,
@@ -47,11 +47,11 @@ def _windows_directory_handle(path: Path) -> Iterator[None]:
     # In particular, do not share DELETE or WRITE access to these directories.
     handle = create(str(path), 0x80, 0x1, None, 3, 0x02200000, None)
     if handle == ctypes.c_void_p(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
     try:
         attributes = AttributeTagInfo()
         if not info(handle, 9, ctypes.byref(attributes), ctypes.sizeof(attributes)):
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
         if attributes.attributes & 0x400 or not attributes.attributes & 0x10:
             raise WorkspacePathError(f"unsafe workspace directory: {path}")
         yield
