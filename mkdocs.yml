@@ -1,12 +1,17 @@
 site_name: Avo
 site_description: Provider-agnostic reliability runtime for bounded, observable, resumable AI agent loops.
-site_url: https://fqih.cloud/
+site_url: https://avo.faqihhakim.tech/
 repo_url: https://github.com/Fqih/avo
 repo_name: Fqih/avo
 edit_uri: edit/main/docs/
 
 docs_dir: docs
 site_dir: site
+
+# Internal implementation plans are useful in the repository but should not
+# become part of the public product documentation or search index.
+exclude_docs: |
+  superpowers/**
 
 theme:
   name: material
@@ -87,6 +92,8 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Guides:
+    - Quickstart: guides/quickstart.md
+    - Installation: guides/install.md
     - Subscription OAuth: guides/subscription-auth.md
     - Combo Routing: guides/combo-routing.md
   - Reference:
@@ -107,5 +114,8 @@ extra:
       link: https://pypi.org/project/avo/
       name: Avo on PyPI
   generator: false
+
+extra_css:
+  - assets/extra.css
 
 copyright: Copyright &copy; 2026 Fqih. Released under MIT.

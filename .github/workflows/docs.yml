@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 # Pages is configured with "GitHub Actions" as its source (and a
-# CNAME for fqih.cloud), so the site must ship through the
+# custom domain for avo.faqihhakim.tech), so the site must ship through the
 # upload-pages-artifact + deploy-pages pattern; branch pushes to
 # gh-pages (``mkdocs gh-deploy``) would be ignored.
 jobs:

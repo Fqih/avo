@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tests: 1331 passed](https://img.shields.io/badge/tests-1331%20passed-brightgreen.svg)](tests/)
 [![Coverage: ≥90%](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen.svg)](tests/)
-[![Docs](https://img.shields.io/badge/docs-fqih.cloud-indigo.svg)](https://fqih.cloud/)
+[![Docs](https://img.shields.io/badge/docs-avo.faqihhakim.tech-indigo.svg)](https://avo.faqihhakim.tech/)
 
 </div>
 
@@ -309,7 +309,7 @@ Avo is built upon and inspired by excellent open-source projects:
 
 ## Documentation
 
-Full documentation, architecture specs, and user guides are available at [fqih.cloud](https://fqih.cloud/):
+Full documentation, architecture specs, and user guides are available at [avo.faqihhakim.tech](https://avo.faqihhakim.tech/):
 
 - [Subscription OAuth Guide](docs/guides/subscription-auth.md)
 - [Combo Routing & Failover Guide](docs/guides/combo-routing.md)

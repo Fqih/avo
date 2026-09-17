@@ -1,63 +1,184 @@
-<div align="center">
+<div class="avo-hero" markdown>
 
-<img src="assets/logo.svg" width="200" alt="Avo logo">
+<div>
+
+<div class="avo-hero__eyebrow">Reliable agent infrastructure</div>
+
+<h1>Avo</h1>
+
+<p class="avo-hero__lead">Build AI agent loops that can explain what happened, survive interruptions, and switch providers without losing the thread.</p>
+
+<div class="avo-hero__actions">
+<a class="md-button md-button--primary" href="guides/install/">Install Avo</a>
+<a class="md-button" href="guides/quickstart/">See the quickstart</a>
+</div>
 
 </div>
 
-# Avo
+<div class="avo-hero__terminal">
+<header>Start here</header>
 
-**Provider-agnostic reliability runtime for bounded, observable, resumable, replayable AI agent loops.**
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/Fqih/avo/main/install.sh | bash
+avo setup
+avo doctor
+```
 
-*Bounded. Resumable. Provider-agnostic. Honest about why it stopped.*
+</div>
 
----
+</div>
 
 !!! warning "Alpha status"
 
     0.1 is an **alpha foundation**. Suitable for evaluation, deterministic
     tests, and local prototypes; **not production-ready**.
 
-## Install
+## Start here
 
-Requires Python 3.11+. Core runtime depends only on Pydantic.
+<div class="avo-card-grid" markdown>
 
-### User-global CLI
+<div class="avo-card" markdown>
 
-The recommended end-user installation uses `uv tool` and stays inside the
-current user's tool environment; it does not require `sudo` or Administrator
-access.
+<div class="avo-card__eyebrow">01 · Install</div>
 
-Linux, macOS, and Git Bash:
+### Get the CLI
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Fqih/avo/main/install.sh | bash
-```
+Install Avo for your user account on Linux, macOS, Git Bash, or Windows. No root access is required.
 
-Native Windows PowerShell:
+[Installation guide →](guides/install.md)
 
-```powershell
-irm https://raw.githubusercontent.com/Fqih/avo/main/install.ps1 | iex
-```
+</div>
 
-Both installers install `avo[all]`, provision Python 3.13 with `uv`, and
-register the user-global `avo` command. Use a dry run before installation:
+<div class="avo-card" markdown>
 
-```bash
-bash install.sh --dry-run
-# PowerShell: .\install.ps1 -DryRun
-```
+<div class="avo-card__eyebrow">02 · Configure</div>
 
-After the CLI is installed, configure a workspace with:
+### Connect your providers
 
-```bash
-avo setup
-avo doctor
-```
+Run `avo setup`, add an API key or OAuth login, then use `avo doctor` to see what Avo resolved.
 
-The installer is also configurable with `AVO_PACKAGE` and
-`AVO_PYTHON_VERSION`, or with `--package` and `--python` on `install.sh`.
+[Provider setup →](guides/subscription-auth.md)
 
-### Development checkout
+</div>
+
+<div class="avo-card" markdown>
+
+<div class="avo-card__eyebrow">03 · Build</div>
+
+### Run a reliable loop
+
+Start with the CLI, or embed `AgentRuntime` in Python when you need full control over tools and state.
+
+[Quickstart →](guides/quickstart.md)
+
+</div>
+
+</div>
+
+<div class="avo-callout" markdown>
+
+**The short version:** Avo records the important decisions of an agent run, bounds retries and tools, and gives you a durable place to resume when a model or process stops.
+
+</div>
+
+## What Avo solves
+
+<div class="avo-card-grid" markdown>
+
+<div class="avo-card" markdown>
+
+### Provider failover
+
+Route from subscription to paid API to local Ollama when a quota, rate limit, or provider outage interrupts a turn.
+
+</div>
+
+<div class="avo-card" markdown>
+
+### Durable state
+
+Persist events and checkpoints in SQLite so a crashed run can be inspected or resumed instead of started from zero.
+
+</div>
+
+<div class="avo-card" markdown>
+
+### Bounded tools
+
+Keep file access inside the workspace, gate risky actions for approval, and run shell work in an optional isolated sandbox.
+
+</div>
+
+<div class="avo-card" markdown>
+
+### Honest stopping
+
+Every run has an explicit stop reason. You can tell whether it finished, hit a budget, failed upstream, or needs input.
+
+</div>
+
+<div class="avo-card" markdown>
+
+### Observable execution
+
+Inspect traces, token usage, cost estimates, structured logs, and OpenTelemetry spans without guessing what the agent did.
+
+</div>
+
+<div class="avo-card" markdown>
+
+### Extensible by design
+
+Add providers, tools, skills, plugins, MCP servers, or a LangChain bridge without changing the core loop.
+
+</div>
+
+</div>
+
+## How a run behaves
+
+<div class="avo-steps">
+
+<div class="avo-step" markdown>
+
+### 1. Receive a bounded request
+
+Avo starts with a model request, policy, workspace, and tool registry—not an unbounded autonomous process.
+
+</div>
+
+<div class="avo-step" markdown>
+
+### 2. Decide and record
+
+The runtime asks the provider, records the response and tool decision, then validates the next state transition.
+
+</div>
+
+<div class="avo-step" markdown>
+
+### 3. Execute with policy
+
+Tools stay inside their configured boundaries. Approval callbacks and permission modes decide which actions may run.
+
+</div>
+
+<div class="avo-step" markdown>
+
+### 4. Continue, fail over, or stop
+
+Retries are bounded. A quota failure can move to the next provider tier; a hard stop leaves a trace and checkpoint.
+
+</div>
+
+</div>
+
+## Install options
+
+Requires Python 3.11+. The core runtime depends only on Pydantic.
+
+For end users, use the [OS-native installer](guides/install.md). For contributors:
 
 ```bash
 git clone https://github.com/Fqih/avo.git
@@ -86,35 +207,7 @@ avo doctor
 
 Prints resolved provider / model / endpoint without an HTTP call — cheapest smoke test.
 
-## What Avo gives you
-
-- **Subscription OAuth & Universal Login** — authenticate directly via
-  browser PKCE against Claude Pro/Team, ChatGPT Plus/Team (Codex), or
-  Google Gemini CLI (`avo login`).
-- **Multi-Tier Combo Routing & Quota Failover** — organize models into
-  prioritized tiers (`subscription` &rarr; `cheap` &rarr; `free local floor`).
-  Fail over automatically on HTTP 429 or quota exhaustion mid-turn.
-- **Deterministic agent loop** — strict `StopReason` taxonomy, finite
-  `AgentState` transitions, replayable event log.
-- **Provider-agnostic** — Anthropic, OpenAI-compatible, Groq, Cerebras,
-  Ollama, MiniMax, Gemini, Codex; bring your own.
-- **Resilience** — bounded retry with exponential backoff, three-state
-  circuit breaker, request-level circuit trip on sustained upstream
-  failure.
-- **Sandbox** — Docker-as-a-service shell tool with ephemeral containers,
-  default `network_mode="none"`, workspace-bounded file tools.
-- **Approval gates** — per-tool approval callbacks driven by
-  `AVO_TOOLS_REQUIRE_APPROVAL`.
-- **Resumability** — append-only SQLite event log with checkpoint
-  snapshots. Crash mid-turn, resume from the last durable state.
-- **Observability** — OpenTelemetry `gen_ai.*` spans per turn, structured
-  JSON logs, cost tracking with USD estimator, audit log with deep
-  secret redaction.
-- **Plugins** — entry-point groups for tools, providers, and notifiers.
-  Scaffold one with `avo plugin init`.
-- **Optional integrations** — LangChain bridge, OpenTelemetry, MCP.
-
-## Quickstart
+## A tiny Python example
 
 ```python
 import asyncio
@@ -136,6 +229,18 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+## Find your next page
+
+| If you want to... | Read |
+| --- | --- |
+| Install and configure Avo | [Installation](guides/install.md) |
+| Understand the runtime model | [Architecture](avo-reference.md#1-overview-and-architecture) |
+| Use the CLI and REPL | [CLI reference](cli.md) |
+| Add provider credentials | [Subscription and API keys](guides/subscription-auth.md) |
+| Resume a crashed run | [AgentRuntime](avo-reference.md#8-agentruntime-srcavoruntimepy) |
+| Add tools or plugins | [Extensibility reference](avo-reference.md#18-extensibility-hooks-permissions-skills-plugins-subagents) |
+| Inspect architecture and contracts | [Project reference](avo-reference.md) |
 
 ## Repository layout
 
