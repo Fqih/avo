@@ -75,6 +75,26 @@ model name can still be entered for compatible or newly released endpoints.
 Use `/model` inside a chat to inspect the current provider's catalog and
 `/model NAME` to switch models for the next turn.
 
+### Security posture and diagnostics
+
+`avo doctor` reports the resolved security posture and the source of every
+setting without printing tokens. Resolution is CLI override, environment,
+workspace config, user config, then defaults. The default posture requires a
+sandbox, disables sandbox networking, and keeps plugin editable installs and
+activation off.
+
+These controls are intentionally separate:
+
+- `avo resume` continues a prior chat session; `avo runs replay` verifies a
+  recorded run without calling a provider or executing tools.
+- Sandbox settings constrain execution; host execution is an explicit local
+  development exception, not a sandbox feature.
+- OAuth/API-key login authenticates a vendor; permission mode controls which
+  tools may run. Permission protection is not encryption.
+
+See [`docs/migrations/0.7.x-to-milestone-three.md`](migrations/0.7.x-to-milestone-three.md)
+for rollback-safe upgrade notes.
+
 ### Agent delegation and replay
 
 `@coder`, `@explore`, and `@reviewer` are built-in workspace agents. A prompt

@@ -175,23 +175,23 @@
 - `authenticate_mutation(headers, *, expected_token, csrf_token, allowed_origin, confirmation) -> None` raises a stable HTTP error before mutation parsing.
 - `_send_json` and mutation errors use `{"error": {"code": str, "message": str}}` without echoing secrets.
 
-- [ ] **Step 1: Write failing web security tests.**
+- [x] **Step 1: Write failing web security tests.**
 
   Cover read-only GET access, missing/wrong bearer token (`401`), wrong/missing origin (`403`), missing/wrong CSRF (`403`), wildcard CORS rejection, missing confirmation, and successful authenticated mutation.
 
-- [ ] **Step 2: Run tests and verify RED.**
+- [x] **Step 2: Run tests and verify RED.**
 
   Run: `python -m pytest -q tests/test_web_security.py tests/test_web_ui.py`
 
-- [ ] **Step 3: Implement one mutation gate before route dispatch.**
+- [x] **Step 3: Implement one mutation gate before route dispatch.**
 
   Keep the per-process random token and loopback bind. Apply origin/CSRF checks only to browser mutations, require bearer authentication for all mutations, and require exact confirmation for workspace/git/provider changes. Preserve the dashboard's read-only routes.
 
-- [ ] **Step 4: Add integration coverage for workspace and playground writes.**
+- [x] **Step 4: Add integration coverage for workspace and playground writes.**
 
   Assert rejected requests leave SQLite, files, git state, and provider settings unchanged.
 
-- [ ] **Step 5: Run focused tests and commit.**
+- [x] **Step 5: Run focused tests and commit.**
 
   Run: `python -m pytest -q tests/test_web_security.py tests/test_web_ui.py`
 
@@ -203,15 +203,15 @@
 - Modify: `src/avo/doctor.py`, `src/avo/cli.py`, `README.md`, `docs/cli.md`, `docs/api-stability.md`, `docs/migrations/`
 - Test: `tests/test_doctor.py`, `tests/test_cli_help.py`, `tests/test_config_resolver.py`
 
-- [ ] **Step 1: Write failing diagnostics/documentation tests.**
+- [x] **Step 1: Write failing diagnostics/documentation tests.**
 
   Assert doctor output contains resolved config source, permission mode, sandbox posture, plugin policy, web origin posture, and credential backend type while excluding token-shaped values. Assert help and migration docs distinguish resume/replay, sandbox/host execution, OAuth/API keys, and permission protection/encryption.
 
-- [ ] **Step 2: Implement diagnostics and migration guidance.**
+- [x] **Step 2: Implement diagnostics and migration guidance.**
 
   Reuse typed resolver output; do not duplicate environment parsing in doctor or docs examples. Add a `0.7.x-to-milestone-three` migration note with rollback-safe configuration changes.
 
-- [ ] **Step 3: Run focused tests and commit.**
+- [x] **Step 3: Run focused tests and commit.**
 
   Run: `python -m pytest -q tests/test_doctor.py tests/test_cli_help.py tests/test_config_resolver.py`
 

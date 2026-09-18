@@ -188,6 +188,13 @@ Stable since 0.1.0:
 | `AVO_REPEATED_ACTION_LIMIT` | Loop guard threshold. |
 | `AVO_PERMISSION_MODE` | `default` / `accept_edits` / `plan` / `bypass`. |
 | `AVO_TOOLS_REQUIRE_APPROVAL` | Comma-separated tool names requiring approval. |
+| `AVO_SANDBOX_REQUIRED` | Require sandbox availability before execution (default `1`). |
+| `AVO_SANDBOX_NETWORK` | Allow sandbox networking (default `0`). |
+| `AVO_SANDBOX_TIMEOUT_SECONDS` | Bounded execution timeout, 0–3600 seconds. |
+| `AVO_PLUGIN_EDITABLE` | Permit editable plugin installs only after explicit confirmation. |
+| `AVO_PLUGIN_ACTIVATION` | Permit plugin activation only after explicit confirmation. |
+| `AVO_WEB_ALLOWED_ORIGIN` | One explicit non-wildcard dashboard origin. |
+| `AVO_WEB_CORS_ENABLED` | Enable configured web CORS (default `0`). |
 | `AVO_USAGE_RATES_INPUT_PER_1K` | USD per 1K input tokens (cost estimator). |
 | `AVO_USAGE_RATES_OUTPUT_PER_1K` | USD per 1K output tokens. |
 | `AVO_NOTIFY_WEBHOOK` | Webhook URL for `Notification` hook events. |

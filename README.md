@@ -75,6 +75,21 @@ terse-output presets with `avo saver use NAME`. Avo preserves the original
 event history and reports estimated savings; no external RTK/Caveman binary is
 required.
 
+### 7. 🔒 Explicit Milestone Three Security Boundaries
+
+`avo doctor` now shows the resolved permission, sandbox, plugin, and local web
+dashboard posture together with each setting's source, without printing
+credentials. Settings resolve from CLI, environment, workspace config, user
+config, then safe defaults. Sandboxed execution and disabled networking are the
+defaults; child agents cannot escalate beyond the parent's capabilities.
+
+Plugin installation requires an explicit confirmation, and the local dashboard
+uses bearer/session authentication, origin checks, CSRF protection, and
+confirmation before mutations. OAuth/API-key authentication, permission
+protection, and encryption remain separate concerns. See the
+[Milestone Three migration note](docs/migrations/0.7.x-to-milestone-three.md)
+before changing security posture in an unattended deployment.
+
 ---
 
 ## Terminal Visual Walkthrough
