@@ -57,6 +57,17 @@ def test_cli_lists_and_inspects_sqlite_runs(
     assert "Stop reason: completed" in inspected
     assert "model_responded" in inspected
 
+    assert main(["--database", str(path), "replay", run_id]) == 0
+    replayed = capsys.readouterr().out
+    assert "Replay verified" in replayed
+    assert run_id in replayed
+
+    assert main(["--database", str(path), "replay", run_id, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["verified"] is True
+
+    assert main(["--database", str(path), "runs", "replay", run_id]) == 0
+    assert "Replay verified" in capsys.readouterr().out
+
 
 def test_cli_invalid_run_returns_nonzero(
     tmp_path: Path,

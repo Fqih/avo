@@ -209,6 +209,34 @@ Inside the REPL:
 - Type `/diff` to inspect uncommitted workspace modifications.
 - Type `/model` to pick a specific standalone model.
 
+### Named agents and deterministic replay
+
+Workspace agents live in `.avo/agents/<name>.md`. The built-ins `@coder`,
+`@explore`, and `@reviewer` are available immediately. Mention one at the
+start of a prompt to delegate an isolated task; use a top-level `|` to run
+independent tasks in parallel:
+
+```text
+@explore map the authentication flow
+@reviewer inspect the provider error handling | @explore find related tests
+```
+
+Use `/agents` for the searchable picker, `/agents list` for a script-friendly
+list, and `/agent add NAME DESCRIPTION` to create a workspace profile. Child
+agents inherit the parent permission boundary and are bounded by the same
+workspace root.
+
+Every terminal run stores model decisions and durable tool results in the
+SQLite event ledger. Verify that material without calling a provider or
+executing a tool again:
+
+```bash
+avo runs replay RUN_ID
+avo runs replay RUN_ID --json
+```
+
+The interactive equivalent is `/replay RUN_ID`.
+
 ### Attach files and images
 
 Paste or drag a workspace path into the prompt, or make the attachment

@@ -15,6 +15,7 @@ from avo.config import resolve_database_path
 from avo.doctor import main as doctor_main
 from avo.exceptions import AvoError
 from avo.providers.fake import FakeProvider
+from avo.replay import replay_run
 from avo.runtime import AgentRuntime
 from avo.storage.sqlite import SQLiteEventStore
 from avo.tracing import TraceInspector
@@ -48,6 +49,7 @@ def _parser() -> argparse.ArgumentParser:
             "  avo login codex     Open the official vendor login\n"
             "  avo models ollama   Inspect local model recommendations\n"
             "  avo saver list      Inspect token-saver presets\n"
+            "  avo replay RUN_ID   Verify a run's replay ledger without inference\n"
             "  avo doctor          Diagnose configuration without inference\n"
             "\n"
             "Documentation: https://avo.faqihhakim.tech"
@@ -84,6 +86,21 @@ def _parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit JSON instead of a human-readable table.",
+    )
+    runs_replay_parser = run_commands.add_parser(
+        "replay", help="Verify a run without invoking providers or tools."
+    )
+    runs_replay_parser.add_argument("run_id")
+    runs_replay_parser.add_argument(
+        "--json", action="store_true", help="Emit a machine-readable JSON report."
+    )
+
+    replay_parser = commands.add_parser(
+        "replay", help="Verify a persisted run without invoking providers or tools."
+    )
+    replay_parser.add_argument("run_id")
+    replay_parser.add_argument(
+        "--json", action="store_true", help="Emit a machine-readable JSON report."
     )
 
     chat = commands.add_parser(
@@ -358,6 +375,14 @@ async def _execute(
 
     store = SQLiteEventStore(resolve_database_path(args.database))
     try:
+        if args.command == "replay" or (args.command == "runs" and args.runs_command == "replay"):
+            replay_report = await replay_run(store, args.run_id)
+            if args.json:
+                print(replay_report.to_json())
+            else:
+                print(replay_report.to_text())
+            return 0 if replay_report.verified else 1
+
         if args.runs_command == "list":
             runs = await store.list_runs()
             if not runs:

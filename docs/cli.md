@@ -42,6 +42,7 @@ and permission configuration.
 | `avo runs inspect`     | Show full event trace for a run                          |
 | `avo runs resume`      | Resume a run from its last durable state                 |
 | `avo runs diff`        | Compare two persisted runs (events + tokens + steps)     |
+| `avo runs replay`      | Verify recorded model/tool decisions without inference  |
 | `avo bench`            | Run a deterministic cross-provider benchmark             |
 | `avo cost`             | Aggregate the persistent `TokenLedger` (table or JSON)    |
 | `avo sandbox run`      | Run a one-off shell command in an ephemeral container    |
@@ -73,6 +74,27 @@ model name can still be entered for compatible or newly released endpoints.
 
 Use `/model` inside a chat to inspect the current provider's catalog and
 `/model NAME` to switch models for the next turn.
+
+### Agent delegation and replay
+
+`@coder`, `@explore`, and `@reviewer` are built-in workspace agents. A prompt
+starting with a registered mention delegates to that isolated profile:
+
+```text
+@explore locate the OAuth entry points
+@reviewer inspect the error paths | @explore find tests for them
+```
+
+Use `/agents` to open the searchable picker, `/agents list` for a
+non-interactive list, and `/agent add NAME DESCRIPTION` to create
+`.avo/agents/NAME.md`. Delegated children use fresh event stores and inherit
+the parent workspace and approval boundary; a failed sibling does not cancel
+the others.
+
+For a completed run, `avo runs replay RUN_ID` validates the persisted event
+ledger and prints a stable fingerprint. `--json` is intended for CI. Replay
+never sends a provider request, invokes a tool, mutates the original run, or
+resumes an incomplete run. The REPL equivalent is `/replay RUN_ID`.
 
 ### Dynamic catalogs and attachments
 

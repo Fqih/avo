@@ -46,6 +46,7 @@ from avo.chat_workspace_commands import (
 )
 from avo.exceptions import AvoError
 from avo.permissions import PermissionMode, PermissionPolicy, build_approval_callback
+from avo.replay import replay_run
 from avo.tracing import TraceInspector
 
 if TYPE_CHECKING:
@@ -1028,6 +1029,14 @@ async def _run_slash(
             return False
         out.write(trace.to_text())
         out.write("\n")
+        return False
+
+    if cmd == "/replay":
+        if len(args) != 2:
+            err.write("usage: /replay RUN_ID\n")
+            return False
+        report = await replay_run(ctx.store, args[1])
+        out.write(report.to_text() + "\n")
         return False
 
     if cmd == "/resume":

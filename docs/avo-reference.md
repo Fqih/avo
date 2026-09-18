@@ -1432,6 +1432,7 @@ re-parse their tail via `_tail_argv(command)` (strips the leading
 | `avo saver list|show|use|off` | inspect, select, or disable deterministic token-saver presets |
 | `avo runs inspect RUN_ID` | render `RunTrace.to_text()` |
 | `avo runs resume RUN_ID` | replay via `FakeProvider`; restrictions below |
+| `avo runs replay RUN_ID` | verify the durable decision ledger without inference |
 | `avo runs diff RUN_A RUN_B [--json]` | structural diff (see `diff.py`) |
 | `avo chat` | REPL; `--database`, `--workspace-root`, `--session SESSION_ID`, `--new-session` |
 | `avo resume [SESSION_ID]` | Explicitly resume the latest eligible chat session or a specific session |
@@ -2125,7 +2126,8 @@ Settings of record (`pyproject.toml`):
 **Anti-patterns (each has broken something before or will)**
 
 - Do not reconstruct state from events in a *caller* — use
-  `TraceInspector`/`RunTrace`; ad-hoc replay diverges.
+  `TraceInspector`/`RunTrace` for inspection and `ReplayTranscript` for
+  deterministic replay; ad-hoc replay diverges.
 - Do not add a second approval path next to `approval_callback`
   (CLAUDE.md rule 5: tools fit the existing contract).
 - Do not call `subprocess` from host-side tools; sandbox-only

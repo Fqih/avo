@@ -386,6 +386,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ),
     ("/plugin [list|show|install|remove]", "manage third-party plugins in ~/.avo/plugins"),
     ("/inspect RUN_ID", "render the trace for one recorded run"),
+    ("/replay RUN_ID", "verify a recorded run without invoking tools or providers"),
     ("/skills", "list skills available in the current workspace"),
     ("/skill NAME", "load a skill body as the next turn"),
     ("/jobs", "list background tasks"),
