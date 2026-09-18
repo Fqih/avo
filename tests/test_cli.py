@@ -225,6 +225,46 @@ def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
     assert out == f"avo {__version__}"
 
 
+def test_cli_without_command_starts_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_repl(**kwargs: object) -> int:
+        calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr("avo.cli.run_repl", fake_run_repl)
+
+    assert main([]) == 0
+    assert len(calls) == 1
+    assert calls[0]["force_new_session"] is False
+
+
+def test_cli_help_explains_default_chat_and_core_commands(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "avo                 Start chat" in output
+    assert "avo setup" in output
+    assert "avo login" in output
+    assert "avo models" in output
+    assert "avo doctor" in output
+
+
+def test_cli_chat_help_lists_session_options(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["chat", "--help"])
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "--workspace-root" in output
+    assert "--session" in output
+    assert "--new-session" in output
+
+
 def test_cli_login_status(capsys: pytest.CaptureFixture[str]) -> None:
     from avo.cli import main as cli_main
 
