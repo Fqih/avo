@@ -179,7 +179,9 @@ def test_from_avo_env_missing_credential_raises(store_dir: None) -> None:
         )
 
     with pytest.raises(AuthError, match="No stored credential"):
-        GeminiCliConfig.from_avo_env({}, fallback_model="gemini-2.5-pro")
+        GeminiCliConfig.from_avo_env(
+            {"AVO_ALLOW_SUBSCRIPTION": "1"}, fallback_model="gemini-2.5-pro"
+        )
 
 
 def test_from_avo_env_with_valid_credential_succeeds(store_dir: None) -> None:
@@ -191,7 +193,9 @@ def test_from_avo_env_with_valid_credential_succeeds(store_dir: None) -> None:
             subscription=True,
         )
     )
-    config = GeminiCliConfig.from_avo_env({}, fallback_model="gemini-2.5-pro")
+    config = GeminiCliConfig.from_avo_env(
+        {"AVO_ALLOW_SUBSCRIPTION": "1"}, fallback_model="gemini-2.5-pro"
+    )
     assert config.model == "gemini-2.5-pro"
     assert (
         config.endpoint
@@ -246,6 +250,106 @@ async def test_gemini_cli_provider_stream_fallback() -> None:
     assert len(chunks) > 0
     full_text = "".join(c.text for c in chunks if c.text)
     assert full_text == "halo"
+
+
+def test_discovers_models_from_antigravity_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    from avo.providers import gemini_cli
+
+    class Result:
+        returncode = 0
+        stdout = (
+            "Fetching available models...\n"
+            "gemini-3.8-flash-high\tGemini 3.8 Flash (High)\n"
+            "claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n"
+        )
+        stderr = ""
+
+    monkeypatch.setattr(gemini_cli.subprocess, "run", lambda *args, **kwargs: Result())
+
+    models = gemini_cli.discover_antigravity_models()
+
+    assert [(item.model_id, item.label) for item in models] == [
+        ("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"),
+        ("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)"),
+    ]
+
+
+def test_discovers_models_from_cliproxyapi(monkeypatch: pytest.MonkeyPatch) -> None:
+    from avo.providers import gemini_cli
+
+    class Response:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "data": [
+                        {"id": "gemini-3.8-flash-high", "display_name": "Gemini 3.8 Flash"},
+                        {"id": "claude-sonnet-4-6", "displayName": "Claude Sonnet 4.6"},
+                    ]
+                }
+            ).encode()
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            pass
+
+    monkeypatch.setattr(gemini_cli.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+
+    models = gemini_cli.discover_cliproxyapi_models(base_url="http://127.0.0.1:8317")
+
+    assert [item.model_id for item in models] == ["gemini-3.8-flash-high", "claude-sonnet-4-6"]
+
+
+@pytest.mark.asyncio
+async def test_antigravity_transport_uses_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    from avo.providers import gemini_cli
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b'{"result":"pong"}', b""
+
+        def kill(self) -> None:
+            pass
+
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_create(*args: str, **kwargs: Any) -> Process:
+        calls.append(args)
+        return Process()
+
+    monkeypatch.setattr(gemini_cli.asyncio, "create_subprocess_exec", fake_create)
+    provider = GeminiCliProvider(
+        GeminiCliConfig(model="gemini-3.8-flash-high", transport="antigravity"),
+        client=FakeClient(DONE_TEXT),
+    )
+
+    response = await provider.generate(_req())
+
+    assert response.content == "pong"
+    assert calls
+    assert "agy" in calls[0]
+    assert "--model" in calls[0]
+    assert "gemini-3.8-flash-high" in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_cliproxyapi_transport_uses_openai_compatible_endpoint() -> None:
+    provider = GeminiCliProvider(
+        GeminiCliConfig(
+            model="gemini-3.8-flash-high",
+            transport="cliproxyapi",
+            cliproxyapi_base_url="http://127.0.0.1:8317",
+            cliproxyapi_api_key="local-key",
+        ),
+        client=FakeClient({"choices": [{"message": {"role": "assistant", "content": "pong"}}]}),
+    )
+
+    response = await provider.generate(_req())
+
+    assert response.content == "pong"
 
 
 @pytest.mark.asyncio

@@ -93,6 +93,7 @@ nav:
   - Home: index.md
   - Guides:
     - Quickstart: guides/quickstart.md
+    - Token savers: guides/token-savers.md
     - Installation: guides/install.md
     - Subscription OAuth: guides/subscription-auth.md
     - Combo Routing: guides/combo-routing.md

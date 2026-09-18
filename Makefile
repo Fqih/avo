@@ -1,9 +1,15 @@
-.PHONY: install dev lint format typecheck test test-app-tools benchmark clean build
+.PHONY: install install-global setup dev lint format typecheck test test-app-tools benchmark clean build
 
 PYTHON ?= python
 
 install:
 	$(PYTHON) -m pip install -e .
+
+install-global:
+	$(PYTHON) -m pip install .
+
+setup:
+	avo setup --global
 
 dev:
 	$(PYTHON) -m pip install -e ".[dev]"

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "avo"
-version = "0.1.7"
+version = "0.7.1"
 description = "Reliable execution infrastructure for long-running AI agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -138,7 +138,7 @@ reproducible = true
 [tool.pytest.ini_options]
 # Skip the live integration tests by default so the offline suite stays
 # free of paid API traffic. Run them with `pytest --run-live tests/integration`.
-addopts = "--strict-config --strict-markers --ignore=tests/integration"
+addopts = "--strict-config --strict-markers --ignore=tests/integration -p no:langsmith_plugin"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [

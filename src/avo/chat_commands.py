@@ -25,7 +25,7 @@ from avo.chat_render import (
     _print_slash_help,
     _show_cost_breakdown,
 )
-from avo.chat_session import render_session_picker, resolve_session_id
+from avo.chat_session import SessionInfo, render_session_picker, resolve_session_id
 from avo.chat_turn import _resume_chat_session, _run_model_command, _run_turn
 from avo.chat_workspace_commands import (
     _manage_branch,
@@ -183,6 +183,176 @@ def _manage_draft(
         return
 
     err.write(f"unknown draft subcommand {subcommand!r}; choose show, save, or clear\n")
+
+
+def _manage_agent_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Unified agent command for persona, workspace instructions, and active profile."""
+    if len(args) <= 1:
+        current_persona = ctx.persona.active_persona or "(default)"
+        skills = ctx.skills.names()
+        skills_str = ", ".join(skills[:5]) if skills else "(none)"
+        instr_len = len(ctx.persona.custom_instructions or "")
+
+        out.write("╭─ Agent Configuration ───────────────────────────────────╮\n")
+        out.write(f"│ Active Persona : {current_persona:<39} │\n")
+        out.write(f"│ Instructions   : {str(instr_len) + ' chars active':<39} │\n")
+        active_skills = f"{len(skills)} installed ({skills_str})"
+        out.write(f"│ Active Skills  : {active_skills:<39} │\n")
+        out.write("╰─────────────────────────────────────────────────────────╯\n")
+        out.write("Commands:\n")
+        out.write("  /agent persona [NAME]        switch or list personas\n")
+        out.write("  /agent instructions [TEXT]   view or set custom instructions\n")
+        out.write("  /agent clear                 reset persona and instructions to default\n")
+        out.flush()
+        return
+
+    sub = args[1].lower()
+    if sub == "persona":
+        _manage_persona(ctx, args[2:], out, err)
+        return
+    if sub in ("instructions", "prompt"):
+        text_arg = " ".join(args[2:]) if len(args) > 2 else None
+        _manage_instructions(ctx, text_arg, out, err)
+        return
+    if sub in ("clear", "reset"):
+        ctx.persona.set_persona(None)
+        ctx.persona.set_custom_instructions(None)
+        out.write("✓ Reset agent persona and workspace instructions to defaults.\n")
+        out.flush()
+        return
+    _manage_persona(ctx, args[1:], out, err)
+
+
+async def _manage_list_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+    environ: dict[str, str],
+) -> None:
+    """Browse catalog of sessions, models, skills, plugins, tools, or jobs."""
+    if len(args) <= 1:
+        out.write("Usage: /list [sessions|models|skills|plugins|tools|jobs]\n\n")
+        out.write("Available categories:\n")
+        out.write("  /list sessions   - list conversation sessions\n")
+        out.write("  /list models     - list available models for current provider\n")
+        out.write("  /list skills     - list installed workspace skills\n")
+        out.write("  /list plugins    - list installed CLI plugins\n")
+        out.write("  /list tools      - list registered runtime app tools\n")
+        out.write("  /list jobs       - list active background tasks\n")
+        out.flush()
+        return
+
+    cat = args[1].lower()
+    if cat in ("sessions", "session"):
+        infos = ctx.session.list_sessions()
+        out.write(render_session_picker(infos))
+        return
+    if cat in ("models", "model"):
+        await _run_model_command(ctx, ["/model"], out, err, environ)
+        return
+    if cat in ("skills", "skill"):
+        names = ctx.skills.names()
+        if not names:
+            out.write(f"No skills found under {ctx.skills.root}\n")
+        else:
+            out.write(f"Installed skills ({len(names)}):\n")
+            for name in names:
+                out.write(f"  • {name}\n")
+        out.flush()
+        return
+    if cat in ("plugins", "plugin"):
+        _manage_plugin_command(ctx, ["/plugin", "list"], out, err)
+        return
+    if cat in ("tools", "tool"):
+        tools = ctx.runtime.tools.metadata
+        out.write(f"Registered tools ({len(tools)}):\n")
+        for tool in tools:
+            first_desc = tool.description.splitlines()[0] if tool.description else ""
+            out.write(f"  • {tool.name:<20} {first_desc[:55]}\n")
+        out.flush()
+        return
+    if cat in ("jobs", "job"):
+        jobs = ctx.background.list_jobs()
+        if not jobs:
+            out.write("No background jobs.\n")
+        else:
+            for j in jobs:
+                out.write(render_job_row(j) + "\n")
+        out.flush()
+        return
+    err.write(f"unknown list category: {cat!r}; try /list to see options\n")
+
+
+def _manage_plugin_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Manage third-party plugins (~/.avo/plugins) from inside chat REPL."""
+    from avo.cli_plugins import PLUGIN_ROOT, _read_index
+
+    if len(args) <= 1 or args[1].lower() == "list":
+        index = _read_index()
+        if not index:
+            out.write(f"No plugins installed under {PLUGIN_ROOT}.\n")
+            out.write("Install one with: /plugin install <git-url-or-path>\n")
+            out.flush()
+            return
+        out.write(f"Installed plugins ({len(index)}):\n")
+        for name, entry in sorted(index.items()):
+            source = entry.get("source", "")
+            editable = " (editable)" if entry.get("editable") else ""
+            out.write(f"  • {name:<18} {source}{editable}\n")
+        out.flush()
+        return
+
+    sub = args[1].lower()
+    if sub == "show":
+        if len(args) < 3:
+            err.write("usage: /plugin show <NAME>\n")
+            return
+        from avo.cli_plugins import show as _show_plugin
+
+        plugin = _show_plugin(args[2])
+        out.write(f"name: {plugin.name}\nsource: {plugin.source}\npath: {plugin.path}\n")
+        return
+
+    if sub == "install":
+        if len(args) < 3:
+            err.write("usage: /plugin install <SOURCE>\n")
+            return
+        from avo.cli_plugins import install as _install_plugin
+
+        try:
+            plugin = _install_plugin(
+                args[2], name=args[3] if len(args) > 3 else None, editable=True
+            )
+            out.write(f"Installed plugin {plugin.name!r} from {plugin.source} → {plugin.path}\n")
+        except Exception as exc:
+            err.write(f"plugin install failed: {exc}\n")
+        return
+
+    if sub in ("remove", "uninstall", "rm"):
+        if len(args) < 3:
+            err.write("usage: /plugin remove <NAME>\n")
+            return
+        from avo.cli_plugins import remove as _remove_plugin
+
+        try:
+            _remove_plugin(args[2])
+            out.write(f"Removed plugin {args[2]!r}.\n")
+        except Exception as exc:
+            err.write(f"plugin remove failed: {exc}\n")
+        return
+
+    err.write(f"unknown plugin action: {sub!r}; try /plugin list\n")
 
 
 def _manage_setup_command(
@@ -717,7 +887,7 @@ async def _run_slash(
         return False
 
     if cmd == "/model":
-        return await _run_model_command(ctx, args, out, err, environ)
+        return await _run_model_command(ctx, args, out, err, environ, in_stream=in_stream)
 
     if cmd == "/sessions":
         infos = ctx.session.list_sessions()
@@ -742,6 +912,18 @@ async def _run_slash(
 
     if cmd == "/setup":
         _manage_setup_command(ctx, args, out, err, environ, in_stream=in_stream)
+        return False
+
+    if cmd == "/agent":
+        _manage_agent_command(ctx, args, out, err)
+        return False
+
+    if cmd == "/list":
+        await _manage_list_command(ctx, args, out, err, environ)
+        return False
+
+    if cmd in ("/plugin", "/plugins"):
+        _manage_plugin_command(ctx, args, out, err)
         return False
 
     if cmd == "/inspect":
@@ -770,7 +952,12 @@ async def _run_slash(
             if not infos:
                 err.write("no previous chat sessions to resume.\n")
                 return False
-            out.write(render_session_picker(infos))
+            if in_stream is not None:
+                selected = await _select_session(infos, out, in_stream)
+                if selected is not None:
+                    await _resume_chat_session(ctx, selected, out, err)
+            else:
+                out.write(render_session_picker(infos))
             return False
         if len(args) == 2:
             arg = args[1]
@@ -857,3 +1044,167 @@ async def _run_slash(
 
     err.write(f"unknown command: {cmd}; try /help to list slash commands\n")
     return False
+
+
+async def _select_session(
+    infos: tuple[SessionInfo, ...],
+    out: TextIO,
+    in_stream: TextIO,
+) -> str | None:
+    """Interactively search and select a chat session from the picker."""
+
+    if _can_use_session_picker(in_stream, out):
+        return await _select_session_tui(infos, in_stream, out)
+
+    filtered = infos
+    out.write(render_session_picker(filtered))
+    while True:
+        out.write("Select a session by number, ID, or search text (q to cancel): ")
+        out.flush()
+        query = in_stream.readline()
+        if not query:
+            return None
+        query = query.strip()
+        if not query or query.lower() in {"q", "quit", "cancel"}:
+            out.write("Resume cancelled.\n")
+            return None
+
+        if query.isdigit():
+            index = int(query)
+            if 1 <= index <= len(filtered):
+                return filtered[index - 1].session_id
+            out.write(f"Choose a number from 1 to {len(filtered)}.\n")
+            continue
+
+        exact = next((info for info in filtered if info.session_id == query), None)
+        if exact is not None:
+            return exact.session_id
+
+        matches = tuple(
+            info
+            for info in infos
+            if query.lower()
+            in " ".join(
+                (
+                    info.session_id,
+                    info.first_user_preview,
+                    info.last_user_preview,
+                )
+            ).lower()
+        )
+        if not matches:
+            out.write(f"No sessions match {query!r}. Try another search.\n")
+            continue
+        filtered = matches
+        out.write(render_session_picker(filtered))
+
+
+def _can_use_session_picker(in_stream: TextIO, out: TextIO) -> bool:
+    """Return whether the terminal supports the arrow-key picker."""
+
+    return bool(
+        hasattr(in_stream, "isatty")
+        and in_stream.isatty()
+        and hasattr(out, "isatty")
+        and out.isatty()
+    )
+
+
+async def _select_session_tui(
+    infos: tuple[SessionInfo, ...],
+    in_stream: TextIO,
+    out: TextIO,
+) -> str | None:
+    """Use prompt-toolkit completion as an arrow-key session selector."""
+
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.completion import Completer, Completion
+        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.styles import Style
+    except ImportError:
+        return _select_session_fallback(infos, out, in_stream)
+
+    options = tuple(
+        f"{index}. {info.first_user_preview[:48]}  ·  {info.turn_count} turns  ·  {info.session_id}"
+        for index, info in enumerate(infos, start=1)
+    )
+    by_option = dict(zip(options, infos, strict=True))
+
+    class SessionCompleter(Completer):
+        def get_completions(self, document: Any, complete_event: Any) -> Any:
+            query = document.text_before_cursor.lower()
+            for option in options:
+                if not query or query in option.lower():
+                    yield Completion(
+                        option,
+                        start_position=-len(document.text_before_cursor),
+                        display=option,
+                    )
+
+    bindings = KeyBindings()
+
+    @bindings.add("down")
+    def _start_or_next(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_next()
+
+    @bindings.add("up")
+    def _previous(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_previous()
+
+    @bindings.add("escape")
+    def _cancel(event: Any) -> None:
+        event.app.exit(exception=KeyboardInterrupt)
+
+    out.write("\n╭─ Resume session ─────────────────────────────────────────────╮\n")
+    out.write("│ ↑/↓ choose · Enter select · type to search · Esc cancel     │\n")
+    out.write("╰─────────────────────────────────────────────────────────────╯\n")
+    out.flush()
+    session: Any = PromptSession()
+    try:
+        selected = await session.prompt_async(
+            HTML("<ansicyan>&gt;</ansicyan> "),
+            completer=SessionCompleter(),
+            complete_while_typing=True,
+            key_bindings=bindings,
+            style=Style.from_dict(
+                {
+                    "completion-menu.completion": "bg:#20242b #d8dee9",
+                    "completion-menu.completion.current": "bg:#42b883 #101418 bold",
+                    "scrollbar.background": "bg:#20242b",
+                    "scrollbar.button": "bg:#42b883",
+                }
+            ),
+        )
+    except (EOFError, KeyboardInterrupt):
+        out.write("\nResume cancelled.\n")
+        return None
+    selected_info = by_option.get(selected.strip())
+    return selected_info.session_id if selected_info is not None else None
+
+
+def _select_session_fallback(
+    infos: tuple[SessionInfo, ...],
+    out: TextIO,
+    in_stream: TextIO,
+) -> str | None:
+    """Provide a non-prompt-toolkit selector for terminal fallbacks."""
+
+    out.write(render_session_picker(infos))
+    query = in_stream.readline().strip()
+    if not query or query.lower() in {"q", "quit", "cancel"}:
+        out.write("Resume cancelled.\n")
+        return None
+    if query.isdigit() and 1 <= int(query) <= len(infos):
+        return infos[int(query) - 1].session_id
+    resolved = resolve_session_id(query, infos)
+    return resolved

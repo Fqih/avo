@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -42,9 +43,11 @@ def _parser() -> argparse.ArgumentParser:
             "Quick start:\n"
             "  avo                 Start chat\n"
             "  avo chat            Start chat explicitly\n"
+            "  avo resume         Resume the latest chat session\n"
             "  avo setup           Configure a provider\n"
             "  avo login codex     Open the official vendor login\n"
             "  avo models ollama   Inspect local model recommendations\n"
+            "  avo saver list      Inspect token-saver presets\n"
             "  avo doctor          Diagnose configuration without inference\n"
             "\n"
             "Documentation: https://avo.faqihhakim.tech"
@@ -105,13 +108,36 @@ def _parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         metavar="SESSION_ID",
-        help="Resume an existing chat session by id (default: start a fresh thread; "
-        "without --session the REPL offers to resume the most recent thread).",
+        help="Resume an existing chat session by id (default: start a fresh thread).",
     )
     chat.add_argument(
         "--new-session",
         action="store_true",
         help="Always start a fresh chat session, ignoring any prior threads.",
+    )
+
+    resume_chat = commands.add_parser(
+        "resume",
+        help="Resume the latest chat session, or a specific session id.",
+    )
+    resume_chat.add_argument(
+        "session_id",
+        nargs="?",
+        metavar="SESSION_ID",
+        help="Chat session id to resume (default: latest eligible session).",
+    )
+    resume_chat.add_argument(
+        "--database",
+        "-d",
+        type=Path,
+        default=argparse.SUPPRESS,
+        help="SQLite database path (default: $AVO_DATABASE_PATH or avo.db).",
+    )
+    resume_chat.add_argument(
+        "--workspace-root",
+        type=Path,
+        default=None,
+        help="Workspace directory file tools are bound to (default: current working directory).",
     )
 
     commands.add_parser(
@@ -136,6 +162,12 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "init",
         help="Scaffold .avo/skills/ and AGENTS.md in the current directory.",
+    )
+
+    commands.add_parser(
+        "setup",
+        add_help=False,
+        help="Configure global ~/.avo directory and defaults (see `avo setup --help`).",
     )
 
     commands.add_parser(
@@ -184,6 +216,11 @@ def _parser() -> argparse.ArgumentParser:
         add_help=False,
         help="Discover and manage Ollama Local/Cloud models (see `avo models --help`).",
     )
+    commands.add_parser(
+        "saver",
+        add_help=False,
+        help="Manage token-saver presets (see `avo saver --help`).",
+    )
 
     return parser
 
@@ -202,7 +239,27 @@ async def _execute(
     if args.command == "login":
         from avo.auth import main_login
 
-        return main_login(tail or _tail_argv("login", argv))
+        # `main_login` is a synchronous compatibility entry point that owns
+        # its own asyncio.run call. The CLI dispatcher itself already runs
+        # inside asyncio.run. Keep it in a dedicated thread; asyncio.to_thread
+        # and cross-thread loop callbacks are not reliable when the worker
+        # itself creates and closes a nested event loop.
+        login_args = tail or _tail_argv("login", argv)
+        login_result: list[int] = []
+        failure: list[BaseException] = []
+
+        def run_login() -> None:
+            try:
+                login_result.append(int(main_login(login_args)))
+            except BaseException as exc:  # propagate CLI errors to the caller
+                failure.append(exc)
+
+        worker = threading.Thread(target=run_login, name="avo-login", daemon=True)
+        worker.start()
+        worker.join()
+        if failure:
+            raise failure[0]
+        return login_result[0] if login_result else 1
 
     if args.command == "combo":
         from avo.combo.cli import main as combo_main
@@ -210,9 +267,14 @@ async def _execute(
         return combo_main(tail or _tail_argv("combo", argv))
 
     if args.command == "models":
-        from avo.cli_models import main as models_main
+        from avo.cli_models import async_main as models_main
 
-        return models_main(tail or _tail_argv("models", argv))
+        return await models_main(tail or _tail_argv("models", argv))
+
+    if args.command == "saver":
+        from avo.savers.cli import main as saver_main
+
+        return saver_main(tail or _tail_argv("saver", argv))
 
     if args.command == "doctor":
         # ``doctor_main`` has already-consumed argv; pass an empty list
@@ -282,6 +344,16 @@ async def _execute(
             workspace_root=workspace_root,
             session_id=args.session,
             force_new_session=args.new_session,
+            resume_latest=False,
+        )
+
+    if args.command == "resume":
+        workspace_root = (args.workspace_root or Path.cwd()).resolve()
+        return await run_repl(
+            database_path=resolve_database_path(args.database),
+            workspace_root=workspace_root,
+            session_id=args.session_id,
+            resume_latest=args.session_id is None,
         )
 
     store = SQLiteEventStore(resolve_database_path(args.database))
@@ -360,6 +432,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "cost",
         "combo",
         "models",
+        "saver",
     }:
         parser.error(f"unrecognized arguments: {' '.join(rest)}")
     try:

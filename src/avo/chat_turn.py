@@ -1,7 +1,7 @@
 """Turn execution for the chat REPL.
 
 Sends one user turn through ``AgentRuntime``, records it on the
-session, renders the reply (including split thinking output), and
+session, renders the compact reply summary, and
 handles the ``/model`` provider swap plus the session-resume and
 prompt-composition entry points the REPL loop calls.
 
@@ -11,9 +11,13 @@ Re-exported from :mod:`avo.chat` for backward compatibility.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, TextIO
+from collections.abc import Mapping
+from datetime import datetime
+from time import monotonic
+from typing import TYPE_CHECKING, Any, TextIO
 
 from avo.app_tools.file_tools import bind_workspace
+from avo.chat_render import render_cooked_footer, render_thought_duration
 from avo.chat_session import render_session_row
 from avo.chat_stream import LiveAnswerPrinter, TerminalSpinner
 from avo.config import (
@@ -25,6 +29,10 @@ from avo.config import (
     supported_providers,
 )
 from avo.exceptions import AvoError
+from avo.providers.gemini_cli import (
+    discover_antigravity_models,
+    discover_cliproxyapi_models,
+)
 from avo.providers.streaming import split_thinking
 
 if TYPE_CHECKING:
@@ -33,23 +41,169 @@ if TYPE_CHECKING:
     from avo.chat_session import SessionInfo, SessionLifecycle
 
 
+def _model_picker_options(
+    catalog: tuple[str, ...],
+    *,
+    current: str,
+    recommended: str,
+    labels: Mapping[str, str] | None = None,
+) -> tuple[tuple[str, str], ...]:
+    """Build picker labels separately from raw model ids."""
+
+    options: list[tuple[str, str]] = []
+    for index, name in enumerate(catalog, start=1):
+        title = (labels or {}).get(name, name)
+        marker = " (current)" if name == current else ""
+        hint = " (recommended)" if name == recommended and not marker else ""
+        options.append((f"{index}. {title}{hint}{marker}", name))
+    return tuple(options)
+
+
+async def _select_model_tui(
+    options: tuple[tuple[str, str], ...],
+    out: TextIO,
+    in_stream: TextIO,
+) -> str | None:
+    """Select a model with the same searchable arrow picker as `/resume`."""
+
+    if not (
+        hasattr(in_stream, "isatty")
+        and in_stream.isatty()
+        and hasattr(out, "isatty")
+        and out.isatty()
+    ):
+        return None
+
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.completion import Completer, Completion
+        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.styles import Style
+    except ImportError:
+        return None
+
+    by_display = dict(options)
+
+    class ModelCompleter(Completer):
+        def get_completions(self, document: Any, complete_event: Any) -> Any:
+            query = document.text_before_cursor.lower()
+            for display, _model in options:
+                if not query or query in display.lower():
+                    yield Completion(
+                        display,
+                        start_position=-len(document.text_before_cursor),
+                        display=display,
+                    )
+
+    bindings = KeyBindings()
+
+    @bindings.add("down")
+    def _next(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_next()
+
+    @bindings.add("up")
+    def _previous(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_previous()
+
+    @bindings.add("escape")
+    def _cancel(event: Any) -> None:
+        event.app.exit(exception=KeyboardInterrupt)
+
+    out.write("\n╭─ Select model ─────────────────────────────────────────────╮\n")
+    out.write("│ ↑/↓ choose · Enter select · type to search · Esc cancel   │\n")
+    out.write("╰───────────────────────────────────────────────────────────╯\n")
+    out.flush()
+    session: Any = PromptSession(
+        completer=ModelCompleter(),
+        complete_while_typing=True,
+        reserve_space_for_menu=min(8, max(1, len(options))),
+        erase_when_done=True,
+        key_bindings=bindings,
+        style=Style.from_dict(
+            {
+                "completion-menu.completion": "bg:#20242b #d8dee9",
+                "completion-menu.completion.current": "bg:#42b883 #101418 bold",
+                "scrollbar.background": "bg:#20242b",
+                "scrollbar.button": "bg:#42b883",
+            }
+        ),
+    )
+    # Open the list immediately. The user should see the available models as
+    # soon as `/model` enters picker mode, without having to press Down first.
+    session.default_buffer.start_completion(select_first=True)
+    try:
+        selected = await session.prompt_async(HTML("<ansicyan>&gt;</ansicyan> "))
+    except (EOFError, KeyboardInterrupt):
+        out.write("\nModel selection cancelled.\n")
+        return None
+    return by_display.get(selected.strip())
+
+
 async def _run_model_command(
     ctx: ChatContext,
     args: list[str],
     out: TextIO,
     err: TextIO,
     environ: dict[str, str],
+    in_stream: TextIO | None = None,
 ) -> bool:
-    """Handle ``/model`` — list the catalog or switch to a specific model.
+    """Handle ``/model`` — pick from the catalog or switch by model id.
 
-    No arguments renders a numbered picker (current model marked with
-    ``*``); a single argument swaps the runtime's provider in place so
-    the very next turn talks to the new model.
+    In a real terminal, no arguments opens a searchable arrow picker. Pipes
+    and tests retain a plain catalog listing instead of blocking for input.
     """
 
     provider_name = ctx.provider_name
     catalog = available_models(provider_name)
+    model_labels: dict[str, str] = {}
+    dynamic_catalog = False
+    is_terminal = (
+        in_stream is not None
+        and hasattr(in_stream, "isatty")
+        and in_stream.isatty()
+        and hasattr(out, "isatty")
+        and out.isatty()
+    )
+    if provider_name in ("gemini-cli", "gemini_cli") and is_terminal:
+        # Gemini/Antigravity is account-scoped: never present the old static
+        # fallback catalog in the real terminal picker.
+        catalog = ()
+        try:
+            transport = environ.get("AVO_GEMINI_CLI_TRANSPORT", "").strip().lower()
+            proxy_url = environ.get("AVO_CLIPROXYAPI_BASE_URL", "").strip()
+            if transport == "cliproxyapi" or proxy_url:
+                discovered = discover_cliproxyapi_models(
+                    base_url=proxy_url or None,
+                    api_key=(
+                        environ.get("AVO_CLIPROXYAPI_API_KEY", "").strip()
+                        or environ.get("AVO_GEMINI_CLI_API_KEY", "").strip()
+                        or None
+                    ),
+                )
+            else:
+                discovered = discover_antigravity_models()
+        except Exception:
+            discovered = ()
+        if discovered:
+            catalog = tuple(item.model_id for item in discovered)
+            model_labels = {item.model_id: item.label for item in discovered}
+            dynamic_catalog = True
     if not catalog:
+        if provider_name in ("gemini-cli", "gemini_cli") and is_terminal:
+            err.write(
+                "could not fetch the live Gemini model catalog. Configure "
+                "CLIProxyAPI or install/authenticate `agy`, then retry /model.\n"
+            )
+            return False
         err.write(
             f"provider {provider_name!r} has no model catalog; "
             f"set AVO_MODEL=<name> in your environment to override.\n"
@@ -57,14 +211,24 @@ async def _run_model_command(
         return False
 
     if len(args) == 1:
-        out.write(f"Models for provider {provider_name!r} (current: {ctx.model_name!r}):\n")
-        recommended = default_model(provider_name)
-        for index, name in enumerate(catalog, start=1):
-            marker = "*" if name == ctx.model_name else " "
-            hint = " (recommended)" if name == recommended else ""
-            out.write(f"  {marker} {index}. {name}{hint}\n")
-        out.write("Pick a model with: /model NAME\n")
-        return False
+        recommended = catalog[0] if dynamic_catalog else default_model(provider_name)
+        options = _model_picker_options(
+            catalog,
+            current=ctx.model_name,
+            recommended=recommended,
+            labels=model_labels,
+        )
+        selected = (
+            await _select_model_tui(options, out, in_stream) if in_stream is not None else None
+        )
+        if selected is None:
+            out.write(f"Models for provider {provider_name!r} (current: {ctx.model_name!r}):\n")
+            for display, model in options:
+                marker = "*" if model == ctx.model_name else " "
+                out.write(f"  {marker} {display}\n")
+            out.write("Pick a model with: /model NAME\n")
+            return False
+        args = ["/model", selected]
 
     if len(args) == 2:
         target = args[1].strip()
@@ -98,7 +262,7 @@ async def _run_model_command(
             out.flush()
             return False
 
-        if not is_known_model(provider_name, target):
+        if target not in catalog and not is_known_model(provider_name, target):
             err.write(
                 f"{target!r} is not in the {provider_name!r} catalog. "
                 f"Run /model to see the available list.\n"
@@ -156,11 +320,7 @@ async def _resume_chat_session(
         return False
     ctx.session_id = session_id
     ctx.pending_preamble = preamble
-    turns = ctx.session.turns(session_id)
-    out.write(
-        f"Resumed session {session_id} with {len(turns)} prior turn(s). "
-        "Next user message will be sent as a continuation.\n"
-    )
+    out.write("\n" + ctx.session.render_transcript(session_id) + "\n")
     return False
 
 
@@ -170,8 +330,7 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
     ctx.session.record_user_turn(ctx.session_id, task)
     effective_task = task
     system_prompt = ctx.persona.render_system_prompt()
-    if system_prompt:
-        effective_task = f"[System Context]\n{system_prompt}\n\n---\n{effective_task}"
+    started_at = monotonic()
     if ctx.pending_preamble is not None:
         effective_task = (
             f"{ctx.pending_preamble}\n\n"
@@ -208,6 +367,7 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
             with bind_workspace(ctx.workspace):
                 result = await ctx.runtime.run(
                     effective_task,
+                    system_prompt=system_prompt,
                     stream_callback=printer.feed if printer is not None else None,
                     stream_interrupt_callback=(
                         printer.on_interrupt if printer is not None else None
@@ -227,7 +387,9 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
 
     streamed_answer = printer is not None and printer.answered
     assistant_content = result.output or ""
-    thought, clean_answer = split_thinking(assistant_content)
+    _thought, clean_answer = split_thinking(assistant_content)
+    elapsed_seconds = monotonic() - started_at
+    color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
 
     ctx.session.record_assistant_turn(
         ctx.session_id,
@@ -237,22 +399,21 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
         stop_reason=result.stop_reason.value,
     )
 
-    out.write(
-        f"Avo [{result.status.value}/{result.stop_reason.value}] "
-        f"steps={result.steps} run_id={result.run_id}\n"
-    )
     if result.error:
         out.write(f"error: {result.error}\n")
-    if thought:
-        out.write("\n💭 Thought process:\n")
-        for thought_line in thought.splitlines():
-            out.write(f"  │ {thought_line}\n")
-        out.write("\n")
+    out.write(render_thought_duration(elapsed_seconds, color=color_enabled))
     if not streamed_answer:
         if clean_answer:
-            out.write(f"Avo> {clean_answer}\n")
+            out.write(f"• {clean_answer}\n")
         elif result.output:
-            out.write(f"Avo> {result.output}\n")
+            out.write(f"• {result.output}\n")
+    out.write(
+        render_cooked_footer(
+            elapsed_seconds,
+            datetime.now().astimezone(),
+            color=color_enabled,
+        )
+    )
 
     from avo.context_advisor import evaluate_session_context
 

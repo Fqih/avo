@@ -17,7 +17,7 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -98,6 +98,40 @@ def load_global_avo_config(base_dir: Path | None = None) -> dict[str, str]:
             env_mapping[f"AVO_{prov}_BASE_URL"] = data["base_url"].strip()
 
     return env_mapping
+
+
+def remember_last_provider(
+    environ: Mapping[str, str],
+    base_dir: Path | None = None,
+) -> Path | None:
+    """Persist the last provider/model choice without copying any secrets.
+
+    The first-run wizard historically exported values to the shell rc file,
+    which only affected a future shell and made the next ``avo`` invocation
+    appear unconfigured.  Global config stores only routing preferences; API
+    keys and OAuth tokens remain in the credential store.
+    """
+
+    provider = environ.get("AVO_PROVIDER", "").strip()
+    model = environ.get("AVO_MODEL", "").strip()
+    if not provider or not model:
+        return None
+
+    target_dir = (base_dir or GLOBAL_AVO_DIR).expanduser().resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    config_path = target_dir / "config.json"
+    try:
+        current = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        current = {}
+    if not isinstance(current, dict):
+        current = {}
+
+    current["provider"] = provider
+    current["model"] = model
+    current["allow_subscription"] = environ.get("AVO_ALLOW_SUBSCRIPTION") == "1"
+    config_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    return config_path
 
 
 def setup_global_avo(

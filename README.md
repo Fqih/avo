@@ -19,7 +19,7 @@
 ---
 
 **Avo** is an observable, resilient AI agent runtime that can use API providers,
-subscription OAuth, or local models behind one execution loop. When a quota,
+vendor-account OAuth, or local models behind one execution loop. When a quota,
 rate limit, or provider outage interrupts a turn, Avo can switch tiers without
 discarding the conversation or execution state. Runs are recorded in SQLite so
 you can inspect, resume, and explain what happened.
@@ -45,17 +45,17 @@ extras, so you can install only the capabilities your deployment needs.
       │ (Tier 1: Primary)   │ (Tier 2: Cheap)     │ (Tier 3: Free Floor)
 ┌─────▼──────────────┐┌─────▼──────────────┐┌─────▼──────────────┐
 │ Claude / ChatGPT   ││ OpenRouter / Groq  ││ Ollama (Local)     │
-│ (Subscription)     ││ (Pay-per-token)    ││ (Zero Cost / Free) │
+│ (Account / Quota)  ││ (Pay-per-token)    ││ (Zero Cost / Free) │
 └────────────────────┘└────────────────────┘└────────────────────┘
          │ (429/Quota)         │ (429/Quota)
          └──────► Fallback ────┴──────► Fallback ────► Done
 ```
 
-### 1. 🔑 Subscription OAuth & Universal Login
-Reuse your existing **Claude Pro/Team**, **ChatGPT Plus/Team (Codex)**, or **Google Gemini CLI** subscriptions via standard PKCE browser flows (`avo login claude`, `avo login codex`, `avo login gemini`). Subscription inference requires explicit opt-in with `AVO_ALLOW_SUBSCRIPTION=1`. Tokens are stored as plaintext alongside API keys in `~/.config/avo/auth.json`, protected by `0600` file permissions rather than encryption, and refreshed automatically in the background with deduplication.
+### 1. 🔑 Vendor Account Login & Universal Login
+Open the official **Claude**, **ChatGPT/Codex**, or **Google Gemini** login in your browser via standard PKCE flows (`avo login claude`, `avo login codex`, `avo login gemini`). Free and paid accounts can have different model access and quotas; Avo never claims that a plan is required or bypasses vendor limits. `AVO_ALLOW_SUBSCRIPTION=1` is an explicit opt-in for OAuth-backed inference. Tokens are stored as plaintext alongside API keys in `~/.config/avo/auth.json`, protected by `0600` file permissions rather than encryption, and refreshed automatically in the background with deduplication.
 
 ### 2. 🔀 Multi-Tier Combo Routing & Quota Failover
-Never suffer crashed agent runs from HTTP 429 or exhausted token quotas again. Configure named combo profiles (`default`, `coder`, `budget`) where models are organized in priority order (`subscription` &rarr; `cheap API` &rarr; `free local floor`). Avo detects rate limits and credit exhaustion mid-turn, switches to the next tier, and continues streaming.
+Never suffer crashed agent runs from HTTP 429 or exhausted token quotas again. Configure named combo profiles (`default`, `coder`, `budget`) where models are organized in priority order (`account` &rarr; `cheap API` &rarr; `free local floor`). Avo detects rate limits and credit exhaustion mid-turn, switches to the next tier, and continues streaming.
 
 ### 3. 📜 Event-Sourced Ledger & Replay
 Every decision, prompt, tool call, output, and failover is recorded as an immutable event in a durable SQLite ledger. Any past run can be inspected with chronological traces (`avo runs inspect <id>`) or resumed deterministically (`avo runs resume <id>`).
@@ -66,6 +66,12 @@ File tools strictly enforce POSIX `O_NOFOLLOW` boundaries—null bytes, symlink 
 ### 5. 🪶 Zero Extra Core Dependencies
 The core agent loop, state machine, event store, and providers require **only Pydantic**. Additional capabilities (Docker sandbox, OpenTelemetry, CLI extras) remain opt-in.
 
+### 6. 🧠 Deterministic Token Savers
+Long tool-heavy conversations can opt into internal `compact`, `full`, or
+terse-output presets with `avo saver use NAME`. Avo preserves the original
+event history and reports estimated savings; no external RTK/Caveman binary is
+required.
+
 ---
 
 ## Terminal Visual Walkthrough
@@ -75,11 +81,11 @@ Experience interactive agent loops with real-time model failover:
 ```text
 $ export AVO_PROVIDER=combo
 $ export AVO_COMBO=coder
-$ avo chat
+$ avo
 
-       ▄██▄           Avo CLI 0.1.7
-     ▄██████▄         Fqih (Subscription)
-    ███    ███        provider: combo · model: coder [subscription -> cheap -> free]
+       ▄██▄           Avo CLI 0.7.1
+     ▄██████▄         Fqih (account quota)
+    ███    ███        provider: combo · model: coder [account -> cheap -> free]
    ███  ▄▄  ███       workspace: ~/Project/Loopward
    ███  ▀▀  ███       session: c8f921ab04e1
   ──────────────────────────────────────────────────────
@@ -87,7 +93,7 @@ $ avo chat
 > Analyze the authentication flow in src/avo/auth.py and write unit tests
 
 ⠋ Thinking...
-⤾ Fallback: switched from 'subscription' (claude) to 'cheap' (openrouter) [rate_limited_429]
+⤾ Fallback: switched from 'account' (claude) to 'cheap' (openrouter) [rate_limited_429]
 
 I've analyzed `src/avo/auth.py`. Here is the architecture breakdown and test suite...
 ```
@@ -136,7 +142,7 @@ The global installer only installs the CLI. Run `avo setup` once to create the
 global `~/.avo` configuration, then use `avo doctor` to inspect what Avo will
 resolve. Workspace state and run history remain local to the project.
 
-For subscription OAuth providers, opt in explicitly so the choice is visible
+For vendor-account OAuth providers, opt in explicitly so the choice is visible
 and reproducible:
 
 ```bash
@@ -154,14 +160,23 @@ python -m pip install -e ".[dev,providers,sandbox]"
 
 ### 2. Authenticate and configure
 
-Log in via subscription OAuth or plain API keys:
+Log in through an official vendor browser flow or plain API keys:
 
 ```bash
-# OAuth subscription login (Claude, ChatGPT Codex, or Gemini)
+# Official browser login (Claude, ChatGPT Codex, or Gemini)
 avo login claude
+avo login codex
+avo login gemini
 
 # Or store plain API keys in permission-restricted auth.json
 avo login openrouter --key-stdin
+
+# Authenticate every missing cloud vendor used by a combo, one at a time
+avo combo auth coder
+
+# Inspect local hardware before choosing a model to download
+avo models ollama recommend
+avo models ollama pull qwen2.5-coder:7b
 ```
 
 Verify the resolved provider, model, endpoint, and credential requirements with
@@ -170,6 +185,12 @@ one command. `doctor` does not make a provider request:
 ```bash
 avo doctor
 ```
+
+The first successful setup/login becomes Avo's remembered route in
+`~/.avo/config.json`, so launching `avo` again reuses that provider and model.
+The setup wizard offers a numbered model picker; available access still
+depends on the account's plan and quota. Use `/model` in the REPL to inspect
+the catalog or override the model for the next turn.
 
 ### 3. Interactive Chat REPL
 
@@ -255,8 +276,8 @@ How does Avo compare to alternative model proxies and CLI tools?
 | Feature | **Avo** | **9router** | **LiteLLM** | **OpenRouter** | **Claude Code** |
 |---|:---:|:---:|:---:|:---:|:---:|
 | **In-Process Agent Runtime** | ✅ Yes | ❌ (Proxy only) | ❌ (Gateway only) | ❌ (Hosted API) | ✅ Yes |
-| **Subscription OAuth (Claude/Codex/Gemini)** | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ⚠️ (Claude only) |
-| **Multi-Tier Failover (Sub → Cheap → Local)** | ✅ Yes | ⚠️ (Basic route) | ✅ Yes | ⚠️ (Model fallbacks) | ❌ No |
+| **Vendor-account OAuth (Claude/Codex/Gemini)** | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ⚠️ (Claude only) |
+| **Multi-Tier Failover (Account → Cheap → Local)** | ✅ Yes | ⚠️ (Basic route) | ✅ Yes | ⚠️ (Model fallbacks) | ❌ No |
 | **Zero-Cost Local Floor (Ollama)** | ✅ Yes | ⚠️ (Via endpoint) | ✅ Yes | ❌ No | ❌ No |
 | **Event-Sourced Ledger & Replay (SQLite)** | ✅ Built-in | ❌ No | ❌ No | ❌ No | ❌ No |
 | **POSIX Safe Workspace (O_NOFOLLOW)** | ✅ Built-in | ❌ No | ❌ No | ❌ No | ❌ No |
@@ -269,16 +290,39 @@ How does Avo compare to alternative model proxies and CLI tools?
 
 | Provider | Identifier | Auth Mechanism | Primary Use Case |
 |---|---|---|---|
-| **Anthropic Claude** | `anthropic` | Subscription OAuth or API Key | High-reasoning agent turns |
-| **ChatGPT Codex** | `codex` | Subscription OAuth | Complex coding & planning |
-| **Google Gemini** | `gemini` / `gemini-cli`| Subscription OAuth or API Key | Fast, multimodal turns |
-| **Ollama** | `ollama` | Local HTTP (no auth) | Zero-cost reliability floor |
+| **Anthropic Claude** | `anthropic` | Vendor account OAuth or API key | High-reasoning agent turns |
+| **ChatGPT Codex** | `codex` | Vendor account OAuth; free/paid quota varies | Complex coding & planning |
+| **Google Gemini** | `gemini` / `gemini-cli`| Vendor account OAuth or API key | Fast, multimodal turns |
+| **Ollama Local** | `ollama` | Local HTTP (no auth) | Zero-cost reliability floor |
+| **Ollama Cloud** | `ollama-cloud` | Official API/device key | Remote large models |
 | **OpenRouter** | `openrouter` | API Key | 300+ models gateway |
 | **Groq** | `groq` | API Key | Ultra low-latency inference |
 | **Cerebras** | `cerebras` | API Key | Wafer-scale speed inference |
 | **MiniMax** | `minimax` | API Key | Cost-effective Anthropic style |
 | **OpenAI-Compatible** | `openai` | API Key | vLLM, llama.cpp, LocalAI |
 | **Multi-Tier Combo** | `combo` | Orchestrates all above | Automatic 429 & quota fallback |
+
+### Live model catalogs and Antigravity
+
+For `gemini-cli`, Avo does not need to maintain a second model list. In an
+interactive terminal, `/model` fetches the current account catalog from
+Antigravity's `agy models` command. If you use [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI),
+point Avo at its OpenAI-compatible server instead; Avo fetches `GET /v1/models`
+and sends turns to `POST /v1/chat/completions`:
+
+```bash
+export AVO_PROVIDER=gemini-cli
+export AVO_GEMINI_CLI_TRANSPORT=cliproxyapi
+export AVO_CLIPROXYAPI_BASE_URL=http://127.0.0.1:8317
+export AVO_CLIPROXYAPI_API_KEY=your-local-proxy-key   # optional for an open localhost proxy
+avo
+```
+
+When neither a proxy nor `agy` is available, Avo reports the missing
+transport instead of silently using a stale model catalog. The coding agent
+also exposes a `run_terminal` tool for commands, tests, and linters in the
+active workspace; require explicit approval with
+`AVO_TOOLS_REQUIRE_APPROVAL=run_terminal` when needed.
 
 ---
 
@@ -288,8 +332,17 @@ How does Avo compare to alternative model proxies and CLI tools?
 
 | Command | Action |
 |---|---|
-| `avo chat` | Start interactive chat REPL. |
-| `avo login [PROVIDER]` | Authenticate via subscription OAuth or API key. |
+| `avo` / `avo chat` | Start the interactive chat REPL. |
+| `avo resume [SESSION]` | Resume the latest or a specific chat session. |
+| `avo login [PROVIDER]` | Open the official vendor login or store an API key. |
+| `avo combo auth <NAME>` | Login to every missing cloud vendor used by a combo, sequentially. |
+| `avo models ollama list` | List installed Ollama Local models. |
+| `avo models ollama recommend` | Recommend local models from this computer's hardware. |
+| `avo models ollama pull MODEL` | Show size and ask for confirmation before downloading locally. |
+| `avo models ollama cloud` | Show remote Ollama Cloud guidance; no local download. |
+| `avo saver list` | List built-in token-saver presets. |
+| `avo saver show NAME` | Inspect a preset's style guide and compression pipeline. |
+| `avo saver use NAME` / `avo saver off` | Enable or disable the persisted saver choice. |
 | `avo combo list` | List configured multi-tier combo profiles (`--json` supported). |
 | `avo combo show <NAME>` | Inspect tier configuration, timeouts, and cooldowns. |
 | `avo combo new <NAME> --tier ...` | Create a custom combo route. |
@@ -332,7 +385,7 @@ Full documentation, architecture specs, and user guides are available at [avo.fa
 
 - [Quickstart](docs/guides/quickstart.md)
 - [Installation & global CLI](docs/guides/install.md)
-- [Subscription OAuth Guide](docs/guides/subscription-auth.md)
+- [Provider login and quota guide](docs/guides/subscription-auth.md)
 - [Combo Routing & Failover Guide](docs/guides/combo-routing.md)
 - [CLI reference](docs/cli.md)
 - [Full Project API Reference](docs/avo-reference.md)

@@ -1,6 +1,6 @@
 # Combo Routing: Multi-Tier Model Failover
 
-Combo Routing allows a single Avo conversation to orchestrate multiple models across prioritized tiers (for example: **subscription** &rarr; **cheap API** &rarr; **free local floor**).
+Combo Routing allows a single Avo conversation to orchestrate multiple models across prioritized tiers (for example: **account quota** &rarr; **cheap API** &rarr; **free local floor**).
 
 When rate limits (HTTP 429) or quota errors occur mid-turn, Avo transparently fails over to the next configured tier, persisting full run history and recording a `route_failover` event in the SQLite ledger.
 
@@ -21,7 +21,7 @@ When rate limits (HTTP 429) or quota errors occur mid-turn, Avo transparently fa
       │ (Tier 1: Primary)   │ (Tier 2: Cheap)     │ (Tier 3: Free Floor)
 ┌─────▼──────────────┐┌─────▼──────────────┐┌─────▼──────────────┐
 │ Claude / ChatGPT   ││ OpenRouter / Groq  ││ Ollama (Local)     │
-│ (Subscription)     ││ (Pay-per-token)    ││ (Zero Cost / Free) │
+│ (Account / Quota)   ││ (Pay-per-token)    ││ (Zero Cost / Free) │
 └────────────────────┘└────────────────────┘└────────────────────┘
          │ (429/Quota)         │ (429/Quota)
          └──────► Fallback ────┴──────► Fallback ────► Done
@@ -42,7 +42,7 @@ When rate limits (HTTP 429) or quota errors occur mid-turn, Avo transparently fa
 
 Avo includes three built-in presets out of the box:
 
-| Preset Name | Tier 1 (Subscription) | Tier 2 (Cheap API) | Tier 3 (Free Local Floor) |
+| Preset Name | Tier 1 (Account) | Tier 2 (Cheap API) | Tier 3 (Free Local Floor) |
 |---|---|---|---|
 | **`default`** | `claude` (`claude-sonnet-5`) | `openrouter` (`llama-3.3-70b-instruct`) | `ollama` (`llama3.2`) |
 | **`coder`** | `claude` (`claude-sonnet-5`) | `openrouter` (`llama-3.3-70b-instruct`) | `ollama` (`qwen2.5-coder:7b`) |
@@ -64,8 +64,8 @@ Output:
 ```text
 NAME              TIERS                                          DESCRIPTION
 budget            cheap (openrouter/meta-llama/...) -> free...   OpenRouter Llama -> Local Ollama
-coder             subscription (claude/claude-sonnet-5) -> ...   Claude Sonnet -> OpenRouter Llama -> Local Qwen Coder
-default           subscription (claude/claude-sonnet-5) -> ...   Subscription Claude -> OpenRouter Llama -> Local Ollama
+coder             account (claude/claude-sonnet-5) -> ...        Claude account -> OpenRouter Llama -> Local Qwen Coder
+default           account (claude/claude-sonnet-5) -> ...        Claude account -> OpenRouter Llama -> Local Ollama
 ```
 
 To emit machine-readable JSON:
@@ -84,7 +84,7 @@ Output:
 Profile     : coder (built-in preset)
 Description : Claude Sonnet -> OpenRouter Llama -> Local Qwen Coder
 Tiers (priority order):
-  1. subscription    provider=claude     model=claude-sonnet-5      timeout=60.0s cooldown=60.0s
+  1. account          provider=claude     model=claude-sonnet-5      timeout=60.0s cooldown=60.0s
   2. cheap           provider=openrouter model=meta-llama/llama-... timeout=60.0s cooldown=60.0s
   3. free            provider=ollama     model=qwen2.5-coder:7b     timeout=60.0s cooldown=60.0s
 ```
@@ -127,9 +127,9 @@ avo chat
 The startup banner displays the active combo configuration:
 
 ```text
-       ▄██▄           Avo CLI 0.1.7
+       ▄██▄           Avo CLI 0.7.1
      ▄██████▄         Fqih
-    ███    ███        provider: combo · model: coder [subscription -> cheap -> free]
+    ███    ███        provider: combo · model: coder [account -> cheap -> free]
    ███  ▄▄  ███       workspace: ~/Project/Loopward
    ███  ▀▀  ███       session: a1b2c3d4e5f6
   ──────────────────────────────────────────────────────
@@ -151,7 +151,7 @@ Description: Claude Sonnet -> OpenRouter Llama -> Local Qwen Coder
 Tiers (priority order):
   Tier           Provider     Model                    Status    Cooldown  Latency  Fails
   -------------- ------------ ------------------------ --------- --------- -------- -----
-  subscription   claude       claude-sonnet-5          HEALTHY   0s        240.2ms  0
+  account        claude       claude-sonnet-5          HEALTHY   0s        240.2ms  0
   cheap          openrouter   meta-llama/llama-3.3...  HEALTHY   0s        -        0
   free           ollama       qwen2.5-coder:7b         HEALTHY   0s        -        0
 
@@ -176,14 +176,26 @@ Switched to combo profile 'budget'. Next turn will route through its tiers.
 When a tier fails due to quota or rate limits, Avo displays an inline notice before streaming from the fallback tier:
 
 ```text
-⤾ Fallback: switched from 'subscription' (claude) to 'cheap' (openrouter) [rate_limited_429]
+⤾ Fallback: switched from 'account' (claude) to 'cheap' (openrouter) [rate_limited_429]
 ```
 
 The conversation proceeds smoothly and the reply is rendered without interruption.
 
 ---
 
-## 5. Setting up Ollama as the Free Tier Floor
+## 5. Authenticate the Combo's Vendors
+
+Login is independent per vendor. This command opens each missing browser
+account flow once, in sequence, and skips credentials already stored:
+
+```bash
+avo combo auth coder
+```
+
+Ollama Local needs no account. For OpenRouter or other API tiers, Avo prints the
+corresponding API-key command instead of asking for passwords.
+
+## 6. Setting up Ollama as the Free Tier Floor
 
 Using Ollama as your lowest tier guarantees that your agent loops will never crash due to vendor outages, rate limits, or billing issues.
 
@@ -193,10 +205,11 @@ Using Ollama as your lowest tier guarantees that your agent loops will never cra
    ollama serve
    ```
 
-2. **Pull the fallback models:**
+2. **Inspect the recommendation, then pull with confirmation:**
    ```bash
-   ollama pull llama3.2
-   ollama pull qwen2.5-coder:7b
+   avo models ollama list
+   avo models ollama recommend
+   avo models ollama pull qwen2.5-coder:7b
    ```
 
 3. **Verify connectivity:**
@@ -205,3 +218,5 @@ Using Ollama as your lowest tier guarantees that your agent loops will never cra
    ```
 
 Avo's default Ollama provider connects to `http://localhost:11434` unless `AVO_OLLAMA_BASE_URL` is set.
+Ollama Cloud is a separate remote route; use `avo login ollama-cloud --key-stdin`
+and never treat a Cloud model as a local download.

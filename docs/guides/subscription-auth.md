@@ -1,24 +1,24 @@
-# Subscription OAuth Authentication
+# Provider Login, Accounts, and Quotas
 
 > [!WARNING]
-> **Risk Notice**: Subscription-backed inference uses unofficial client endpoints
-> to reuse your existing Claude Pro/Team, ChatGPT Plus/Team, or Google Gemini CLI
-> subscriptions. These endpoints are intended for vendors' first-party CLI tools
-> (`claude`, `codex`, `cloudcode`). Using them programmatically carries risks of
-> vendor Terms of Service violations, unexpected rate limits, or account
-> suspensions. 9router marks all three providers with a `RISK_NOTICE`. Use at your own risk.
+> **Risk Notice**: Account-backed inference uses vendor OAuth endpoints intended
+> for first-party CLI tools. These endpoints may change and vendor terms or
+> account eligibility apply. Avo does not collect vendor passwords.
+>
+> Free and paid accounts may expose different models, request limits, or terminal
+> eligibility. Avo cannot upgrade an account or bypass a quota.
 
-Avo supports subscription OAuth authentication so developers can leverage their
-existing vendor subscriptions without incurring separate API token costs.
+Avo supports browser-based vendor login and ordinary API keys. Choose the path
+that matches the account and quota you actually have.
 
 ---
 
 ## 1. Explicit Opt-In Gate
 
-Because subscription backends carry ToS risks, subscription inference is
-**disabled by default**.
+Because vendor-account backends carry ToS and eligibility risks, account-backed
+inference is **disabled by default**.
 
-To enable subscription inference, you must explicitly opt in by setting the
+To enable account-backed inference, you must explicitly opt in by setting the
 `AVO_ALLOW_SUBSCRIPTION` environment variable to `1`, `true`, `yes`, or `on`
 (case-insensitive):
 
@@ -27,14 +27,14 @@ export AVO_ALLOW_SUBSCRIPTION=1
 ```
 
 If this variable is unset, false, empty, or unrecognized, any attempt to run
-inference via a subscription OAuth credential will immediately raise an error
+inference via a vendor OAuth credential will immediately raise an error
 instructing you to set `AVO_ALLOW_SUBSCRIPTION=1`.
 Direct API keys (e.g. `AVO_ANTHROPIC_API_KEY`, `AVO_OPENAI_API_KEY`) are never
 gated and remain the recommended path for production workloads.
 
 ---
 
-## 2. Supported Subscription Providers
+## 2. Supported Account Providers
 
 | Provider | CLI Command | Backend Endpoint | Identity Header |
 |---|---|---|---|
@@ -60,7 +60,18 @@ avo login claude
 3. After granting access, the vendor redirects to `http://localhost:<port>/auth/callback`.
 4. Avo exchanges the authorization code for access and refresh tokens and stores
    them as plaintext JSON in `~/.config/avo/auth.json`, restricted to `0600` file
-   permissions. Avo does not encrypt this file.
+  permissions. Avo does not encrypt this file.
+
+The first-run `avo` wizard uses this same flow. It opens the official vendor
+login; there is no Avo-hosted login page. To configure several providers for a
+combo, run:
+
+```bash
+avo combo auth coder
+```
+
+Each missing vendor is opened once, sequentially. Existing credentials are
+skipped, and local Ollama never asks for a login.
 
 ### Headless / SSH Login
 
@@ -89,7 +100,28 @@ Answering `Y` imports the tokens immediately without needing a browser flow.
 
 ---
 
-## 4. Universal API Key Login
+## 4. Ollama Local and Cloud
+
+These are separate paths:
+
+```bash
+# Local: inspect hardware and installed models
+avo models ollama list
+avo models ollama recommend
+
+# Local downloads always ask for confirmation
+avo models ollama pull qwen2.5-coder:7b
+
+# Cloud: remote models and account quota; no local download
+avo login ollama-cloud --key-stdin
+avo models ollama cloud
+```
+
+The recommendation is advisory and based on local CPU, RAM, GPU memory when
+available, and free disk space. Avo never silently downloads a multi-gigabyte
+model.
+
+## 5. Universal API Key Login
 
 You can also store API keys as plaintext in the permission-restricted `auth.json`
 file without setting environment variables:
@@ -101,7 +133,7 @@ echo "$OPENAI_API_KEY" | avo login openai --key-stdin
 
 ---
 
-## 5. Token Lifecycle & Auto-Refresh
+## 6. Token Lifecycle & Auto-Refresh
 
 Avo handles the token lifecycle automatically:
 - **Proactive Refresh**: Before each request, Avo checks if the token is close
@@ -116,11 +148,11 @@ Avo handles the token lifecycle automatically:
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 | Symptom | Cause | Solution |
 |---|---|---|
-| `subscription-backed inference is disabled by default` | `AVO_ALLOW_SUBSCRIPTION` is not set | Run `export AVO_ALLOW_SUBSCRIPTION=1` |
+| `subscription-backed inference is disabled by default` | OAuth inference is not explicitly enabled | Run `export AVO_ALLOW_SUBSCRIPTION=1`, or use the provider's API key path |
 | `reauth required: run avo login <provider>` | Refresh token expired or revoked | Re-authenticate by running `avo login <provider>` |
 | `Codex session expired past max age` | Codex 8-day maximum session limit reached | Run `avo login codex` to start a new session |
 | `Port 1455 already in use` | Another process is using Codex callback port | Stop conflicting local servers and retry `avo login codex` |

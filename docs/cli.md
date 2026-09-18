@@ -1,6 +1,7 @@
 # CLI
 
-Avo ships a `avo` console script with the following subcommands.
+Avo ships a `avo` console script. Running `avo` with no subcommand starts the
+chat REPL; `avo --help` is the canonical command map.
 
 ## Installation and setup
 
@@ -23,7 +24,17 @@ and permission configuration.
 | ---------------------- | -------------------------------------------------------- |
 | `avo --version`        | Print package version                                     |
 | `avo doctor`           | Show resolved provider, model, endpoint, env, extras      |
-| `avo chat`             | Interactive REPL with background tasks, image input      |
+| `avo` / `avo chat`     | New interactive REPL session with background tasks       |
+| `avo resume [SESSION]` | Resume the latest or a specific chat session             |
+| `avo login PROVIDER`   | Official vendor browser login or API-key storage         |
+| `avo combo auth NAME`  | Login to missing cloud vendors used by a combo            |
+| `avo models ollama list` | List installed Ollama Local models                     |
+| `avo models ollama recommend` | Recommend models for local hardware              |
+| `avo models ollama pull MODEL` | Confirm and download a local model                |
+| `avo models ollama cloud` | Show remote Ollama Cloud guidance                    |
+| `avo saver list` | List built-in token-saver presets. |
+| `avo saver show NAME` | Inspect a preset's style guide and compression pipeline. |
+| `avo saver use NAME` / `avo saver off` | Enable or disable the persisted saver choice. |
 | `avo runs list`        | List runs persisted in the local SQLite event log        |
 | `avo runs inspect`     | Show full event trace for a run                          |
 | `avo runs resume`      | Resume a run from its last durable state                 |
@@ -37,3 +48,25 @@ and permission configuration.
 
 Run `avo <subcommand> --help` for full flag details. Every command exits
 non-zero on failure so the CLI composes cleanly in CI and Make targets.
+
+Inside the REPL, `/resume` opens an interactive session picker. Use the
+arrow keys and Enter to choose a session, type to filter the list, or press
+Esc/q to cancel. The selected session transcript is shown before the next
+message is sent.
+
+### Provider reuse and model picker
+
+After the first setup or a successful `avo login <provider>`, Avo remembers
+the last provider and model in `~/.avo/config.json`. OAuth/API credentials are
+never copied there; they remain in `~/.config/avo/auth.json`. Therefore a new
+`avo` process can reuse the last route without reopening the provider wizard.
+One-off environment variables such as `AVO_PROVIDER` and `AVO_MODEL` still
+override the saved route.
+
+The setup wizard displays a numbered model picker instead of requiring a
+model name. The list is Avo's maintained provider catalog and the selected
+model remains subject to the vendor account, plan, quota, and region. A custom
+model name can still be entered for compatible or newly released endpoints.
+
+Use `/model` inside a chat to inspect the current provider's catalog and
+`/model NAME` to switch models for the next turn.

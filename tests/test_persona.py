@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from avo.persona import BUILTIN_PERSONAS, PersonaManager
+from avo.persona import BUILTIN_PERSONAS, DEFAULT_SYSTEM_PROMPT, PersonaManager
 
 
 def test_builtin_personas_defined() -> None:
@@ -20,7 +20,16 @@ def test_persona_manager_defaults() -> None:
     mgr = PersonaManager()
     assert mgr.active_persona is None
     assert mgr.custom_instructions is None
-    assert mgr.render_system_prompt() is None
+    assert mgr.render_system_prompt() == DEFAULT_SYSTEM_PROMPT
+
+
+def test_default_prompt_briefs_agent_and_protects_tool_boundary() -> None:
+    prompt = PersonaManager().render_system_prompt()
+    assert "You are Avo" in prompt
+    assert "greetings" in prompt
+    assert "Do not call tools" in prompt
+    assert "workspace-relative" in prompt
+    assert "Never claim a tool ran" in prompt
 
 
 def test_persona_manager_set_valid_persona() -> None:
@@ -29,6 +38,7 @@ def test_persona_manager_set_valid_persona() -> None:
     assert mgr.active_persona == "coder"
     rendered = mgr.render_system_prompt()
     assert rendered is not None
+    assert rendered.index(DEFAULT_SYSTEM_PROMPT) < rendered.index("Expert Software Engineer")
     assert "Expert Software Engineer" in rendered
 
 
@@ -50,6 +60,7 @@ def test_persona_manager_load_workspace_instructions(tmp_path: Path) -> None:
     mgr.set_persona("reviewer")
     rendered = mgr.render_system_prompt()
     assert rendered is not None
+    assert rendered.index(DEFAULT_SYSTEM_PROMPT) < rendered.index("Senior Code Reviewer")
     assert "Senior Code Reviewer" in rendered
     assert "Workspace Instructions:" in rendered
     assert "Always write Python 3.12 type hints." in rendered

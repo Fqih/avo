@@ -102,10 +102,8 @@ class LiveAnswerPrinter:
     - ``feed`` receives raw text deltas from the runtime. A
       :class:`ThinkingStreamParser` splits ``<think>`` tags that stream
       mid-content; only the answer channel is printed so the final
-      answer is never double-printed against the post-run ``Avo>`` block,
-      and the 💭 thought section keeps rendering from the persisted
-      result exactly as before.
-    - The first content delta of a call opens an ``Avo> `` line;
+      answer is never double-printed against the post-run answer block.
+    - The first content delta of a call opens a compact ``• `` line;
       :meth:`finish` closes it with a newline.
     - :meth:`on_interrupt` is called by the runtime when a stream dies
       after already printing deltas; already-printed text cannot be
@@ -160,7 +158,7 @@ class LiveAnswerPrinter:
             if self._on_first_content is not None:
                 self._on_first_content()
                 self._on_first_content = None
-            self._out.write("Avo> ")
+            self._out.write("• ")
             self._line_open = True
             self.answered = True
         self._out.write(text)

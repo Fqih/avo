@@ -17,10 +17,21 @@ from avo.combo.store import (
 )
 from avo.config import supported_providers
 from avo.exceptions import AvoError
+from avo.oauth.store import get_credential
 
 
 class ComboCliError(AvoError):
     """User-facing error in `avo combo`."""
+
+
+_VENDOR_LOGIN_TARGETS: dict[str, tuple[tuple[str, ...], str]] = {
+    "claude": (("claude", "anthropic"), "claude"),
+    "anthropic": (("claude", "anthropic"), "claude"),
+    "codex": (("codex", "openai"), "codex"),
+    "gemini": (("gemini", "gemini-api"), "gemini"),
+    "gemini-cli": (("gemini", "gemini-api"), "gemini"),
+    "openrouter": (("openrouter",), "openrouter"),
+}
 
 
 def _parse_tier_spec(spec: str, index: int) -> ComboTier:
@@ -95,7 +106,8 @@ def _parse_tier_spec(spec: str, index: int) -> ComboTier:
 
 
 def _format_tier_summary(tier: ComboTier) -> str:
-    return f"{tier.name} ({tier.provider}/{tier.model})"
+    display_name = "account" if tier.name == "subscription" else tier.name
+    return f"{display_name} ({tier.provider}/{tier.model})"
 
 
 def _cmd_list(as_json: bool) -> int:
@@ -133,8 +145,9 @@ def _cmd_show(name: str, as_json: bool) -> int:
         print(f"Description : {profile.description}")
     print("Tiers (priority order):")
     for idx, tier in enumerate(profile.tiers, start=1):
+        display_name = "account" if tier.name == "subscription" else tier.name
         print(
-            f"  {idx}. {tier.name:15} provider={tier.provider:10} "
+            f"  {idx}. {display_name:15} provider={tier.provider:10} "
             f"model={tier.model:20} timeout={tier.timeout_seconds}s "
             f"cooldown={tier.cooldown_seconds}s"
         )
@@ -170,6 +183,65 @@ def _cmd_rm(name: str) -> int:
         print(f"avo combo: profile {name!r} not found", file=sys.stderr)
         return 1
     print(f"Removed combo profile {name!r}.")
+    return 0
+
+
+def _cmd_auth(name: str) -> int:
+    """Authenticate every missing vendor route in a combo profile once."""
+
+    profile = get_combo(name)
+    if profile is None:
+        print(f"avo combo: profile {name!r} not found", file=sys.stderr)
+        return 1
+
+    targets: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for tier in profile.tiers:
+        provider = tier.provider.lower()
+        if provider in seen:
+            continue
+        seen.add(provider)
+        if provider == "ollama-cloud":
+            if get_credential("ollama") is not None:
+                print("✓ ollama-cloud: credential already stored")
+            else:
+                print(
+                    "• ollama-cloud: add the official Ollama API/device key with "
+                    "`avo login ollama-cloud --key-stdin`"
+                )
+            continue
+        login_spec = _VENDOR_LOGIN_TARGETS.get(provider)
+        if login_spec is None:
+            if provider == "ollama":
+                print(f"✓ {provider}: local provider needs no login")
+            else:
+                print(f"• {provider}: configure an API key with `avo login {provider} --key-stdin`")
+            continue
+
+        credential_keys, login_target = login_spec
+        if any(get_credential(key) is not None for key in credential_keys):
+            print(f"✓ {provider}: credential already stored")
+            continue
+        targets.append((provider, login_target))
+
+    if not targets:
+        print(f"All providers in combo {name!r} are already ready.")
+        return 0
+
+    print(f"Opening {len(targets)} vendor login(s) for combo {name!r}...")
+    from avo.auth import login_provider_in_browser
+
+    failures = 0
+    for provider, login_target in targets:
+        print(f"→ Login {provider} via {login_target}")
+        if not login_provider_in_browser(login_target):
+            failures += 1
+            print(f"✗ {provider}: login failed; continuing with remaining vendors")
+
+    if failures:
+        print(f"{failures} vendor login(s) failed.", file=sys.stderr)
+        return 1
+    print("✓ All requested vendor logins completed.")
     return 0
 
 
@@ -215,6 +287,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     rm_parser.add_argument("name", help="Name of the combo profile to remove.")
 
+    auth_parser = subparsers.add_parser(
+        "auth",
+        help="Open login flows for every missing vendor used by a combo profile.",
+    )
+    auth_parser.add_argument("name", help="Name of the combo profile to authenticate.")
+
     return parser
 
 
@@ -234,6 +312,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_new(args.name, args.tiers, args.description)
         if args.combo_command in ("rm", "delete", "remove"):
             return _cmd_rm(args.name)
+        if args.combo_command == "auth":
+            return _cmd_auth(args.name)
         raise ComboCliError(f"unknown combo subcommand: {args.combo_command}")
     except ComboCliError as exc:
         print(f"avo combo: {exc}", file=sys.stderr)

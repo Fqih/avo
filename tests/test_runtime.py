@@ -51,6 +51,20 @@ async def test_successful_final_response_has_one_explicit_terminal_event() -> No
 
 
 @pytest.mark.asyncio
+async def test_run_places_optional_system_prompt_before_user_message() -> None:
+    provider = FakeProvider([ModelResponse(content="hello")])
+    runtime = AgentRuntime(provider=provider)
+
+    result = await runtime.run("say hello", system_prompt="You are Avo.")
+
+    assert result.status is RunState.COMPLETED
+    assert provider.requests[0].messages == [
+        {"role": "system", "content": "You are Avo."},
+        {"role": "user", "content": "say hello"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_successful_tool_flow_appends_observation_to_model_context() -> None:
     provider = FakeProvider(
         [

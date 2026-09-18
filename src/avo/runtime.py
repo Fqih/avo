@@ -136,6 +136,7 @@ class AgentRuntime:
         self,
         task: str,
         *,
+        system_prompt: str | None = None,
         user_state: dict[str, JsonValue] | None = None,
         run_id: str | None = None,
         stream_callback: Callable[[str], None] | None = None,
@@ -143,7 +144,8 @@ class AgentRuntime:
     ) -> RunResult:
         """Create and execute a run until it reaches one explicit terminal state.
 
-        ``stream_callback``/``stream_interrupt_callback`` passed here win
+        ``system_prompt`` is sent as a native ``system`` message before the
+        user task. ``stream_callback``/``stream_interrupt_callback`` passed here win
         over the instance attributes for this run only, so a chat turn can
         bind its printer without a concurrent background run — or a later
         turn — ever inheriting it. ``None`` means "inherit the instance".
@@ -160,7 +162,9 @@ class AgentRuntime:
             if run_id is not None:
                 values["run_id"] = run_id
             record = RunRecord.model_validate(values)
-            messages: list[dict[str, JsonValue]] = [{"role": "user", "content": task}]
+            messages: list[dict[str, JsonValue]] = []
+            if system_prompt and system_prompt.strip():
+                messages.append({"role": "system", "content": system_prompt.strip()})
             if self.memory is not None:
                 recalled = self.memory.recall_text(task)
                 if recalled:
@@ -170,6 +174,7 @@ class AgentRuntime:
                             "content": "Relevant memories:\n- " + "\n- ".join(recalled),
                         }
                     )
+            messages.append({"role": "user", "content": task})
             context = _RunContext(
                 run=record,
                 policy=self.policy,

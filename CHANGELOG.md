@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.7] - 2026-09-17
+### Added
+
+- `avo` now starts chat by default, with a complete discoverable `avo --help`
+  command surface.
+- Account-aware vendor onboarding opens official Claude, Codex, and Gemini
+  browser login flows; `avo combo auth NAME` logs missing vendors sequentially.
+- Separate Ollama Local and Ollama Cloud paths, hardware-aware local model
+  recommendations, model listing, and explicit confirmation before downloads.
+- Documentation and the Netlify `site/` output now document the new onboarding
+  flow, quota semantics, model manager, and current Avo branding.
+- Added opt-in deterministic token savers with `avo saver list|show|use|off`,
+  persisted settings, provider wrapping, `SAVER_APPLIED` trace events, and
+  reproducible benchmark results.
+
+## [0.7.1] - 2026-09-18
 
 ### Added
 
@@ -445,8 +459,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ruff check` + `ruff format --check` clean.
 - Coverage gate: `fail_under = 90`.
 
-[Unreleased]: https://github.com/Fqih/avo/compare/v0.1.7...HEAD
-[0.1.7]: https://github.com/Fqih/avo/compare/v0.1.6...v0.1.7
+[Unreleased]: https://github.com/Fqih/avo/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/Fqih/avo/compare/v0.1.7...v0.7.1
 [0.1.6]: https://github.com/Fqih/avo/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Fqih/avo/compare/v0.1.4...v0.1.5
 [0.1.3]: https://github.com/Fqih/avo/compare/v0.1.2...v0.1.3

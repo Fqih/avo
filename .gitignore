@@ -236,3 +236,6 @@ NEXT-UPDATE.md
 # Local Avo REPL history and drafts
 .avo/history*
 .avo/draft*
+
+# Demo generator and video recordings
+demo/

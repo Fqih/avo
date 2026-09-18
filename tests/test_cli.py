@@ -237,6 +237,26 @@ def test_cli_without_command_starts_chat(monkeypatch: pytest.MonkeyPatch) -> Non
     assert main([]) == 0
     assert len(calls) == 1
     assert calls[0]["force_new_session"] is False
+    assert calls[0]["resume_latest"] is False
+
+
+def test_cli_resume_command_starts_explicit_resume_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_repl(**kwargs: object) -> int:
+        calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr("avo.cli.run_repl", fake_run_repl)
+
+    assert main(["resume"]) == 0
+    assert calls[0]["resume_latest"] is True
+    assert calls[0]["session_id"] is None
+
+    calls.clear()
+    assert main(["resume", "session-123"]) == 0
+    assert calls[0]["resume_latest"] is False
+    assert calls[0]["session_id"] == "session-123"
 
 
 def test_cli_help_explains_default_chat_and_core_commands(

@@ -59,9 +59,10 @@ Install Avo for your user account on Linux, macOS, Git Bash, or Windows. No root
 
 ### Connect your providers
 
-Run `avo setup`, add an API key or OAuth login, then use `avo doctor` to see what Avo resolved.
+Run `avo` for the guided setup, open an official vendor login or add an API key,
+then use `avo doctor` to see what Avo resolved.
 
-[Provider setup →](guides/subscription-auth.md)
+[Provider login and quotas →](guides/subscription-auth.md)
 
 </div>
 
@@ -93,7 +94,7 @@ Start with the CLI, or embed `AgentRuntime` in Python when you need full control
 
 ### Provider failover
 
-Route from subscription to paid API to local Ollama when a quota, rate limit, or provider outage interrupts a turn.
+Route from an account or free quota to paid API to local Ollama when a quota, rate limit, or provider outage interrupts a turn.
 
 </div>
 
@@ -240,7 +241,7 @@ asyncio.run(main())
 | Install and configure Avo | [Installation](guides/install.md) |
 | Understand the runtime model | [Architecture](avo-reference.md#1-overview-and-architecture) |
 | Use the CLI and REPL | [CLI reference](cli.md) |
-| Add provider credentials | [Subscription and API keys](guides/subscription-auth.md) |
+| Add provider credentials | [Provider login and quotas](guides/subscription-auth.md) |
 | Resume a crashed run | [AgentRuntime](avo-reference.md#8-agentruntime-srcavoruntimepy) |
 | Add tools or plugins | [Extensibility reference](avo-reference.md#18-extensibility-hooks-permissions-skills-plugins-subagents) |
 | Inspect architecture and contracts | [Project reference](avo-reference.md) |

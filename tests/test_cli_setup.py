@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from avo.cli_setup import load_global_avo_config, setup_global_avo
+from avo.cli_setup import load_global_avo_config, remember_last_provider, setup_global_avo
 from avo.permissions import PermissionMode, permission_policy_from_env
 
 
@@ -37,3 +37,23 @@ def test_setup_can_explicitly_enable_subscription_inference(tmp_path: Path) -> N
     config = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert config["allow_subscription"] is True
     assert load_global_avo_config(tmp_path)["AVO_ALLOW_SUBSCRIPTION"] == "1"
+
+
+def test_remember_last_provider_persists_only_non_secret_runtime_state(tmp_path: Path) -> None:
+    setup_global_avo(tmp_path)
+
+    remember_last_provider(
+        {
+            "AVO_PROVIDER": "codex",
+            "AVO_MODEL": "gpt-5.6-luna",
+            "AVO_ALLOW_SUBSCRIPTION": "1",
+            "AVO_CODEX_API_KEY": "must-not-be-written",
+        },
+        tmp_path,
+    )
+
+    config = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert config["provider"] == "codex"
+    assert config["model"] == "gpt-5.6-luna"
+    assert config["allow_subscription"] is True
+    assert "API_KEY" not in json.dumps(config)
