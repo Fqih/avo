@@ -183,7 +183,15 @@ def prepare_prompt(
     try:
         tokens = shlex.split(task)
     except ValueError as exc:
-        raise AttachmentError(f"could not parse attachment path: {exc}") from exc
+        # Natural-language apostrophes (for example ``yesterday's``) are not
+        # shell quoting and must never prevent an ordinary chat turn. Keep a
+        # strict error for malformed input that explicitly looks like an
+        # attachment expression.
+        rough_tokens = task.split()
+        if not any(token.startswith(("@", "file://")) for token in rough_tokens):
+            tokens = rough_tokens
+        else:
+            raise AttachmentError(f"could not parse attachment path: {exc}") from exc
 
     remaining: list[str] = []
     content: list[dict[str, JsonValue]] = []

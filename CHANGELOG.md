@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added safe workspace file/image attachments via pasted or dragged paths,
   `@clipboard`, size/containment validation, multimodal provider rendering,
   and `avo doctor` attachment/catalog diagnostics.
+- Added Milestone 2 named workspace agents (`@coder`, `@explore`, `@reviewer`),
+  searchable agent selection, isolated bounded parallel delegation, and
+  read-only tool boundaries for delegated explorers.
+- Added deterministic event-ledger replay with request fingerprints, durable
+  tool-result validation, `avo runs replay RUN_ID --json`, and `/replay`.
 
 ## [0.7.2] - 2026-09-18
 

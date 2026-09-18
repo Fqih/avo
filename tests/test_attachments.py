@@ -31,6 +31,15 @@ def test_prepare_prompt_accepts_workspace_file_and_image(tmp_path: Path) -> None
     }
 
 
+def test_prepare_prompt_keeps_ordinary_apostrophes_as_prompt_text(tmp_path: Path) -> None:
+    from avo.attachments import prepare_prompt
+
+    prepared = prepare_prompt("yesterday's question", workspace_root=tmp_path)
+
+    assert prepared.text == "yesterday's question"
+    assert prepared.attachments == ()
+
+
 def test_prepare_prompt_accepts_dragged_file_url_and_relative_path(tmp_path: Path) -> None:
     from avo.attachments import prepare_prompt
 
