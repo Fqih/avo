@@ -226,6 +226,40 @@ class AgentProfileRegistry:
 
         return tuple(self._profiles[name] for name in sorted(self._profiles))
 
+    def create(
+        self,
+        name: str,
+        description: str,
+        *,
+        system_prompt: str | None = None,
+    ) -> AgentProfile:
+        """Create one workspace profile and reload the registry."""
+
+        if _SLUG_RE.fullmatch(name) is None:
+            raise AgentProfileError(
+                "agent name must start with a lowercase letter and contain only "
+                "lowercase letters, numbers, or hyphens"
+            )
+        if self.get(name) is not None:
+            raise AgentProfileError(f"agent @{name} already exists")
+        clean_description = description.strip()
+        if not clean_description:
+            raise AgentProfileError("agent description must not be empty")
+        clean_prompt = (
+            system_prompt or f"You are the workspace agent @{name}. {clean_description}"
+        ).strip()
+        if not clean_prompt:
+            raise AgentProfileError("agent system prompt must not be empty")
+        root = self.agents_root
+        root.mkdir(parents=True, exist_ok=True)
+        target = root / f"{name}.md"
+        target.write_text(f"{clean_description}\n\n{clean_prompt}\n", encoding="utf-8")
+        self.load()
+        profile = self.get(name)
+        if profile is None:
+            raise AgentProfileError(f"created agent @{name} could not be loaded")
+        return profile
+
     def parse_prompt(self, text: str) -> DelegationRequest | None:
         """Parse a leading registered mention and optional parallel segments."""
 

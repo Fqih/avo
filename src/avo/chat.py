@@ -78,6 +78,7 @@ if _HAS_PROMPT_TOOLKIT:
                         )
 
 
+from avo.agent_profiles import AgentProfileError, AgentProfileRegistry
 from avo.app_tools import (
     batch_replace_tool,
     edit_file_tool,
@@ -137,6 +138,7 @@ from avo.chat_turn import (  # re-export
     _maybe_offer_resume_prompt,
     _prompt_with_jobs,
     _resume_chat_session,
+    _run_agent_request,
     _run_model_command,
     _run_turn,
 )
@@ -190,6 +192,8 @@ class ChatContext:
     persona: PersonaManager = field(default_factory=PersonaManager)
     history: ReplHistoryManager | None = None
     stream_enabled: bool = False
+    agent_profiles: AgentProfileRegistry | None = None
+    provider_factory: Callable[[], Any] | None = None
 
 
 def _position_prompt_at_bottom(out: TextIO, *, terminal_rows: int | None = None) -> None:
@@ -405,6 +409,11 @@ def build_chat_context(
     session = SessionLifecycle.open(db_path)
     persona_mgr = PersonaManager(workspace_root=workspace.root)
     history_mgr = ReplHistoryManager(workspace_root=workspace.root)
+    agent_profiles = AgentProfileRegistry(workspace.root)
+
+    def provider_factory() -> Any:
+        return build_provider_from_env(environ)
+
     if force_new_session or session_id is None:
         return ChatContext(
             runtime=runtime,
@@ -419,6 +428,8 @@ def build_chat_context(
             persona=persona_mgr,
             history=history_mgr,
             stream_enabled=chat_stream_enabled(environ),
+            agent_profiles=agent_profiles,
+            provider_factory=provider_factory,
         )
     if not session.session_exists(session_id):
         session.close()
@@ -438,6 +449,8 @@ def build_chat_context(
         persona=persona_mgr,
         history=history_mgr,
         stream_enabled=chat_stream_enabled(environ),
+        agent_profiles=agent_profiles,
+        provider_factory=provider_factory,
     )
 
 
@@ -802,6 +815,22 @@ async def _run_repl(
                     return 0
                 continue
 
+            if ctx.agent_profiles is not None:
+                try:
+                    agent_request = ctx.agent_profiles.parse_prompt(stripped)
+                except AgentProfileError as exc:
+                    err_stream.write(f"agent mention error: {exc}\n")
+                    continue
+                if agent_request is not None:
+                    await _run_agent_request(
+                        ctx,
+                        agent_request,
+                        out_stream,
+                        err_stream,
+                        original_task=stripped,
+                    )
+                    continue
+
             background_requested = stripped.endswith("&") and not stripped.endswith("&&")
             if background_requested:
                 task_text = stripped[:-1].rstrip()
@@ -862,6 +891,7 @@ __all__ = [
     "_read_environ",
     "_resolve_provider_label",
     "_resume_chat_session",
+    "_run_agent_request",
     "_run_bench_command",
     "_run_find_command",
     "_run_grep_command",

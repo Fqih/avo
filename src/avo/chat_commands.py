@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO
 
+from avo.agent_profiles import AgentProfileError
 from avo.background import render_job_detail, render_job_row
 from avo.chat_render import (
     _clear_screen,
@@ -26,7 +27,7 @@ from avo.chat_render import (
     _show_cost_breakdown,
 )
 from avo.chat_session import SessionInfo, render_session_picker, resolve_session_id
-from avo.chat_turn import _resume_chat_session, _run_model_command, _run_turn
+from avo.chat_turn import _resume_chat_session, _run_agent_request, _run_model_command, _run_turn
 from avo.chat_workspace_commands import (
     _manage_branch,
     _manage_stash,
@@ -212,6 +213,22 @@ def _manage_agent_command(
         return
 
     sub = args[1].lower()
+    if sub == "add":
+        registry = getattr(ctx, "agent_profiles", None)
+        if registry is None:
+            err.write("agent profiles are not initialized for this chat context.\n")
+            return
+        if len(args) < 4:
+            err.write("usage: /agent add NAME DESCRIPTION\n")
+            return
+        try:
+            profile = registry.create(args[2], " ".join(args[3:]))
+        except (AgentProfileError, OSError) as exc:
+            err.write(f"agent creation failed: {exc}\n")
+            return
+        out.write(f"✓ Created @{profile.name}: {profile.description}\n")
+        out.flush()
+        return
     if sub == "persona":
         _manage_persona(ctx, args[2:], out, err)
         return
@@ -228,6 +245,33 @@ def _manage_agent_command(
     _manage_persona(ctx, args[1:], out, err)
 
 
+def _manage_agents_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """List named agent profiles available to the current workspace."""
+
+    registry = getattr(ctx, "agent_profiles", None)
+    if registry is None:
+        err.write("agent profiles are not initialized for this chat context.\n")
+        return
+    if args and args[0].lower() not in {"list", "show"}:
+        err.write("usage: /agents [list]\n")
+        return
+    out.write("Available agents:\n")
+    for profile in registry.list():
+        capability = "read-only" if profile.capability == "read_only" else "workspace"
+        out.write(f"  @{profile.name:<12} {capability:<10} {profile.description}\n")
+    if registry.warnings:
+        out.write("Warnings:\n")
+        for warning in registry.warnings:
+            out.write(f"  {warning}\n")
+    out.write("Use: @agent task  or  @agent one | @agent two\n")
+    out.flush()
+
+
 async def _manage_list_command(
     ctx: ChatContext,
     args: list[str],
@@ -237,7 +281,7 @@ async def _manage_list_command(
 ) -> None:
     """Browse catalog of sessions, models, skills, plugins, tools, or jobs."""
     if len(args) <= 1:
-        out.write("Usage: /list [sessions|models|skills|plugins|tools|jobs]\n\n")
+        out.write("Usage: /list [sessions|models|skills|plugins|tools|jobs|agents]\n\n")
         out.write("Available categories:\n")
         out.write("  /list sessions   - list conversation sessions\n")
         out.write("  /list models     - list available models for current provider\n")
@@ -245,6 +289,7 @@ async def _manage_list_command(
         out.write("  /list plugins    - list installed CLI plugins\n")
         out.write("  /list tools      - list registered runtime app tools\n")
         out.write("  /list jobs       - list active background tasks\n")
+        out.write("  /list agents     - list named agent profiles\n")
         out.flush()
         return
 
@@ -285,6 +330,9 @@ async def _manage_list_command(
             for j in jobs:
                 out.write(render_job_row(j) + "\n")
         out.flush()
+        return
+    if cat in ("agents", "agent"):
+        _manage_agents_command(ctx, ["list"], out, err)
         return
     err.write(f"unknown list category: {cat!r}; try /list to see options\n")
 
@@ -918,6 +966,49 @@ async def _run_slash(
         _manage_agent_command(ctx, args, out, err)
         return False
 
+    if cmd in ("/agents", "/agent-list"):
+        if (
+            cmd == "/agents"
+            and len(args) == 1
+            and in_stream is not None
+            and _can_use_session_picker(in_stream, out)
+        ):
+            registry = getattr(ctx, "agent_profiles", None)
+            if registry is not None:
+                selected = await _select_agent_tui(registry.list(), out, in_stream)
+                if selected is not None:
+                    profile = registry.get(selected)
+                    if profile is not None:
+                        out.write(
+                            f"Selected @{profile.name} ({profile.capability}): "
+                            f"{profile.description}\n"
+                        )
+                        out.flush()
+                return False
+        _manage_agents_command(ctx, args[1:], out, err)
+        return False
+
+    if cmd == "/delegate":
+        if len(args) < 2:
+            _manage_agents_command(ctx, ["list"], out, err)
+            err.write("usage: /delegate @agent TASK or /delegate @agent TASK | @agent TASK\n")
+            return False
+        text = " ".join(args[1:])
+        registry = getattr(ctx, "agent_profiles", None)
+        if registry is None:
+            err.write("agent profiles are not initialized for this chat context.\n")
+            return False
+        try:
+            request = registry.parse_prompt(text)
+        except AgentProfileError as exc:
+            err.write(f"agent delegation error: {exc}\n")
+            return False
+        if request is None:
+            err.write("usage: /delegate @agent TASK or /delegate @agent TASK | @agent TASK\n")
+            return False
+        await _run_agent_request(ctx, request, out, err, original_task=text)
+        return False
+
     if cmd == "/list":
         await _manage_list_command(ctx, args, out, err, environ)
         return False
@@ -1190,6 +1281,87 @@ async def _select_session_tui(
         return None
     selected_info = by_option.get(selected.strip())
     return selected_info.session_id if selected_info is not None else None
+
+
+async def _select_agent_tui(
+    profiles: tuple[Any, ...],
+    out: TextIO,
+    in_stream: TextIO,
+) -> str | None:
+    """Use a searchable prompt-toolkit picker for named agents."""
+
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.completion import Completer, Completion
+        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.styles import Style
+    except ImportError:
+        return None
+
+    options = tuple(f"@{profile.name} · {profile.description}" for profile in profiles)
+    by_option = dict(zip(options, profiles, strict=True))
+
+    class AgentCompleter(Completer):
+        def get_completions(self, document: Any, complete_event: Any) -> Any:
+            query = document.text_before_cursor.lower()
+            for option in options:
+                if not query or query in option.lower():
+                    yield Completion(
+                        option,
+                        start_position=-len(document.text_before_cursor),
+                        display=option,
+                    )
+
+    bindings = KeyBindings()
+
+    @bindings.add("down")
+    def _next(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_next()
+
+    @bindings.add("up")
+    def _previous(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_previous()
+
+    @bindings.add("escape")
+    def _cancel(event: Any) -> None:
+        event.app.exit(exception=KeyboardInterrupt)
+
+    out.write("\n╭─ Select agent ────────────────────────────────────────────╮\n")
+    out.write("│ ↑/↓ choose · Enter select · type to search · Esc cancel  │\n")
+    out.write("╰───────────────────────────────────────────────────────────╯\n")
+    out.flush()
+    session: Any = PromptSession(
+        completer=AgentCompleter(),
+        complete_while_typing=True,
+        reserve_space_for_menu=min(8, max(1, len(options))),
+        erase_when_done=True,
+        key_bindings=bindings,
+        style=Style.from_dict(
+            {
+                "completion-menu.completion": "bg:#20242b #d8dee9",
+                "completion-menu.completion.current": "bg:#42b883 #101418 bold",
+                "scrollbar.background": "bg:#20242b",
+                "scrollbar.button": "bg:#42b883",
+            }
+        ),
+    )
+    session.default_buffer.start_completion(select_first=True)
+    try:
+        selected = await session.prompt_async(HTML("<ansicyan>&gt;</ansicyan> "))
+    except (EOFError, KeyboardInterrupt):
+        out.write("\nAgent selection cancelled.\n")
+        return None
+    profile = by_option.get(selected.strip())
+    return profile.name if profile is not None else None
 
 
 def _select_session_fallback(

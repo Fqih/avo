@@ -376,10 +376,12 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/setup [wizard|global]", "inspect ~/.avo global setup or run configuration wizard"),
     (
         "/agent [persona|instructions|clear]",
-        "manage persona, workspace instructions, or system prompt",
+        "manage persona, instructions, or a named agent profile",
     ),
+    ("/agents [list]", "list named agent profiles available in this workspace"),
+    ("/delegate @agent TASK", "run one or more isolated agents in parallel"),
     (
-        "/list [sessions|models|skills|plugins|tools|jobs]",
+        "/list [sessions|models|skills|plugins|tools|jobs|agents]",
         "browse catalog of sessions, models, tools, or plugins",
     ),
     ("/plugin [list|show|install|remove]", "manage third-party plugins in ~/.avo/plugins"),

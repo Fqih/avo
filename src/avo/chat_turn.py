@@ -11,11 +11,13 @@ Re-exported from :mod:`avo.chat` for backward compatibility.
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Mapping
 from datetime import datetime
 from time import monotonic
 from typing import TYPE_CHECKING, Any, TextIO
 
+from avo.agent_profiles import AgentProfileError, DelegationRequest
 from avo.app_tools.file_tools import bind_workspace
 from avo.attachments import AttachmentError, prepare_prompt
 from avo.chat_render import render_cooked_footer, render_thought_duration
@@ -29,9 +31,11 @@ from avo.config import (
     is_known_model,
     supported_providers,
 )
+from avo.delegation import DelegationCoordinator, DelegationError
 from avo.exceptions import AvoError
 from avo.model_discovery import discover_provider_models
 from avo.providers.streaming import split_thinking
+from avo.storage.sqlite import SQLiteEventStore
 
 if TYPE_CHECKING:
     from avo.background import BackgroundJobManager
@@ -291,6 +295,62 @@ def _prompt_with_jobs(prompt: str, manager: BackgroundJobManager) -> str:
     if running == 0:
         return prompt
     return f"{prompt}[jobs: {running} running] "
+
+
+async def _run_agent_request(
+    ctx: ChatContext,
+    request: DelegationRequest,
+    out: TextIO,
+    err: TextIO,
+    *,
+    original_task: str,
+) -> bool:
+    """Execute recognized ``@agent`` mentions and render compact summaries."""
+
+    registry = getattr(ctx, "agent_profiles", None)
+    if registry is None:
+        err.write("agent profiles are not initialized for this chat context.\n")
+        return True
+    ctx.session.record_user_turn(ctx.session_id, original_task)
+    parent_run_id = f"chat.{ctx.session_id}.{uuid.uuid4().hex[:8]}"
+    provider_factory = getattr(ctx, "provider_factory", None)
+    try:
+        coordinator = DelegationCoordinator(
+            ctx.runtime,
+            provider_factory=provider_factory,
+            event_store_factory=lambda: SQLiteEventStore(ctx.store.path),
+        )
+        with bind_workspace(ctx.workspace):
+            results = await coordinator.run(parent_run_id, request.parts)
+    except (DelegationError, AgentProfileError) as exc:
+        err.write(f"agent delegation error: {exc}\n")
+        return True
+    except Exception as exc:
+        err.write(f"agent delegation failed: {type(exc).__name__}: {exc}\n")
+        return True
+
+    summaries: list[str] = []
+    for result in results:
+        out.write(f"• @{result.agent_name} [{result.status}] · {result.child_run_id}\n")
+        if result.output:
+            out.write(f"  {result.output}\n")
+            summaries.append(f"@{result.agent_name}: {result.output}")
+        elif result.error:
+            out.write(f"  error: {result.error}\n")
+            summaries.append(f"@{result.agent_name}: error: {result.error}")
+        else:
+            summaries.append(f"@{result.agent_name}: {result.status}")
+    status = "completed" if all(result.status == "completed" for result in results) else "partial"
+    ctx.session.record_assistant_turn(
+        ctx.session_id,
+        "\n".join(summaries),
+        run_id=parent_run_id,
+        status=status,
+        stop_reason="completed" if status == "completed" else "internal_error",
+        metadata={"delegated_agents": [result.agent_name for result in results]},
+    )
+    out.flush()
+    return True
 
 
 async def _resume_chat_session(
