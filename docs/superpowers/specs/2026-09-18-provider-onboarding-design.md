@@ -122,6 +122,28 @@ avo                 Start chat
 avo chat            Start chat explicitly
 ```
 
+`avo --help` is the primary discovery surface. It must include a concise
+description of Avo, the short `avo` quick start, grouped command listings, and
+copy-paste examples for setup, browser login, Ollama model discovery, doctor,
+and persisted run inspection. Delegated commands must remain discoverable from
+their own help pages:
+
+```text
+avo --help
+avo chat --help
+avo setup --help
+avo login --help
+avo models --help
+avo doctor --help
+avo runs --help
+```
+
+Every user-facing command must return useful help instead of falling through to
+an implementation error. Help output must describe which actions are local,
+which open a vendor browser, which can spend API/cloud quota, and where the
+documentation lives. The CLI must support `--help` before and after delegated
+subcommands where the delegated parser already supports it.
+
 ## Doctor and diagnostics
 
 `avo doctor` remains non-destructive and does not make model inference calls.
