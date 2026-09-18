@@ -10,6 +10,7 @@ from typing import Any, cast
 from pydantic import JsonValue
 
 from avo.agent_profiles import AgentCapability, AgentMention
+from avo.capabilities import filter_tools
 from avo.exceptions import AvoError
 from avo.models import TokenUsage
 from avo.providers.base import ModelProvider
@@ -18,17 +19,6 @@ from avo.storage.base import EventStore
 from avo.storage.memory import InMemoryEventStore
 from avo.tools import Tool
 
-_READ_ONLY_TOOLS: frozenset[str] = frozenset(
-    {
-        "read_file",
-        "grep",
-        "glob",
-        "symbols",
-        "workspace_map",
-        "git_status",
-        "git_diff",
-    }
-)
 _MAX_OUTPUT_CHARS = 8_192
 _MAX_ERROR_CHARS = 2_048
 
@@ -58,7 +48,7 @@ def child_tools(profile: Any, parent_tools: Iterable[Tool]) -> list[Tool]:
     tools = list(parent_tools)
     if profile.capability is not AgentCapability.READ_ONLY:
         return tools
-    return [tool for tool in tools if tool.metadata.name in _READ_ONLY_TOOLS]
+    return filter_tools(tools, read_only=True)
 
 
 def _bounded_text(value: str | None, limit: int) -> str | None:

@@ -22,6 +22,7 @@ from typing import Any
 from pydantic import BaseModel, Field, JsonValue
 
 from avo import FunctionTool as PublicFunctionTool
+from avo.capabilities import filter_tools
 from avo.models import ToolCall
 from avo.policies import LoopPolicy
 from avo.runtime import AgentRuntime
@@ -34,9 +35,6 @@ class AgentType(StrEnum):
 
     EXPLORE = "explore"
     GENERAL = "general"
-
-
-_READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({"read_file"})
 
 
 class TaskArguments(BaseModel):
@@ -62,7 +60,7 @@ def _default_tool_selector(
         if agent_type is AgentType.GENERAL:
             return list(by_name.values())
         # EXPLORE (and any future read-only preset): keep only read-only tools.
-        return [tool for tool in by_name.values() if tool.metadata.name in _READ_ONLY_TOOL_NAMES]
+        return filter_tools(list(by_name.values()), read_only=True)
 
     return select
 

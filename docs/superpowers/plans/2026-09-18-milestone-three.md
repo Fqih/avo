@@ -77,19 +77,19 @@
 - `filter_tools(parent_tools, *, maximum: ToolCapability | None = None, read_only: bool = False) -> list[Tool]` never widens the parent set.
 - `inherit_policy(parent: AvoSecurityConfig, child_capability: AgentCapability) -> AvoSecurityConfig` returns a restricted child policy.
 
-- [ ] **Step 1: Write failing capability tests.**
+- [x] **Step 1: Write failing capability tests.**
 
   Assert all built-in tools receive a stable capability, unknown tools default to `READ` rather than execute, read-only agents cannot advertise mutating/executable/network tools, and child policy cannot become less restrictive than its parent.
 
-- [ ] **Step 2: Run tests and verify RED.**
+- [x] **Step 2: Run tests and verify RED.**
 
   Run: `python -m pytest -q tests/test_capabilities.py tests/test_delegation.py tests/test_task_tool.py`
 
-- [ ] **Step 3: Implement capability metadata and filtering.**
+- [x] **Step 3: Implement capability metadata and filtering.**
 
   Keep existing `ToolMetadata` construction valid for third-party tools. Use the capability helper in named delegation and the legacy `task` tool so both paths enforce the same boundary.
 
-- [ ] **Step 4: Run focused tests and commit.**
+- [x] **Step 4: Run focused tests and commit.**
 
   Run: `python -m pytest -q tests/test_capabilities.py tests/test_delegation.py tests/test_task_tool.py`
 
