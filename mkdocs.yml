@@ -8,10 +8,6 @@ edit_uri: edit/main/docs/
 docs_dir: docs
 site_dir: site
 
-# Internal implementation plans are useful in the repository but should not
-# become part of the public product documentation or search index.
-exclude_docs: |
-  superpowers/**
 
 theme:
   name: material
