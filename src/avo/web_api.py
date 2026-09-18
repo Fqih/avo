@@ -220,10 +220,12 @@ class WebApiMixin(WebHttpMixin):
                 )
                 return True
 
-            self.server.permission_mode = mode
-            os.environ["AVO_PERMISSION_MODE"] = mode
+            with self.server._config_lock:
+                self.server.permission_mode = mode
+                os.environ["AVO_PERMISSION_MODE"] = mode
             self._send_json({"ok": True, "mode": mode})
             return True
+
 
         if path == "/api/router/probe":
             self._send_json(self.server.sync_probe_router())
@@ -260,12 +262,16 @@ class WebApiMixin(WebHttpMixin):
                 self._send_json({"error": "provider is required"}, status=400)
                 return True
 
-            os.environ["AVO_PROVIDER"] = provider
-            if model:
-                os.environ["AVO_MODEL"] = model
+            with self.server._config_lock:
+                self.server.active_provider = provider
+                self.server.active_model = model
+                os.environ["AVO_PROVIDER"] = provider
+                if model:
+                    os.environ["AVO_MODEL"] = model
             current_model = model or os.environ.get("AVO_MODEL", "")
             self._send_json({"ok": True, "provider": provider, "model": current_model})
             return True
+
 
         return False
 

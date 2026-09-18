@@ -34,7 +34,6 @@ from avo.models import (
     RunResult,
     TokenUsage,
     ToolCall,
-    ToolResult,
     utc_now,
 )
 from avo.observability import record_usage, span_for_turn
@@ -51,13 +50,6 @@ if TYPE_CHECKING:
 
 Clock = Callable[[], datetime]
 ApprovalCallback = Callable[[ToolCall], bool | Awaitable[bool]]
-
-
-async def _always_approve(call: ToolCall) -> bool:
-    """Exercise the approval state in v0.1 without implementing approval policy."""
-
-    del call
-    return True
 
 
 @dataclass
@@ -110,7 +102,12 @@ class AgentRuntime:
         self.policy = policy or LoopPolicy()
         self.event_store = event_store or InMemoryEventStore()
         self._clock = clock
-        self._approval_callback = approval_callback or _always_approve
+        if approval_callback is not None:
+            self._approval_callback: ApprovalCallback = approval_callback
+        else:
+            from avo.app_tools.approval import build_approval_callback
+
+            self._approval_callback = build_approval_callback()
         # Purely observational display plumbing (see handle_model_pending);
         # public so callers can swap them per turn like ``provider``.
         # Each run/resume snapshots both at entry, so a swap only binds
@@ -449,11 +446,32 @@ class AgentRuntime:
 
         del event
 
+    async def aclose(self) -> None:
+        """Release provider resources (HTTP clients, sockets, etc.).
+
+        Called automatically when used as ``async with AgentRuntime(...) as rt``.
+        Safe to call more than once — subsequent calls are no-ops if the
+        provider has already been closed.
+        """
+        aclose_fn = getattr(self.provider, "aclose", None)
+        if callable(aclose_fn):
+            try:
+                await aclose_fn()
+            except Exception:  # pragma: no cover – best-effort cleanup
+                pass
+
+    async def __aenter__(self) -> AgentRuntime:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.aclose()
+
     # ------------------------------------------------------------------
     # Persistence facade — delegates to runtime_persistence. Kept here
     # so existing callers (and runtime_handlers) can keep using
     # ``self._append``, ``self._checkpoint`` etc.
     # ------------------------------------------------------------------
+
 
     async def _append(
         self,

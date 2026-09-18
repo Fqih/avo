@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import secrets
 import sys
+import threading
 import urllib.parse
 from collections.abc import Sequence
 from http.server import ThreadingHTTPServer
@@ -118,6 +120,13 @@ class AvoWebServer(
         self.permission_mode = permission_policy_from_env(
             {"AVO_PERMISSION_MODE": permission_mode} if permission_mode is not None else None
         ).mode.value
+        # Per-server config lock: serialises concurrent HTTP mutations to
+        # permission_mode / active_provider / active_model so that a torn
+        # write from two simultaneous POST /api/* requests cannot cause the
+        # runtime to see an inconsistent environment snapshot.
+        self._config_lock = threading.Lock()
+        self.active_provider: str = os.environ.get("AVO_PROVIDER", "")
+        self.active_model: str = os.environ.get("AVO_MODEL", "")
 
 
 def run_web_dashboard(

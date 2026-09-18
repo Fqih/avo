@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from avo import ModelRequest, ModelResponse
@@ -32,6 +33,9 @@ class TierHealth:
     cooldown_until: float = 0.0
     last_error: str | None = None
     last_latency_ms: float | None = None
+    # Per-tier lock — serialises concurrent write operations from overlapping
+    # generate()/stream() calls on the same ComboRouterProvider instance.
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
     @property
     def is_cooling_down(self) -> bool:
@@ -91,22 +95,24 @@ class ComboRouterProvider(StreamingModelProvider):
         )
         return list(self._tiers)
 
-    def _record_success(self, name: str, start_time: float) -> None:
+    async def _record_success(self, name: str, start_time: float) -> None:
         latency = (time.monotonic() - start_time) * 1000.0
         h = self._health[name]
-        h.is_healthy = True
-        h.consecutive_failures = 0
-        h.cooldown_until = 0.0
-        h.last_error = None
-        h.last_latency_ms = latency
+        async with h._lock:
+            h.is_healthy = True
+            h.consecutive_failures = 0
+            h.cooldown_until = 0.0
+            h.last_error = None
+            h.last_latency_ms = latency
 
-    def _record_failure(self, tier: ComboTier, exc: Exception) -> None:
+    async def _record_failure(self, tier: ComboTier, exc: Exception) -> None:
         h = self._health[tier.name]
-        h.is_healthy = False
-        h.consecutive_failures += 1
-        if tier.cooldown_seconds > 0:
-            h.cooldown_until = time.monotonic() + tier.cooldown_seconds
-        h.last_error = str(exc)
+        async with h._lock:
+            h.is_healthy = False
+            h.consecutive_failures += 1
+            if tier.cooldown_seconds > 0:
+                h.cooldown_until = time.monotonic() + tier.cooldown_seconds
+            h.last_error = str(exc)
 
     def get_health_status(self) -> dict[str, dict[str, Any]]:
         """Return a snapshot of current health and cooldown status for all tiers."""
@@ -189,7 +195,7 @@ class ComboRouterProvider(StreamingModelProvider):
             t0 = time.monotonic()
             try:
                 response = await provider.generate(request)
-                self._record_success(tier.name, t0)
+                await self._record_success(tier.name, t0)
                 if i > 0:
                     _LOG.info(
                         "combo %r succeeded on fallback tier %r", self.profile.name, tier.name
@@ -201,7 +207,7 @@ class ComboRouterProvider(StreamingModelProvider):
                     # Non-failover error (e.g. 400 Bad Request, auth, etc.) — fail-closed
                     raise
 
-                self._record_failure(tier, exc)
+                await self._record_failure(tier, exc)
                 errors.append(f"[{tier.name}:{tier.provider}] {exc!s}")
                 _LOG.warning(
                     "combo tier %r failed (%s: %s); evaluating fallback",
@@ -217,6 +223,7 @@ class ComboRouterProvider(StreamingModelProvider):
         err_str = "; ".join(errors)
         raise ProviderError(f"all combo tiers failed for {self.profile.name!r}: {err_str}")
 
+
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
         """Stream chunks from the highest-priority functional tier."""
         candidates = self._select_candidate_tiers()
@@ -230,11 +237,11 @@ class ComboRouterProvider(StreamingModelProvider):
                     async for chunk in provider.stream(request):
                         yielded_any = True
                         yield chunk
-                    self._record_success(tier.name, t0)
+                    await self._record_success(tier.name, t0)
                     return
 
                 resp = await provider.generate(request)
-                self._record_success(tier.name, t0)
+                await self._record_success(tier.name, t0)
                 for chunk in response_to_chunks(resp):
                     yield chunk
                 return
@@ -249,7 +256,7 @@ class ComboRouterProvider(StreamingModelProvider):
                 if reason is None:
                     raise
 
-                self._record_failure(tier, exc)
+                await self._record_failure(tier, exc)
                 errors.append(f"[{tier.name}:{tier.provider}] {exc!s}")
                 _LOG.warning(
                     "combo tier %r streaming failed (%s: %s); evaluating fallback",
@@ -264,6 +271,7 @@ class ComboRouterProvider(StreamingModelProvider):
 
         err_str = "; ".join(errors)
         raise ProviderError(f"all combo tiers failed for {self.profile.name!r}: {err_str}")
+
 
     async def aclose(self) -> None:
         """Close client sessions for all underlying providers."""
