@@ -10,6 +10,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-18-milestone-two-design.md`
 
+**Implementation status (2026-09-18):** Tasks 1–5 are implemented and verified.
+The focused Milestone 2 suite passes; the full repository suite is currently
+environment-blocked by pre-existing OAuth callback/refresh tests that wait for
+external authentication state. The bounded full-suite result is reported in
+the handoff rather than treated as a product pass.
+
 ## Global Constraints
 
 - Preserve Python 3.11, 3.12, and 3.13 support.
@@ -54,25 +60,25 @@
 - `AgentProfileRegistry(workspace_root: Path, *, max_profile_bytes: int = 32768)` exposes `get(name)`, `list()`, `load()`, and `parse_prompt(text)`.
 - `parse_prompt` recognizes only a registered slug at the beginning of the prompt or after a top-level `|`; it leaves unknown `@words`, `@src/file.py`, `file://...`, and email text untouched.
 
-- [ ] **Step 1: Write failing profile and parser tests.**
+- [x] **Step 1: Write failing profile and parser tests.**
 
   Cover built-ins, workspace override precedence, valid Markdown profiles, invalid names, symlink escape, file-size bounds, unknown mentions, attachment disambiguation, quoted pipes, empty segments, single mentions, and stable ordering.
 
-- [ ] **Step 2: Run the focused tests and verify RED.**
+- [x] **Step 2: Run the focused tests and verify RED.**
 
   Run: `python -m pytest -q tests/test_agent_profiles.py tests/test_attachments.py -k "agent or mention or attachment"`
 
   Expected: import/API failures because the profile registry does not exist.
 
-- [ ] **Step 3: Implement the immutable records, loader, and parser.**
+- [x] **Step 3: Implement the immutable records, loader, and parser.**
 
   Resolve `.avo/agents` and each profile path before reading, reject paths outside the workspace, load only regular files, parse the first non-empty line as description, and cap the prompt body. Split pipes with a small quote-aware scanner rather than shell execution. Use a strict slug regex such as `^[a-z][a-z0-9-]{0,31}$`.
 
-- [ ] **Step 4: Run the focused tests and refactor only while green.**
+- [x] **Step 4: Run the focused tests and refactor only while green.**
 
   Run: `python -m pytest -q tests/test_agent_profiles.py tests/test_attachments.py -k "agent or mention or attachment"`
 
-- [ ] **Step 5: Commit the profile boundary.**
+- [x] **Step 5: Commit the profile boundary.**
 
   Run: `git add src/avo/agent_profiles.py tests/test_agent_profiles.py tests/test_attachments.py && git commit -m "feat: add workspace agent profiles and mention parsing"`
 
@@ -88,25 +94,25 @@
 - `DelegationCoordinator(parent_runtime: AgentRuntime, *, provider_factory: Callable[[], ModelProvider] | None = None, event_store_factory: Callable[[], EventStore] = InMemoryEventStore, max_concurrency: int = 4)` exposes `async run(parent_run_id, requests, *, user_state=None) -> tuple[DelegationResult, ...]`.
 - `child_tools(profile, parent_tools)` keeps `read_file`, `grep`, `glob`, `symbols`, `workspace_map`, `git_status`, and `git_diff` for read-only profiles and returns all parent tools for `coder`/inherited profiles.
 
-- [ ] **Step 1: Write failing coordinator tests.**
+- [x] **Step 1: Write failing coordinator tests.**
 
   Use a fake provider factory and event-store factory. Test child IDs are `<parent>.<slug>.<ordinal>`, read-only profiles never advertise write/terminal tools, coder inherits the approval callback, stores are distinct, result order follows request order, concurrency never exceeds four, and one provider failure does not cancel successful siblings.
 
-- [ ] **Step 2: Run the focused tests and verify RED.**
+- [x] **Step 2: Run the focused tests and verify RED.**
 
   Run: `python -m pytest -q tests/test_delegation.py`
 
   Expected: import/API failures because the coordinator does not exist.
 
-- [ ] **Step 3: Implement child runtime creation and bounded gather.**
+- [x] **Step 3: Implement child runtime creation and bounded gather.**
 
   Create a fresh provider from `provider_factory` when supplied. Otherwise use a snapshot/from-snapshot clone for providers that expose both methods and fail clearly for a mutable provider that cannot safely be cloned for parallel use. Create a fresh store and runtime per child, pass the profile system prompt to `run`, place parent/profile metadata in `user_state`, wrap each call in an `asyncio.Semaphore`, and convert exceptions into bounded `DelegationResult.error` values.
 
-- [ ] **Step 4: Preserve existing `task_tool` behavior and run tests.**
+- [x] **Step 4: Preserve existing `task_tool` behavior and run tests.**
 
   Make its child construction reuse the coordinator's tool filtering helper without changing its public arguments or return shape. Run: `python -m pytest -q tests/test_delegation.py tests/test_task_tool.py`
 
-- [ ] **Step 5: Commit the delegation core.**
+- [x] **Step 5: Commit the delegation core.**
 
   Run: `git add src/avo/delegation.py src/avo/app_tools/task_tool.py tests/test_delegation.py && git commit -m "feat: add bounded isolated agent delegation"`
 
@@ -124,29 +130,29 @@
 - `_run_agent_request(ctx, request, out, err) -> bool` executes one or more parsed agent mentions and renders compact child summaries.
 - `/agents`, `/agents list`, `/agent add NAME DESCRIPTION`, `/delegate`, and `/replay` are handled without sending command text to the model.
 
-- [ ] **Step 1: Write failing chat integration tests.**
+- [x] **Step 1: Write failing chat integration tests.**
 
   Assert `/agents list` prints built-ins, `/agent add` creates a profile, `@explore task` invokes a child instead of the parent provider path, `@explore one | @reviewer two` preserves result order, unknown `@word` remains a normal prompt, and `/delegate` uses the same picker/request parser.
 
-- [ ] **Step 2: Run the focused tests and verify RED.**
+- [x] **Step 2: Run the focused tests and verify RED.**
 
   Run: `python -m pytest -q tests/test_chat_agents.py`
 
   Expected: missing context fields/commands and no delegation output.
 
-- [ ] **Step 3: Wire the registry and provider factory into context construction.**
+- [x] **Step 3: Wire the registry and provider factory into context construction.**
 
   Keep the original provider instance for the parent runtime. The factory recreates the configured provider from a copied environment for children. Do not persist credentials in the context or factory closure's rendered output. Load profiles lazily at context creation so a missing `.avo/agents` directory is not an error.
 
-- [ ] **Step 4: Route mentions before normal turn execution.**
+- [x] **Step 4: Route mentions before normal turn execution.**
 
   In the REPL submit path, parse recognized mentions after slash-command handling and before attachment preparation. A single child renders `• @name …`; parallel children render one compact result per segment. Do not print child stream deltas into the parent's answer area. Record the user request in the chat session once and keep normal prompts unchanged.
 
-- [ ] **Step 5: Add interactive agent selection and help.**
+- [x] **Step 5: Add interactive agent selection and help.**
 
   Reuse the existing prompt-toolkit picker style used by `/resume`, with type-to-filter and arrow selection. `/delegate` without a valid explicit request selects an agent, then prompts for its task; non-TTY tests receive a deterministic textual fallback. Add command palette/help entries and update `/list agents`.
 
-- [ ] **Step 6: Run focused chat tests and commit.**
+- [x] **Step 6: Run focused chat tests and commit.**
 
   Run: `python -m pytest -q tests/test_chat_agents.py tests/test_chat_repl.py -k "agent or delegate or command"`
 
@@ -165,25 +171,25 @@
 - `ReplayReport(run_id: str, verified: bool, matched_events: int, divergences: tuple[str, ...], fingerprint: str)` exposes `to_text()` and `to_json()`.
 - `async replay_run(store: EventStore, run_id: str) -> ReplayReport` is read-only and never calls a tool or network provider.
 
-- [ ] **Step 1: Write failing replay tests.**
+- [x] **Step 1: Write failing replay tests.**
 
   Build a real fake-provider runtime with a text response and a tool response. Assert the transcript extracts the responses, identical requests verify with a stable fingerprint, modified request text creates a divergence, missing model response and unresolved `TOOL_STARTED` are rejected, and a real tool callable is never invoked during replay.
 
-- [ ] **Step 2: Run the focused tests and verify RED.**
+- [x] **Step 2: Run the focused tests and verify RED.**
 
   Run: `python -m pytest -q tests/test_replay.py`
 
   Expected: import/API failures because the replay service does not exist.
 
-- [ ] **Step 3: Implement canonical event/request normalization.**
+- [x] **Step 3: Implement canonical event/request normalization.**
 
   Normalize JSON with sorted keys and compact separators. Exclude event IDs, timestamps, absolute paths, credential-shaped keys, and provider metadata that is not part of the model decision. Preserve response/tool-call arguments and durable tool results. Require a matching request before consuming each recorded response.
 
-- [ ] **Step 4: Implement report generation and run tests.**
+- [x] **Step 4: Implement report generation and run tests.**
 
   Report every divergence with sequence and reason, include the deterministic transcript fingerprint, and use `ReplayError` for unsupported runs rather than returning a false verification. Run: `python -m pytest -q tests/test_replay.py tests/test_fake_provider.py tests/test_tracing.py`
 
-- [ ] **Step 5: Commit replay core.**
+- [x] **Step 5: Commit replay core.**
 
   Run: `git add src/avo/replay.py tests/test_replay.py src/avo/tracing.py && git commit -m "feat: add deterministic event ledger replay"`
 
@@ -204,23 +210,23 @@
 - `/replay RUN_ID` prints the same report against the active store.
 - Help/docs describe `@agent`, pipe-separated delegation, `.avo/agents`, and replay's read-only semantics.
 
-- [ ] **Step 1: Write failing CLI/help tests.**
+- [x] **Step 1: Write failing CLI/help tests.**
 
   Assert parser accepts `avo runs replay RUN_ID --json`, JSON output contains `verified`, `matched_events`, and `fingerprint`, slash help lists the new commands, and docs mention the profile directory without exposing any local secrets.
 
-- [ ] **Step 2: Run focused tests and verify RED.**
+- [x] **Step 2: Run focused tests and verify RED.**
 
   Run: `python -m pytest -q tests/test_cli.py tests/test_cli_help.py -k "replay or agent or delegate"`
 
-- [ ] **Step 3: Wire the CLI and slash handlers.**
+- [x] **Step 3: Wire the CLI and slash handlers.**
 
   Reuse one `SQLiteEventStore`, close it in `finally`, map `ReplayError` to a non-zero actionable CLI error, and preserve all existing `runs list|inspect|diff|resume` branches. Slash handlers should not mutate the run ledger.
 
-- [ ] **Step 4: Update docs and changelog.**
+- [x] **Step 4: Update docs and changelog.**
 
   Document concrete command examples, capability boundaries, unknown-mention behavior, and the distinction between replay and resume. Keep existing Avo branding and logo references unchanged.
 
-- [ ] **Step 5: Run focused tests and commit.**
+- [x] **Step 5: Run focused tests and commit.**
 
   Run: `python -m pytest -q tests/test_cli.py tests/test_cli_help.py tests/test_chat_agents.py -k "replay or agent or delegate or help"`
 
@@ -232,25 +238,24 @@
 - Modify only files required by failing checks.
 - Update: `docs/superpowers/plans/2026-09-18-milestone-two.md` checkboxes and `CHANGELOG.md` if the verified behavior differs from the plan.
 
-- [ ] **Step 1: Run the Milestone 2 focused suite.**
+- [x] **Step 1: Run the Milestone 2 focused suite.**
 
   Run: `python -m pytest -q tests/test_agent_profiles.py tests/test_delegation.py tests/test_chat_agents.py tests/test_replay.py tests/test_cli.py tests/test_cli_help.py tests/test_task_tool.py tests/test_attachments.py`
 
   Expected: all selected tests pass.
 
-- [ ] **Step 2: Run the offline quality gate.**
+- [x] **Step 2: Run the offline quality gate.**
 
   Run: `ruff check . && ruff format --check . && python -m mypy src/avo && bandit -r src/avo -c pyproject.toml --severity-level medium && git diff --check`
 
   Expected: all checks pass with no secret or formatting findings.
 
-- [ ] **Step 3: Run the full offline suite with a bounded timeout.**
+- [x] **Step 3: Run the full offline suite with a bounded timeout.**
 
   Run: `timeout 90s python -m pytest -q`
 
   Expected: pass, or an explicitly reported environment-only timeout matching the known Codex refresh shutdown issue; do not hide assertion failures.
 
-- [ ] **Step 4: Review the final diff and status.**
+- [x] **Step 4: Review the final diff and status.**
 
   Run: `git diff --stat HEAD~6..HEAD`, `git status --short`, and `git log --oneline -8`. Confirm `.avo/` remains untracked and untouched, no credentials are present, and each plan task is marked `[x]` only after its verification.
-
