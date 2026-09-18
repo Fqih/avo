@@ -29,10 +29,7 @@ from avo.config import (
     supported_providers,
 )
 from avo.exceptions import AvoError
-from avo.providers.gemini_cli import (
-    discover_antigravity_models,
-    discover_cliproxyapi_models,
-)
+from avo.model_discovery import discover_provider_models
 from avo.providers.streaming import split_thinking
 
 if TYPE_CHECKING:
@@ -166,6 +163,7 @@ async def _run_model_command(
     catalog = available_models(provider_name)
     model_labels: dict[str, str] = {}
     dynamic_catalog = False
+    catalog_result = None
     is_terminal = (
         in_stream is not None
         and hasattr(in_stream, "isatty")
@@ -173,37 +171,25 @@ async def _run_model_command(
         and hasattr(out, "isatty")
         and out.isatty()
     )
-    if provider_name in ("gemini-cli", "gemini_cli") and is_terminal:
-        # Gemini/Antigravity is account-scoped: never present the old static
-        # fallback catalog in the real terminal picker.
-        catalog = ()
+    if is_terminal:
         try:
-            transport = environ.get("AVO_GEMINI_CLI_TRANSPORT", "").strip().lower()
-            proxy_url = environ.get("AVO_CLIPROXYAPI_BASE_URL", "").strip()
-            if transport == "cliproxyapi" or proxy_url:
-                discovered = discover_cliproxyapi_models(
-                    base_url=proxy_url or None,
-                    api_key=(
-                        environ.get("AVO_CLIPROXYAPI_API_KEY", "").strip()
-                        or environ.get("AVO_GEMINI_CLI_API_KEY", "").strip()
-                        or None
-                    ),
-                )
-            else:
-                discovered = discover_antigravity_models()
-        except Exception:
-            discovered = ()
-        if discovered:
-            catalog = tuple(item.model_id for item in discovered)
-            model_labels = {item.model_id: item.label for item in discovered}
-            dynamic_catalog = True
-    if not catalog:
-        if provider_name in ("gemini-cli", "gemini_cli") and is_terminal:
-            err.write(
-                "could not fetch the live Gemini model catalog. Configure "
-                "CLIProxyAPI or install/authenticate `agy`, then retry /model.\n"
+            catalog_result = await discover_provider_models(
+                provider_name,
+                environ,
+                static_models=catalog,
             )
-            return False
+        except Exception:
+            catalog_result = None
+        if catalog_result is not None and catalog_result.models:
+            catalog = tuple(item.model_id for item in catalog_result.models)
+            model_labels = {item.model_id: item.label for item in catalog_result.models}
+            dynamic_catalog = catalog_result.source.value != "static"
+            source_text = catalog_result.source.value
+            stale_text = " · stale" if catalog_result.stale else ""
+            out.write(f"Model catalog: {source_text}{stale_text}\n")
+            if catalog_result.warning:
+                out.write(f"  {catalog_result.warning}\n")
+    if not catalog:
         err.write(
             f"provider {provider_name!r} has no model catalog; "
             f"set AVO_MODEL=<name> in your environment to override.\n"
@@ -211,7 +197,14 @@ async def _run_model_command(
         return False
 
     if len(args) == 1:
-        recommended = catalog[0] if dynamic_catalog else default_model(provider_name)
+        recommended = (
+            next(
+                (item.model_id for item in catalog_result.models if item.recommended),
+                catalog[0],
+            )
+            if dynamic_catalog and catalog_result is not None
+            else default_model(provider_name)
+        )
         options = _model_picker_options(
             catalog,
             current=ctx.model_name,
