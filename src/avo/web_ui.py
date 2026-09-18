@@ -33,7 +33,7 @@ from avo.config import resolve_database_path
 from avo.permissions import permission_policy_from_env
 from avo.persona import PersonaManager
 from avo.web_api import ApiServerMixin, WebApiMixin, _mask_secret  # re-export
-from avo.web_http import _LOG, WebHttpMixin  # re-export
+from avo.web_http import _LOG, WebHttpMixin, WebSecurityConfig  # re-export
 from avo.web_pages import WebPageMixin, _get_dashboard_html  # re-export
 from avo.web_playground import PlaygroundServerMixin, WebPlaygroundMixin
 from avo.web_runs import RunsServerMixin, WebRunsMixin
@@ -107,6 +107,7 @@ class AvoWebServer(
         self.auth_token = secrets.token_urlsafe(32)
         self.session_token = secrets.token_urlsafe(32)
         self.csrf_token = secrets.token_urlsafe(32)
+        self.web_security = WebSecurityConfig()
         self.database_path = database_path
         self.workspace_root = (
             Path(workspace_root).resolve() if workspace_root is not None else Path.cwd().resolve()
