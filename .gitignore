@@ -225,6 +225,7 @@ benchmark/live/results/*
 
 .claude/
 .superpowers/
+docs/superpowers/
 CLAUDE.md
 project.md
 NEXT-UPDATE.md
@@ -233,9 +234,8 @@ NEXT-UPDATE.md
 # mkdocs build output
 /site/
 
-# Local Avo REPL history and drafts
-.avo/history*
-.avo/draft*
+# Local Avo runtime cache
+.avo/
 
 # Demo generator and video recordings
 demo/
