@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from avo import FunctionTool as PublicFunctionTool
 
-from .workspace import Workspace
+from .workspace import Workspace, assert_workspace_target
 
 
 class ReadFileArguments(BaseModel):
@@ -85,6 +85,10 @@ async def _read_file(arguments: ReadFileArguments) -> dict[str, Any]:
 async def _write_file(arguments: WriteFileArguments) -> dict[str, Any]:
     workspace = _current_workspace()
     resolved = workspace.validate_for_write(arguments.path)
+    # Re-check containment and symlink state immediately before opening the
+    # leaf. The earlier validation protects the user-facing error path; this
+    # final check narrows the replacement window for a changed target.
+    resolved = assert_workspace_target(workspace.root, resolved)
     encoded = arguments.content.encode(arguments.encoding)
     # Open the leaf explicitly, refusing to follow symlinks at the leaf so
     # a model cannot redirect a write to an external target after the

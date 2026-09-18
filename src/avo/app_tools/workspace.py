@@ -181,10 +181,41 @@ class Workspace:
         return self.validate_path(requested, must_exist=False)
 
 
+def assert_workspace_target(
+    root: PathLike,
+    target: PathLike,
+    *,
+    follow_symlinks: bool = False,
+) -> Path:
+    """Validate a final file target immediately before a filesystem mutation."""
+
+    workspace = Workspace(root)
+    candidate = Path(target)
+    if not candidate.is_absolute():
+        candidate = workspace.root / candidate
+    if not follow_symlinks:
+        try:
+            if candidate.is_symlink():
+                raise WorkspacePathError(f"refusing to follow symlink at write target: {target}")
+            current = candidate.parent
+            while current != workspace.root and current != current.parent:
+                if current.is_symlink():
+                    raise WorkspacePathError(f"refusing to follow symlink in path: {current}")
+                current = current.parent
+        except OSError as exc:
+            raise WorkspacePathError(f"path could not be inspected: {exc}") from exc
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(workspace.root)
+    except ValueError as exc:
+        raise WorkspacePathError(f"path escapes workspace root {workspace.root}: {target}") from exc
+    return resolved
+
+
 def validate_path(root: PathLike, requested: PathLike, *, must_exist: bool = True) -> Path:
     """Module-level convenience around :meth:`Workspace.validate_path`."""
 
     return Workspace(root).validate_path(requested, must_exist=must_exist)
 
 
-__all__ = ["Workspace", "WorkspacePathError", "validate_path"]
+__all__ = ["Workspace", "WorkspacePathError", "assert_workspace_target", "validate_path"]

@@ -106,23 +106,23 @@
 - `require_execution_policy(policy, *, sandbox_available: bool, operation: str) -> None` raises an actionable `AvoError` before host execution when sandbox is required but unavailable.
 - `assert_workspace_target(root: Path, target: Path, *, follow_symlinks: bool = False) -> Path` performs containment and final pre-write validation.
 
-- [ ] **Step 1: Write failing sandbox/path tests.**
+- [x] **Step 1: Write failing sandbox/path tests.**
 
   Cover required-sandbox rejection, explicit host policy, network-disabled Docker requests, symlink escapes, replacement targets changing between validation and write, and bounded command timeouts.
 
-- [ ] **Step 2: Run tests and verify RED.**
+- [x] **Step 2: Run tests and verify RED.**
 
   Run: `python -m pytest -q tests/test_sandbox_policy.py tests/test_file_tools.py`
 
-- [ ] **Step 3: Implement policy checks and final containment.**
+- [x] **Step 3: Implement policy checks and final containment.**
 
   Route shell/test/lint paths through the existing sandbox adapter when required. Preserve current read-only behavior and make missing optional Docker support fail with an install/remediation message rather than falling back silently.
 
-- [ ] **Step 4: Add chat integration coverage.**
+- [x] **Step 4: Add chat integration coverage.**
 
   Verify `/shell`, `/test`, `/lint`, and agent child execution use the same policy and render actionable errors without tracebacks or secret values.
 
-- [ ] **Step 5: Run focused tests and commit.**
+- [x] **Step 5: Run focused tests and commit.**
 
   Run: `python -m pytest -q tests/test_sandbox_policy.py tests/test_file_tools.py tests/test_chat_repl.py`
 

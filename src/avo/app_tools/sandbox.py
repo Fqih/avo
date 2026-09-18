@@ -19,9 +19,12 @@ import contextlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from avo.exceptions import ToolExecutionError
+
+if TYPE_CHECKING:
+    from avo.config_resolver import AvoSecurityConfig
 
 SandboxError = ToolExecutionError
 
@@ -30,6 +33,52 @@ _DEFAULT_MEM_LIMIT = "256m"
 _DEFAULT_CPU_QUOTA = 50000  # 0.5 CPU
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _IN_CONTAINER_WORKDIR = "/workspace"
+
+
+@dataclass(frozen=True)
+class ExecutionPolicy:
+    """Boundary policy for commands that may execute code."""
+
+    sandbox_required: bool = True
+    network_enabled: bool = False
+    timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
+
+    @classmethod
+    def from_security_config(cls, config: AvoSecurityConfig) -> ExecutionPolicy:
+        """Build an execution policy from canonical resolver output."""
+
+        return cls(
+            sandbox_required=config.sandbox_required.value,
+            network_enabled=config.sandbox_network.value,
+            timeout_seconds=config.sandbox_timeout_seconds.value,
+        )
+
+    def __post_init__(self) -> None:
+        if self.timeout_seconds <= 0:
+            raise ValueError("execution timeout must be positive")
+
+    @property
+    def network_mode(self) -> str:
+        """Return the Docker network mode implied by this policy."""
+
+        return "bridge" if self.network_enabled else "none"
+
+
+def require_execution_policy(
+    policy: ExecutionPolicy,
+    *,
+    sandbox_available: bool,
+    operation: str,
+) -> None:
+    """Reject an execution path before it can silently fall back to host."""
+
+    if policy.sandbox_required and not sandbox_available:
+        raise SandboxError(
+            f"sandbox is required for {operation}; install Docker support with "
+            "`pip install 'avo[sandbox]'` or explicitly choose host execution "
+            "through an operator policy"
+        )
+
 
 # Multi-language image registry. Pin minor versions for reproducibility.
 # Slim/alpine base keep pull size + attack surface small.
@@ -318,9 +367,11 @@ class SandboxExecutor:
 
 
 __all__ = [
+    "ExecutionPolicy",
     "SandboxError",
     "SandboxExecutor",
     "SandboxResult",
     "language_from_path",
+    "require_execution_policy",
     "resolve_image",
 ]
