@@ -316,12 +316,22 @@ def render_report(report: DoctorReport, *, out: IO[str]) -> None:
     if report.config_error:
         out.write(f"config error: {report.config_error}\n")
 
+    credential_backend_name = "unavailable"
+    try:
+        from avo.credentials import resolve_credential_backend
+
+        credential_backend_name = resolve_credential_backend().describe()
+        out.write(f"credential backend: {credential_backend_name}\n")
+    except Exception as exc:
+        out.write(f"credential backend: unavailable ({type(exc).__name__})\n")
+
     from avo.oauth.store import load_all_credentials
 
     try:
         stored_creds = load_all_credentials()
         if stored_creds:
-            out.write("\nstored credentials (auth.json):\n")
+            label = "auth.json" if credential_backend_name == "file-permissions" else "os-keyring"
+            out.write(f"\nstored credentials ({label}):\n")
             for _key, cred in sorted(stored_creds.items()):
                 acct = f" ({cred.account})" if cred.account else ""
                 exp = ""

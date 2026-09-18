@@ -92,6 +92,11 @@ live-benchmark = [
 providers = [
   "httpx>=0.27",
 ]
+keyring = [
+  # Optional OS-backed credential storage. The secure 0600 JSON backend
+  # remains the dependency-free fallback.
+  "keyring>=25.0",
+]
 sandbox = [
   "docker>=7.0",
 ]

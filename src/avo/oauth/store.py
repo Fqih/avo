@@ -54,20 +54,15 @@ def _to_raw(cred: Credential) -> object:
 
 
 def load_all_credentials() -> dict[str, Credential]:
-    path = auth_file_path()
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {str(k).lower(): _from_raw(str(k).lower(), v) for k, v in data.items()}
+    from avo.credentials import resolve_credential_backend
+
+    return {credential.provider: credential for credential in resolve_credential_backend().list()}
 
 
 def get_credential(provider: str) -> Credential | None:
-    return load_all_credentials().get(provider.lower())
+    from avo.credentials import resolve_credential_backend
+
+    return resolve_credential_backend().get(provider)
 
 
 def _write_raw(data: dict[str, object]) -> Path:
@@ -89,20 +84,12 @@ def _write_raw(data: dict[str, object]) -> Path:
 
 
 def store_credential(cred: Credential) -> Path:
-    current = load_all_credentials()
-    current[cred.provider.lower()] = cred
-    return _write_raw(dict(current))
+    from avo.credentials import resolve_credential_backend
+
+    return resolve_credential_backend().put(cred)
 
 
 def remove_credential(provider: str) -> bool:
-    current = load_all_credentials()
-    if provider.lower() not in current:
-        return False
-    del current[provider.lower()]
-    if not current:
-        target = auth_file_path()
-        if target.is_file():
-            target.unlink()
-        return True
-    _write_raw(dict(current))
-    return True
+    from avo.credentials import resolve_credential_backend
+
+    return resolve_credential_backend().delete(provider)

@@ -117,6 +117,20 @@ def test_render_report_ok_prints_endpoint_and_no_missing() -> None:
     assert "missing variables" not in text
 
 
+def test_render_report_shows_credential_backend() -> None:
+    report = run_doctor(
+        {
+            "AVO_PROVIDER": "ollama",
+            "AVO_MODEL": "llama3.1",
+        }
+    )
+    out = io.StringIO()
+
+    render_report(report, out=out)
+
+    assert "credential backend: file-permissions" in out.getvalue()
+
+
 def test_render_report_not_ok_lists_missing() -> None:
     report = run_doctor({"AVO_PROVIDER": "minimax", "AVO_MODEL": "x"})
     out = io.StringIO()
