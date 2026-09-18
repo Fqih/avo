@@ -249,13 +249,13 @@ class GeminiCliDiscovery:
 def _cache_root(environ: Mapping[str, str]) -> os.PathLike[str]:
     configured = environ.get("AVO_MODEL_CACHE_DIR", "").strip()
     if configured:
-        return os.path.expanduser(configured)
+        return Path(configured).expanduser()
     config_dir = environ.get("AVO_CONFIG_DIR", "").strip()
     if config_dir:
-        return os.path.join(os.path.expanduser(config_dir), "model-catalog")
+        return Path(config_dir).expanduser() / "model-catalog"
     xdg = environ.get("XDG_CONFIG_HOME", "").strip()
-    base = os.path.expanduser(xdg) if xdg else os.path.expanduser("~/.config")
-    return os.path.join(base, "avo", "model-catalog")
+    base = Path(xdg).expanduser() if xdg else Path("~/.config").expanduser()
+    return base / "avo" / "model-catalog"
 
 
 def _credential_from_env(environ: Mapping[str, str], *names: str) -> str | None:

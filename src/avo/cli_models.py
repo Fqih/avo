@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 from collections.abc import Sequence
 
 from avo.hardware import detect_hardware
 from avo.model_catalog import recommend_ollama_models
 from avo.ollama_manager import (
+    OllamaCloudConfig,
+    OllamaCloudManager,
     OllamaManager,
     OllamaPullRefused,
     PullPlan,
@@ -25,6 +28,7 @@ def _parser() -> argparse.ArgumentParser:
             "  avo models ollama list\n"
             "  avo models ollama recommend\n"
             "  avo models ollama pull qwen2.5-coder:7b\n"
+            "  avo models ollama cloud list\n"
             "\n"
             "Local pulls always show size and ask for confirmation. Cloud models\n"
             "run remotely and may consume account quota."
@@ -35,15 +39,19 @@ def _parser() -> argparse.ArgumentParser:
     ollama = commands.add_parser("ollama", help="Manage Ollama Local/Cloud models.")
     ollama.add_argument(
         "--base-url",
-        default="http://localhost:11434",
-        help="Ollama endpoint for Local discovery (default: http://localhost:11434).",
+        default=None,
+        help="Ollama endpoint (local default or https://ollama.com for Cloud).",
     )
     ollama_commands = ollama.add_subparsers(dest="action")
     ollama_commands.add_parser("list", help="List models installed or available locally.")
     ollama_commands.add_parser("recommend", help="Recommend local models from hardware.")
     pull = ollama_commands.add_parser("pull", help="Confirm and download a local model.")
     pull.add_argument("model", help="Ollama model name to download.")
-    ollama_commands.add_parser("cloud", help="Show remote Ollama Cloud guidance and models.")
+    cloud = ollama_commands.add_parser("cloud", help="Inspect remote Ollama Cloud.")
+    cloud_commands = cloud.add_subparsers(dest="cloud_action")
+    cloud_commands.add_parser("list", help="List models exposed by the Cloud account.")
+    cloud_commands.add_parser("health", help="Check Cloud availability.")
+    cloud_commands.add_parser("usage", help="Show Cloud account usage when available.")
     return parser
 
 
@@ -71,21 +79,78 @@ def _prompt_pull_confirmation(prompt: str) -> str:
 
 async def _run_ollama(args: argparse.Namespace) -> int:
     if args.action == "cloud":
-        print("Ollama Cloud (remote)")
-        print("  Login: avo login ollama-cloud --key-stdin")
-        print("  Cloud models run remotely and are not downloaded by Avo.")
-        print("  Example: qwen3-coder:480b-cloud")
+        if not args.cloud_action:
+            print("Ollama Cloud (remote)")
+            print("  Login: avo login ollama-cloud --key-stdin")
+            print("  Cloud models run remotely and are not downloaded by Avo.")
+            print("  Inspect: avo models ollama cloud list|health|usage")
+            return 0
+
+        api_key = (
+            os.environ.get("AVO_OLLAMA_API_KEY", "").strip()
+            or os.environ.get("AVO_OLLAMA_CLOUD_API_KEY", "").strip()
+        )
+        if not api_key:
+            try:
+                from avo.oauth.store import get_credential
+
+                credential = get_credential("ollama-cloud") or get_credential("ollama")
+                if credential is not None:
+                    api_key = credential.secret()
+            except Exception:
+                api_key = ""
+        if not api_key:
+            print(
+                "Ollama Cloud credentials are missing. Run "
+                "`avo login ollama-cloud --key-stdin` or set AVO_OLLAMA_API_KEY."
+            )
+            return 1
+
+        config = OllamaCloudConfig(
+            model=os.environ.get("AVO_OLLAMA_MODEL", "").strip() or "qwen3-coder:480b-cloud",
+            api_key=api_key,
+            base_url=args.base_url or "https://ollama.com",
+        )
+        manager = OllamaCloudManager(config)
+        if args.cloud_action == "health":
+            health = await manager.check_health()
+            print(f"Ollama Cloud ({config.base_url}) — {health.version or 'ready'}")
+            if not health.available:
+                print(f"  unavailable: {health.detail}")
+                return 1
+            return 0
+        if args.cloud_action == "list":
+            models = await manager.list_models()
+            print(f"Ollama Cloud ({config.base_url})")
+            if not models:
+                print("  No models were returned by the account.")
+            for model in models:
+                print(f"  • {model.name}")
+            return 0
+        if args.cloud_action == "usage":
+            usage = await manager.usage()
+            print(f"Ollama Cloud usage ({config.base_url})")
+            if usage is None:
+                print("  Usage endpoint is unavailable for this account.")
+            else:
+                print(f"  remaining tokens: {usage.remaining_tokens or 'unknown'}")
+                print(f"  limit tokens: {usage.limit_tokens or 'unknown'}")
+                if usage.reset_at:
+                    print(f"  resets: {usage.reset_at}")
+            return 0
+        print("Choose a Cloud action: list, health, or usage")
         return 0
 
-    manager = OllamaManager(args.base_url)
-    health = await manager.check_health()
+    base_url = args.base_url or "http://localhost:11434"
+    local_manager = OllamaManager(base_url)
+    health = await local_manager.check_health()
     if not health.available:
-        print(f"Ollama Local is unavailable at {args.base_url}: {health.detail}")
+        print(f"Ollama Local is unavailable at {base_url}: {health.detail}")
         return 1
 
-    models = await manager.list_models()
+    models = await local_manager.list_models()
     if args.action == "list":
-        print(f"Ollama Local ({args.base_url}) — daemon {health.version or 'ready'}")
+        print(f"Ollama Local ({base_url}) — daemon {health.version or 'ready'}")
         if not models:
             print("  No local models installed.")
         for model in models:
@@ -126,7 +191,7 @@ async def _run_ollama(args: argparse.Namespace) -> int:
             return answer.strip().lower() in {"y", "yes"}
 
         try:
-            result = await manager.pull(args.model, confirm=confirm, output=_print_progress)
+            result = await local_manager.pull(args.model, confirm=confirm, output=_print_progress)
         except OllamaPullRefused:
             print("Download cancelled; no local model was changed.")
             return 1

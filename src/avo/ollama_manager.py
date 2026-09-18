@@ -7,7 +7,7 @@ import json
 import urllib.parse
 import urllib.request
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from avo.hardware import detect_hardware
@@ -49,13 +49,23 @@ class OllamaPullRefused(RuntimeError):
     """Raised when the operator declines a model download."""
 
 
-def _sync_request(method: str, url: str, payload: dict[str, Any] | None = None) -> Any:
+def _sync_request(
+    method: str,
+    url: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+) -> Any:
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = urllib.request.Request(
         url,
         data=data,
         method=method,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            **(headers or {}),
+        },
     )
     hostname = urllib.parse.urlparse(url).hostname
     if hostname in {"localhost", "127.0.0.1", "::1"}:
@@ -72,9 +82,16 @@ def _sync_request(method: str, url: str, payload: dict[str, Any] | None = None) 
 class OllamaManager:
     """Own discovery and pull operations, separate from inference."""
 
-    def __init__(self, base_url: str = "http://localhost:11434", *, client: Any = None) -> None:
+    def __init__(
+        self,
+        base_url: str = "http://localhost:11434",
+        *,
+        client: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self._client = client
+        self._headers = dict(headers or {})
 
     async def _call(self, method: str, path: str, **kwargs: Any) -> Any:
         url = f"{self.base_url}{path}"
@@ -82,8 +99,10 @@ class OllamaManager:
             # The manager is also used by the synchronous CLI.  Keep the
             # dependency-free fallback direct and bounded by urllib's socket
             # timeout; injected async clients remain fully non-blocking.
-            return _sync_request(method.upper(), url, kwargs.get("json"))
+            return _sync_request(method.upper(), url, kwargs.get("json"), headers=self._headers)
         call = getattr(self._client, method.lower())
+        if self._headers:
+            kwargs.setdefault("headers", self._headers)
         result = call(url, **kwargs)
         return await result if inspect.isawaitable(result) else result
 
@@ -210,6 +229,87 @@ class OllamaManager:
         return parsed
 
 
+@dataclass(frozen=True, slots=True)
+class OllamaCloudConfig:
+    """Remote Ollama Cloud management configuration.
+
+    The API key is intentionally not included in the dataclass representation
+    or any status output.  It is only used to build the request header.
+    """
+
+    model: str
+    api_key: str = field(default="", repr=False)
+    base_url: str = "https://ollama.com"
+
+    def __post_init__(self) -> None:
+        if not self.model.strip():
+            raise ValueError("Ollama Cloud model must not be empty")
+        if not self.api_key.strip():
+            raise ValueError("Ollama Cloud API key must not be empty")
+        object.__setattr__(self, "base_url", self.base_url.rstrip("/"))
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaUsage:
+    """Best-effort normalized account usage returned by Ollama Cloud."""
+
+    remaining_tokens: int | None = None
+    limit_tokens: int | None = None
+    reset_at: str | None = None
+
+
+class OllamaCloudManager(OllamaManager):
+    """Read-only discovery and usage operations for Ollama Cloud.
+
+    Deliberately does not expose ``pull`` as a cloud operation.  Local model
+    downloads remain owned by :class:`OllamaManager` and always require a
+    confirmation callback.
+    """
+
+    def __init__(self, config: OllamaCloudConfig, *, client: Any = None) -> None:
+        super().__init__(
+            config.base_url,
+            client=client,
+            headers={"Authorization": f"Bearer {config.api_key}"},
+        )
+        self.config = config
+
+    async def pull(self, *args: Any, **kwargs: Any) -> OllamaModel:
+        del args, kwargs
+        raise OllamaPullRefused("Ollama Cloud models are remote; local pull is disabled")
+
+    async def usage(self) -> OllamaUsage | None:
+        """Return usage when the account exposes ``/api/usage``.
+
+        Older or restricted Ollama Cloud accounts may return 404.  That is a
+        supported absence of the optional endpoint, not a failed health check.
+        """
+
+        try:
+            response = await self._call("get", "/api/usage")
+            payload = await self._response_json(response)
+        except RuntimeError as exc:
+            if "HTTP 404" in str(exc):
+                return None
+            raise
+        if not isinstance(payload, dict):
+            return None
+
+        def integer(*names: str) -> int | None:
+            for name in names:
+                value = payload.get(name)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return int(value)
+            return None
+
+        reset = payload.get("reset_at", payload.get("resets_at"))
+        return OllamaUsage(
+            remaining_tokens=integer("remaining_tokens", "remaining"),
+            limit_tokens=integer("limit_tokens", "limit"),
+            reset_at=str(reset) if reset else None,
+        )
+
+
 def build_ollama_cloud_config(
     *,
     model: str,
@@ -227,10 +327,13 @@ def build_ollama_cloud_config(
 
 
 __all__ = [
+    "OllamaCloudConfig",
+    "OllamaCloudManager",
     "OllamaHealth",
     "OllamaManager",
     "OllamaModel",
     "OllamaPullRefused",
+    "OllamaUsage",
     "PullPlan",
     "PullProgress",
     "build_ollama_cloud_config",
