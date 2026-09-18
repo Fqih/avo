@@ -156,3 +156,37 @@ async def test_combo_aclose_calls_underlying_providers() -> None:
         tiers=[(profile.tiers[0], p1)],
     )
     await router.aclose()
+
+
+@pytest.mark.asyncio
+async def test_tier_health_lock_prevents_concurrent_write_corruption() -> None:
+    """Concurrent generate() calls must not corrupt TierHealth state."""
+    import asyncio
+
+    fail_count = 20
+
+    class _RateLimitedProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__([])
+
+        async def generate(self, request: ModelRequest) -> ModelResponse:
+            raise ProviderError("HTTP 429: Too Many Requests")
+
+    p_fail = _RateLimitedProvider()
+    p_ok = FakeProvider([ModelResponse(content=f"ok-{i}") for i in range(fail_count)])
+    profile = _profile()
+    router = ComboRouterProvider(
+        profile,
+        tiers=[(profile.tiers[0], p_fail), (profile.tiers[1], p_ok)],
+    )
+
+    # Fire concurrent generate() calls — each will record a failure then a success.
+    await asyncio.gather(*(router.generate(_make_req()) for _ in range(fail_count)))
+
+    # After all concurrent calls, health for tier[0] should be unhealthy (cooldown),
+    # and the consecutive_failures counter must be a consistent integer, not corrupted.
+    h = router._health[profile.tiers[0].name]
+    assert isinstance(h.consecutive_failures, int)
+    assert h.consecutive_failures >= 1
+    assert h.is_healthy is False
+

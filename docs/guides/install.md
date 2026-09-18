@@ -52,8 +52,8 @@ The setup wizard configures provider credentials, permission defaults, and the
 workspace database path. Secrets are stored in the user credential store with
 restricted file permissions; never commit that file.
 
-If your global provider is Codex or Gemini subscription OAuth, enable that
-credential source explicitly:
+If you use a Codex, Claude, or Gemini vendor-account OAuth credential, enable
+that credential source explicitly:
 
 ```bash
 avo setup --allow-subscription

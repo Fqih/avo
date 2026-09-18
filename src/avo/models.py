@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
+from avo.capabilities import ToolCapability
 from avo.state import RunState, StopReason, is_terminal, validate_terminal_outcome
 
 
@@ -65,6 +66,7 @@ class ToolMetadata(AvoModel):
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
     input_schema: dict[str, JsonValue]
+    capability: ToolCapability = ToolCapability.READ
 
 
 class ToolCall(AvoModel):

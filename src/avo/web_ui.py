@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import secrets
 import sys
+import threading
 import urllib.parse
 from collections.abc import Sequence
 from http.server import ThreadingHTTPServer
@@ -33,7 +35,7 @@ from avo.config import resolve_database_path
 from avo.permissions import permission_policy_from_env
 from avo.persona import PersonaManager
 from avo.web_api import ApiServerMixin, WebApiMixin, _mask_secret  # re-export
-from avo.web_http import _LOG, WebHttpMixin  # re-export
+from avo.web_http import _LOG, WebHttpMixin, WebSecurityConfig  # re-export
 from avo.web_pages import WebPageMixin, _get_dashboard_html  # re-export
 from avo.web_playground import PlaygroundServerMixin, WebPlaygroundMixin
 from avo.web_runs import RunsServerMixin, WebRunsMixin
@@ -107,6 +109,7 @@ class AvoWebServer(
         self.auth_token = secrets.token_urlsafe(32)
         self.session_token = secrets.token_urlsafe(32)
         self.csrf_token = secrets.token_urlsafe(32)
+        self.web_security = WebSecurityConfig()
         self.database_path = database_path
         self.workspace_root = (
             Path(workspace_root).resolve() if workspace_root is not None else Path.cwd().resolve()
@@ -117,6 +120,13 @@ class AvoWebServer(
         self.permission_mode = permission_policy_from_env(
             {"AVO_PERMISSION_MODE": permission_mode} if permission_mode is not None else None
         ).mode.value
+        # Per-server config lock: serialises concurrent HTTP mutations to
+        # permission_mode / active_provider / active_model so that a torn
+        # write from two simultaneous POST /api/* requests cannot cause the
+        # runtime to see an inconsistent environment snapshot.
+        self._config_lock = threading.Lock()
+        self.active_provider: str = os.environ.get("AVO_PROVIDER", "")
+        self.active_model: str = os.environ.get("AVO_MODEL", "")
 
 
 def run_web_dashboard(

@@ -151,6 +151,15 @@ class TraceInspector:
             return f"provider returned final decision at step {payload.get('step')}"
         if event_type is EventType.MODEL_FAILED:
             return f"provider failed at step {payload.get('step')}"
+        if event_type is EventType.SAVER_APPLIED:
+            saved = payload.get("saved_percent", 0)
+            if not isinstance(saved, int | float):
+                saved = 0
+            sign = "\u2212" if saved > 0 else ("+" if saved < 0 else "")
+            return (
+                f"saver: {payload.get('preset')} {sign}{abs(saved)}% "
+                f"({payload.get('tokens_before')}→{payload.get('tokens_after')})"
+            )
         if event_type is EventType.TOOL_REQUESTED:
             return f"tool requested: {payload.get('name')}"
         if event_type is EventType.TOOL_APPROVAL_REQUESTED:

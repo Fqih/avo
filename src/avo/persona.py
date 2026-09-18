@@ -13,6 +13,21 @@ import re
 from pathlib import Path
 from typing import Final
 
+DEFAULT_SYSTEM_PROMPT: Final[str] = """Role: You are Avo, a reliable AI workspace agent.
+
+Help the user understand, modify, test, and explain the current workspace.
+Follow these operating rules:
+- For greetings, thanks, and simple questions, answer directly and conversationally.
+  Do not call tools for them.
+- Use tools only when the request needs current files, command output, or a workspace change.
+- Treat the active workspace as the file boundary. Use workspace-relative paths or absolute
+  paths inside it; never invent paths such as /workspace or access a path outside the workspace.
+- Choose an exact registered tool and valid arguments. Never claim a tool ran unless its result
+  is available.
+- Be concise, state what you did, and ask one focused question when the request is ambiguous.
+Do not repeat this introduction on every turn; greet briefly only when the user greets or starts
+a new conversation."""
+
 BUILTIN_PERSONAS: Final[dict[str, str]] = {
     "coder": (
         "Role: Expert Software Engineer.\n"
@@ -60,23 +75,26 @@ class PersonaManager:
             self._load_workspace_instructions()
 
     def _load_workspace_personas(self) -> None:
-        if self._workspace_root is None:
-            return
-        personas_dir = self._workspace_root / ".avo" / "personas"
-        if not personas_dir.is_dir():
-            return
-        try:
-            for item in personas_dir.glob("*.md"):
-                if item.is_file():
-                    name = item.stem.lower()
-                    try:
-                        content = item.read_text(encoding="utf-8").strip()
-                        if content:
-                            self._custom_personas[name] = content
-                    except OSError:
-                        pass
-        except OSError:
-            pass
+        global_personas_dir = Path.home() / ".avo" / "personas"
+        search_dirs = [global_personas_dir]
+        if self._workspace_root is not None:
+            search_dirs.append(self._workspace_root / ".avo" / "personas")
+
+        for personas_dir in search_dirs:
+            if not personas_dir.is_dir():
+                continue
+            try:
+                for item in personas_dir.glob("*.md"):
+                    if item.is_file():
+                        name = item.stem.lower()
+                        try:
+                            content = item.read_text(encoding="utf-8").strip()
+                            if content:
+                                self._custom_personas[name] = content
+                        except OSError:
+                            pass
+            except OSError:
+                pass
 
     def _load_workspace_instructions(self) -> None:
         env_prompt = os.environ.get("AVO_SYSTEM_PROMPT", "").strip()
@@ -84,13 +102,16 @@ class PersonaManager:
             self._custom_instructions = env_prompt
             return
 
-        if self._workspace_root is None:
-            return
+        candidates: list[Path] = []
+        if self._workspace_root is not None:
+            candidates.extend(
+                [
+                    self._workspace_root / ".avo" / "instructions.md",
+                    self._workspace_root / ".avo" / "system.md",
+                ]
+            )
+        candidates.append(Path.home() / ".avo" / "instructions.md")
 
-        candidates = [
-            self._workspace_root / ".avo" / "instructions.md",
-            self._workspace_root / ".avo" / "system.md",
-        ]
         for candidate in candidates:
             if candidate.is_file():
                 try:
@@ -154,9 +175,9 @@ class PersonaManager:
     def set_custom_instructions(self, text: str | None) -> None:
         self._custom_instructions = text.strip() if text else None
 
-    def render_system_prompt(self) -> str | None:
-        """Combine active persona prompt and custom workspace instructions."""
-        parts: list[str] = []
+    def render_system_prompt(self) -> str:
+        """Combine the Avo core role, persona, and workspace instructions."""
+        parts: list[str] = [DEFAULT_SYSTEM_PROMPT]
         if self._active_persona:
             available = self.available_personas()
             prompt = available.get(self._active_persona)
@@ -164,12 +185,11 @@ class PersonaManager:
                 parts.append(prompt)
         if self._custom_instructions:
             parts.append(f"Workspace Instructions:\n{self._custom_instructions}")
-        if not parts:
-            return None
         return "\n\n".join(parts)
 
 
 __all__ = [
     "BUILTIN_PERSONAS",
+    "DEFAULT_SYSTEM_PROMPT",
     "PersonaManager",
 ]

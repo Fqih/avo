@@ -14,6 +14,7 @@ from avo.app_tools.file_tools import (
     read_file_tool,
     write_file_tool,
 )
+from avo.app_tools.terminal_tool import run_terminal_tool
 from avo.app_tools.workspace import Workspace
 from avo.models import ToolCall
 
@@ -128,6 +129,16 @@ async def test_write_file_no_binding_raises() -> None:
     tool = write_file_tool()
     with pytest.raises(ToolExecutionError, match="WorkspaceNotBoundError"):
         await tool.invoke({"path": "file.txt", "content": "x"})
+
+
+@pytest.mark.asyncio
+async def test_run_terminal_executes_in_active_workspace(workspace_tree: Workspace) -> None:
+    with bind_workspace(workspace_tree):
+        result = await run_terminal_tool().invoke({"command": "printf terminal-ok"})
+
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "terminal-ok"
+    assert result["cwd"] == str(workspace_tree.root)
 
 
 def test_bind_workspace_restores_state() -> None:

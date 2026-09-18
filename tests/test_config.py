@@ -56,6 +56,19 @@ def test_ollama_provider_respects_overrides() -> None:
     assert provider._config._api_key == "proxy-token"
 
 
+def test_ollama_cloud_is_separate_remote_provider() -> None:
+    provider = build_provider_from_env(
+        {
+            "AVO_PROVIDER": "ollama-cloud",
+            "AVO_MODEL": "qwen3-coder:480b-cloud",
+            "AVO_OLLAMA_CLOUD_API_KEY": "cloud-key",
+        }
+    )
+    assert isinstance(provider, OllamaProvider)
+    assert provider._config.base_url == "https://ollama.com"
+    assert provider._config._api_key == "cloud-key"
+
+
 def test_minimax_requires_api_key() -> None:
     with pytest.raises(ValueError, match="AVO_MINIMAX_API_KEY"):
         build_provider_from_env({"AVO_PROVIDER": "minimax", "AVO_MODEL": "MiniMax-M3"})
@@ -182,6 +195,7 @@ def test_provider_models_catalog_has_all_providers() -> None:
 
     assert set(PROVIDER_MODELS.keys()) == {
         "ollama",
+        "ollama-cloud",
         "minimax",
         "anthropic",
         "openai",
@@ -284,14 +298,13 @@ def test_codex_provider_without_subscription_gate_raises(
             }
         )
 
-    # By default (without AVO_ALLOW_SUBSCRIPTION), stored web login succeeds
-    provider = build_provider_from_env(
-        {
-            "AVO_PROVIDER": "codex",
-            "AVO_MODEL": "gpt-5.6-sol",
-        }
-    )
-    assert provider is not None
+    with pytest.raises(ConfigError, match="AVO_ALLOW_SUBSCRIPTION"):
+        build_provider_from_env(
+            {
+                "AVO_PROVIDER": "codex",
+                "AVO_MODEL": "gpt-5.6-sol",
+            }
+        )
 
 
 def test_openai_falls_back_to_codex_oauth(
@@ -359,6 +372,6 @@ def test_auto_detect_stored_oauth_when_provider_unset(
             subscription=True,
         )
     )
-    provider = build_provider_from_env({})
+    provider = build_provider_from_env({"AVO_ALLOW_SUBSCRIPTION": "1"})
     assert isinstance(provider, CodexProvider)
     assert provider._config.model == "gpt-5.6-sol"

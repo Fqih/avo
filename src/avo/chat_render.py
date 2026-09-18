@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import subprocess
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
@@ -46,9 +47,40 @@ _FIRST_RUN_MESSAGE = (
 
 
 def _read_environ() -> dict[str, str]:
-    """Snapshot ``os.environ`` so the chat does not see mid-session mutations."""
+    """Snapshot ``os.environ`` and merge global ~/.avo/config.json defaults."""
 
-    return dict(os.environ)
+    env = dict(os.environ)
+    try:
+        from avo.cli_setup import load_global_avo_config
+
+        for k, v in load_global_avo_config().items():
+            env.setdefault(k, v)
+    except Exception:
+        pass
+
+    # A successful vendor login is an explicit provider choice. Reuse it on
+    # the next `avo` invocation, including the same shell where setup wrote
+    # only a future-shell rc block. Subscription inference still requires the
+    # opt-in flag, so enable it only when the matching stored credential exists.
+    if not env.get("AVO_PROVIDER"):
+        _resolve_provider_label(env)
+    subscription_keys = {
+        "codex": "codex",
+        "anthropic": "claude",
+        "gemini-cli": "gemini",
+        "gemini_cli": "gemini",
+    }
+    provider = env.get("AVO_PROVIDER", "").strip().lower()
+    credential_key = subscription_keys.get(provider)
+    if credential_key and "AVO_ALLOW_SUBSCRIPTION" not in env:
+        try:
+            from avo.oauth.store import get_credential
+
+            if get_credential(credential_key) is not None:
+                env["AVO_ALLOW_SUBSCRIPTION"] = "1"
+        except Exception:
+            pass
+    return env
 
 
 def _resolve_provider_label(environ: dict[str, str]) -> tuple[str, str]:
@@ -122,6 +154,63 @@ def _format_workspace_path(path: Path) -> str:
     except Exception:
         pass
     return str(path)
+
+
+def _format_duration(seconds: float) -> str:
+    """Render a turn duration as whole seconds for the compact chat footer."""
+
+    return f"{max(0, round(seconds))}s"
+
+
+def render_thought_duration(seconds: float, *, color: bool = False) -> str:
+    """Render the private-thinking duration without exposing reasoning text."""
+
+    dim = "\033[90m" if color else ""
+    reset = "\033[0m" if color else ""
+    return f"  {dim}Thought for {_format_duration(seconds)}{reset}\n"
+
+
+def render_cooked_footer(
+    seconds: float,
+    completed_at: datetime,
+    *,
+    color: bool = False,
+) -> str:
+    """Render the concise completion metadata shown below an answer."""
+
+    dim = "\033[90m" if color else ""
+    reset = "\033[0m" if color else ""
+    clock = completed_at.strftime("%I:%M %p").lstrip("0")
+    return f"  {dim}* Cooked for {_format_duration(seconds)} · done {clock}{reset}\n"
+
+
+def render_chat_toolbar(
+    provider_name: str,
+    model_name: str,
+    workspace_root: Path,
+    *,
+    running_jobs: int = 0,
+    color: bool = False,
+) -> str:
+    """Render the compact status bar pinned below the interactive prompt."""
+
+    jobs = f" · jobs: {running_jobs}" if running_jobs else ""
+    path = _format_workspace_path(workspace_root)
+    if not color:
+        return f"provider: {provider_name} · model: {model_name} · path: {path}{jobs}"
+
+    dim = "\033[90m"
+    cyan = "\033[36m"
+    green = "\033[32m"
+    yellow = "\033[33m"
+    white = "\033[97m"
+    reset = "\033[0m"
+    return (
+        f"{dim}provider:{reset} {cyan}{provider_name}{reset}"
+        f" {dim}· model:{reset} {white}{model_name}{reset}"
+        f" {dim}· path:{reset} {green}{path}{reset}"
+        f"{yellow}{jobs}{reset}"
+    )
 
 
 def _resolve_user_identity(provider_name: str) -> str:
@@ -220,7 +309,7 @@ def _print_header(
     *,
     resumed_from: str | None = None,
 ) -> None:
-    """Render the AVO banner with mascot logo, version, identity, model, and cwd."""
+    """Render the AVO banner with mascot, version, identity, and session."""
 
     color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
     bold_cyan = "\033[1;36m" if color_enabled else ""
@@ -229,14 +318,12 @@ def _print_header(
 
     mascot = _render_mascot(color=color_enabled)
     identity = _resolve_user_identity(ctx.provider_name)
-    workspace_disp = _format_workspace_path(workspace_root)
-    provider_model = f"provider: {ctx.provider_name} · model: {ctx.model_name}"
 
     right_col = [
         f"{bold_cyan}Avo CLI {AVO_VERSION}{rst}",
         f"{dim}{identity}{rst}",
-        f"{dim}{provider_model}{rst}",
-        f"{dim}workspace: {workspace_disp}{rst}",
+        "",
+        "",
     ]
     if resumed_from:
         right_col.append(f"{dim}resumed session: {resumed_from}{rst}")
@@ -286,7 +373,20 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/resume [ID]", "resume a chat session (no arg = picker) or a recorded run"),
     ("/session", "show the current session id and turn count"),
     ("/new", "close the current session and start a fresh thread"),
+    ("/setup [wizard|global]", "inspect ~/.avo global setup or run configuration wizard"),
+    (
+        "/agent [persona|instructions|clear]",
+        "manage persona, instructions, or a named agent profile",
+    ),
+    ("/agents [list]", "list named agent profiles available in this workspace"),
+    ("/delegate @agent TASK", "run one or more isolated agents in parallel"),
+    (
+        "/list [sessions|models|skills|plugins|tools|jobs|agents]",
+        "browse catalog of sessions, models, tools, or plugins",
+    ),
+    ("/plugin [list|show|install|remove]", "manage third-party plugins in ~/.avo/plugins"),
     ("/inspect RUN_ID", "render the trace for one recorded run"),
+    ("/replay RUN_ID", "verify a recorded run without invoking tools or providers"),
     ("/skills", "list skills available in the current workspace"),
     ("/skill NAME", "load a skill body as the next turn"),
     ("/jobs", "list background tasks"),

@@ -17,7 +17,7 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -48,6 +48,17 @@ Add your global preferences, coding conventions, or operating guidelines here.
 """
 
 _DEFAULT_MCP: dict[str, dict[str, object]] = {"mcpServers": {}}
+
+_SECURITY_CONFIG_ENV_KEYS = {
+    "require_approval": "AVO_TOOLS_REQUIRE_APPROVAL",
+    "sandbox_required": "AVO_SANDBOX_REQUIRED",
+    "sandbox_network": "AVO_SANDBOX_NETWORK",
+    "sandbox_timeout_seconds": "AVO_SANDBOX_TIMEOUT_SECONDS",
+    "plugin_editable": "AVO_PLUGIN_EDITABLE",
+    "plugin_activation": "AVO_PLUGIN_ACTIVATION",
+    "web_allowed_origin": "AVO_WEB_ALLOWED_ORIGIN",
+    "web_cors_enabled": "AVO_WEB_CORS_ENABLED",
+}
 
 
 class SetupCliError(AvoError):
@@ -88,6 +99,14 @@ def load_global_avo_config(base_dir: Path | None = None) -> dict[str, str]:
         if permission_mode == "bypass":
             permission_mode = "bypass_permissions"
         env_mapping["AVO_PERMISSION_MODE"] = permission_mode
+    for config_key, env_key in _SECURITY_CONFIG_ENV_KEYS.items():
+        value = data.get(config_key)
+        if isinstance(value, bool):
+            env_mapping[env_key] = "1" if value else "0"
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            env_mapping[env_key] = str(value)
+        elif isinstance(value, str) and value.strip():
+            env_mapping[env_key] = value.strip()
     if "stream" in data:
         env_mapping["AVO_CHAT_STREAM"] = "1" if bool(data["stream"]) else "0"
     if data.get("allow_subscription") is True:
@@ -98,6 +117,40 @@ def load_global_avo_config(base_dir: Path | None = None) -> dict[str, str]:
             env_mapping[f"AVO_{prov}_BASE_URL"] = data["base_url"].strip()
 
     return env_mapping
+
+
+def remember_last_provider(
+    environ: Mapping[str, str],
+    base_dir: Path | None = None,
+) -> Path | None:
+    """Persist the last provider/model choice without copying any secrets.
+
+    The first-run wizard historically exported values to the shell rc file,
+    which only affected a future shell and made the next ``avo`` invocation
+    appear unconfigured.  Global config stores only routing preferences; API
+    keys and OAuth tokens remain in the credential store.
+    """
+
+    provider = environ.get("AVO_PROVIDER", "").strip()
+    model = environ.get("AVO_MODEL", "").strip()
+    if not provider or not model:
+        return None
+
+    target_dir = (base_dir or GLOBAL_AVO_DIR).expanduser().resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    config_path = target_dir / "config.json"
+    try:
+        current = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        current = {}
+    if not isinstance(current, dict):
+        current = {}
+
+    current["provider"] = provider
+    current["model"] = model
+    current["allow_subscription"] = environ.get("AVO_ALLOW_SUBSCRIPTION") == "1"
+    config_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    return config_path
 
 
 def setup_global_avo(

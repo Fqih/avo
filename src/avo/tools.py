@@ -11,6 +11,7 @@ from typing import Any, Generic, Protocol, TypeVar, cast, runtime_checkable
 
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
+from avo.capabilities import ToolCapability, classify_tool
 from avo.exceptions import (
     DuplicateToolError,
     ToolAlreadyCompletedError,
@@ -47,6 +48,7 @@ class FunctionTool(Generic[ArgumentsT]):
         description: str,
         arguments_model: type[ArgumentsT],
         function: ToolCallable[ArgumentsT],
+        capability: ToolCapability | None = None,
     ) -> None:
         self._arguments_model = arguments_model
         self._function = function
@@ -54,6 +56,7 @@ class FunctionTool(Generic[ArgumentsT]):
             name=name,
             description=description,
             input_schema=cast(dict[str, JsonValue], arguments_model.model_json_schema()),
+            capability=capability or classify_tool(name),
         )
 
     @property

@@ -1,6 +1,6 @@
 # Avo API Reference
 
-**Package:** `avo` **Version:** `0.1.7` (`src/avo/__init__.py: __version__ = "0.1.7"`)
+**Package:** `avo` **Version:** `0.7.2` (`src/avo/__init__.py: __version__ = "0.7.2"`)
 **Python:** `>=3.11` **Core dependency:** `pydantic>=2.8,<3` (only one)
 **Stable ABI target:** `0.2.0` (`_STABLE_ABI` in `src/avo/__init__.py`)
 
@@ -92,6 +92,7 @@ Key modules and their one-line responsibility (first docstring line):
 | `avo/runtime_handlers.py` | Per-state handler functions (the loop body) |
 | `avo/runtime_persistence.py` | Event append, transition, checkpoint, terminate helpers |
 | `avo/providers/` | Model adapters (`ModelProvider` implementations) |
+| `avo/savers/` | Opt-in deterministic request compression and terse-output presets |
 | `avo/storage/` | `EventStore` implementations (SQLite, in-memory) |
 | `avo/config.py` | Env-driven provider construction (`build_provider_from_env`) |
 | `avo/app_tools/` | Workspace-bounded file/shell/git tools + Docker sandbox |
@@ -491,10 +492,10 @@ AgentEvent(
 )
 ```
 
-### `EventType` (StrEnum — 19 members)
+### `EventType` (StrEnum — 20 members)
 
 `RUN_CREATED`, `STATE_CHANGED`, `MODEL_REQUESTED`, `MODEL_RESPONDED`,
-`MODEL_FAILED`, `TOOL_REQUESTED`, `TOOL_APPROVAL_REQUESTED`,
+`MODEL_FAILED`, `ROUTE_FAILOVER`, `SAVER_APPLIED`, `TOOL_REQUESTED`, `TOOL_APPROVAL_REQUESTED`,
 `TOOL_APPROVED`, `TOOL_DENIED`, `TOOL_STARTED`, `TOOL_COMPLETED`,
 `TOOL_FAILED`, `POLICY_TRIGGERED`, `CHECKPOINT_CREATED`, `RUN_RESUMED`,
 `RUN_COMPLETED`, `RUN_FAILED`, `RUN_STOPPED`, `RUN_CANCELLED`.
@@ -511,6 +512,7 @@ Standard payloads (as emitted by `runtime_persistence` /
 | `STATE_CHANGED` | `from_state`, `to_state` |
 | `MODEL_RESPONDED` | `step`, `response`, `duration_ms`, `token_accounting_available` |
 | `MODEL_FAILED` | includes `error_type`, `consecutive_errors` |
+| `SAVER_APPLIED` | `preset`, `stages_applied`, `tokens_before`, `tokens_after`, `saved_percent`, `message_count`, `addendum` |
 | `TOOL_APPROVAL_REQUESTED` | `tool_call_id`, `idempotency_key`, `name`, `mode: "v0.1_callback"` |
 | `TOOL_DENIED` | `reason`, `blocked_by` (`"hook"` or approval denial) |
 | `CHECKPOINT_CREATED` | `checkpoint_id`, `state`, `next_step` |
@@ -614,6 +616,7 @@ float = 30.0, *, client=None)` and implement `generate` + `stream`.
 | `AnthropicProvider` (`"anthropic"`) | `anthropic.py` | `https://api.anthropic.com` | `claude-sonnet-4-6` | header `x-api-key` + `anthropic-version: 2023-06-01` | `AVO_ANTHROPIC_API_KEY` |
 | `OpenAICompatibleProvider` (`"openai-compatible"`) | `openai_compatible.py` | `https://api.openai.com/v1` | from env | `Authorization: Bearer` | `AVO_OPENAI_API_KEY` |
 | `OllamaProvider` (no `name` attr) | `ollama.py` | `http://localhost:11434` | `llama3.1` (catalog) | optional `Authorization: Bearer` | none (key optional) |
+| `OllamaProvider` via `ollama-cloud` | `ollama.py` | `https://ollama.com` | `qwen3-coder:480b-cloud` | official API/device key | `AVO_OLLAMA_CLOUD_API_KEY` or stored Ollama credential |
 | `MiniMaxProvider` | `minimax.py` | `https://api.minimax.io` | catalog | style-dependent | `AVO_MINIMAX_API_KEY` |
 | `GroqProvider` (`"groq"`) | `groq.py` | `https://api.groq.com/openai/v1` | catalog | Bearer | `AVO_GROQ_API_KEY` |
 | `CerebrasProvider` (`"cerebras"`) | `cerebras.py` | `https://api.cerebras.ai/v1` | catalog | Bearer | `AVO_CEREBRAS_API_KEY` |
@@ -757,9 +760,12 @@ approval on it, never beside it). The default internal callback is
 `_always_approve` returning `True`. A single `asyncio.Lock` serializes
 runs on one runtime instance.
 
-### `async run(task, *, user_state=None, run_id=None) -> RunResult`
+### `async run(task, *, system_prompt=None, user_state=None, run_id=None) -> RunResult`
 
 - Emits `RUN_CREATED` (payload `{task, policy}`) then drives §5.
+- If `system_prompt` is non-empty, it is sent as a native `system` message before
+  the user task. This is the preferred way for callers to provide agent role or
+  workspace instructions without mixing them into user text.
 - If `memory` is set, a recall step injects a `"Relevant memories:"`
   system message before the first model call.
 - `asyncio.CancelledError` → terminates `CANCELLED` / `USER_CANCELLED`
@@ -1187,6 +1193,7 @@ def build_provider_from_env(
     *,
     max_completion_tokens: int = 1024,
     request_timeout_seconds: float = 30.0,
+    event_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
 ) -> Any: ...
 
 def apply_runtime_overrides(
@@ -1249,7 +1256,9 @@ package), grouped by subsystem.
 |---|---|
 | `AVO_PROVIDER` | One of `ProviderName` (§12.1) |
 | `AVO_MODEL` | Model for the selected provider (required except `router`) |
-| `AVO_OLLAMA_API_KEY` / `AVO_OLLAMA_BASE_URL` / `AVO_OLLAMA_MODEL` | Ollama; key optional (default base `http://localhost:11434`) |
+| `AVO_SAVER` | Optional `terse`, `yagni`, `compact`, or `full` request-time saver; overrides `saver.json` |
+| `AVO_OLLAMA_API_KEY` / `AVO_OLLAMA_BASE_URL` / `AVO_OLLAMA_MODEL` | Ollama Local; key optional (default base `http://localhost:11434`) |
+| `AVO_OLLAMA_CLOUD_API_KEY` | Ollama Cloud credential; remote models are not pulled locally |
 | `AVO_OPENAI_API_KEY` / `AVO_OPENAI_BASE_URL` / `AVO_OPENAI_MODEL` | OpenAI-compatible adapter; key required for `AVO_PROVIDER=openai` |
 | `AVO_ANTHROPIC_API_KEY` / `AVO_ANTHROPIC_BASE_URL` / `AVO_ANTHROPIC_MODEL` | Anthropic; key required for `AVO_PROVIDER=anthropic` |
 | `AVO_MINIMAX_API_KEY` / `AVO_MINIMAX_BASE_URL` / `AVO_MINIMAX_MODEL` / `AVO_MINIMAX_API_STYLE` | Minimax; style must be `openai` or `anthropic` |
@@ -1257,6 +1266,8 @@ package), grouped by subsystem.
 | `AVO_CEREBRAS_API_KEY` / `AVO_CEREBRAS_BASE_URL` / `AVO_CEREBRAS_MODEL` | Cerebras |
 | `AVO_OPENROUTER_API_KEY` / `AVO_OPENROUTER_BASE_URL` / `AVO_OPENROUTER_MODEL` / `AVO_OPENROUTER_SITE_URL` / `AVO_OPENROUTER_APP_NAME` | OpenRouter (key also accepted as `OPENROUTER_API_KEY` or a stored token) |
 | `AVO_GEMINI_API_KEY` / `AVO_GEMINI_BASE_URL` / `AVO_GEMINI_MODEL` | Gemini |
+| `AVO_GEMINI_CLI_TRANSPORT` | `antigravity`, `cliproxyapi`, or legacy `http` transport for `gemini-cli` |
+| `AVO_CLIPROXYAPI_BASE_URL` / `AVO_CLIPROXYAPI_API_KEY` | CLIProxyAPI server root (default `http://127.0.0.1:8317`) and optional bearer key; `/model` fetches its live `/v1/models` catalog |
 | `AVO_ROUTER_CHAIN` / `AVO_ROUTER_PROVIDERS` / `AVO_ROUTER_MODELS` / `AVO_ROUTER_MODE` / `AVO_ROUTER_STRATEGY` / `AVO_ROUTER_COOLDOWN_SECONDS` / `AVO_ROUTER_SPECULATIVE_DELAY_MS` | Router (§12.2); `AVO_ROUTER_MODELS` consumed by chat/web setup |
 
 **Runtime policy overrides**
@@ -1287,7 +1298,7 @@ package), grouped by subsystem.
 | Variable | Meaning |
 |---|---|
 | `AVO_CHAT_STREAM` | Streaming gate (`chat_stream.STREAM_GATE_ENV`); `"0"` / `"false"` disables — streaming is default-on |
-| `AVO_SYSTEM_PROMPT` | Replace the default persona/system prompt (`persona.py`) |
+| `AVO_SYSTEM_PROMPT` | Add workspace-wide instructions after Avo's built-in role and tool-boundary prompt (`persona.py`) |
 | `AVO_CONTEXT_WINDOW_LIMIT` | Force a context-window token limit (min 1000; `context_advisor`) |
 | `AVO_CONTEXT_WARNING_THRESHOLD` | Float 0–1, default `"0.80"` (`context_advisor`) |
 | `AVO_USAGE_RATES_INPUT_PER_1K` / `AVO_USAGE_RATES_OUTPUT_PER_1K` | USD per 1k tokens for cost math (`usage._rates_from_env`) |
@@ -1360,7 +1371,7 @@ it).
 
 ```python
 def serve_stdio(registry: ToolRegistry, *, server_name: str = "avo",
-                server_version: str = "0.1.7", workspace_root=None,
+                server_version: str = "0.7.2", workspace_root=None,
                 read_fn=None, write_fn=None) -> None
 async def serve_stdio_async(...)   # same parameters
 
@@ -1370,7 +1381,7 @@ def build_default_registry() -> ToolRegistry
 
 class AvoMcpServer:
     def __init__(self, registry: ToolRegistry, *, server_name: str = "avo",
-                 server_version: str = "0.1.7", workspace_root=None) -> None
+                 server_version: str = "0.7.2", workspace_root=None) -> None
     def serve_stdio(self, *, read_fn=None, write_fn=None) -> None
     def run_forever(self, ...) -> None      # asyncio.run wrapper
 ```
@@ -1418,10 +1429,13 @@ re-parse their tail via `_tail_argv(command)` (strips the leading
 | Command | Purpose / notable flags |
 |---|---|
 | `avo runs list` | newest-first run table |
+| `avo saver list|show|use|off` | inspect, select, or disable deterministic token-saver presets |
 | `avo runs inspect RUN_ID` | render `RunTrace.to_text()` |
 | `avo runs resume RUN_ID` | replay via `FakeProvider`; restrictions below |
+| `avo runs replay RUN_ID` | verify the durable decision ledger without inference |
 | `avo runs diff RUN_A RUN_B [--json]` | structural diff (see `diff.py`) |
 | `avo chat` | REPL; `--database`, `--workspace-root`, `--session SESSION_ID`, `--new-session` |
+| `avo resume [SESSION_ID]` | Explicitly resume the latest eligible chat session or a specific session |
 | `avo doctor` | provider/model/base-URL/API-key diagnostics (`doctor.py`) |
 | `avo plugin …` | §18.4 plugin management |
 | `avo mcp …` | §14.1 |
@@ -1478,7 +1492,7 @@ commands are defined in `chat_render.SLASH_COMMANDS` — 39 entries:
 `/commit [MSG]`, `/branch [NAME]`, `/log [N]`, `/stash [CMD]`,
 `/bench [PROMPT]`, `/clear`, `/export [PATH]`, `/compact [N]`,
 `/history [QUERY]`, `/draft [show|save|clear]`, `/sessions`,
-`/resume [ID]`, `/session`, `/new`, `/inspect RUN_ID`, `/skills`,
+`/resume [ID]` (arrow-key picker when no ID is supplied), `/session`, `/new`, `/inspect RUN_ID`, `/skills`,
 `/skill NAME`, `/jobs`, `/job ID`, `/cancel ID`, `/quit` (`/exit`,
 Ctrl-D).
 
@@ -2112,7 +2126,8 @@ Settings of record (`pyproject.toml`):
 **Anti-patterns (each has broken something before or will)**
 
 - Do not reconstruct state from events in a *caller* — use
-  `TraceInspector`/`RunTrace`; ad-hoc replay diverges.
+  `TraceInspector`/`RunTrace` for inspection and `ReplayTranscript` for
+  deterministic replay; ad-hoc replay diverges.
 - Do not add a second approval path next to `approval_callback`
   (CLAUDE.md rule 5: tools fit the existing contract).
 - Do not call `subprocess` from host-side tools; sandbox-only
@@ -2133,6 +2148,6 @@ Settings of record (`pyproject.toml`):
 
 ---
 
-*Generated from `src/avo/` at version `0.1.7`. If you add a public
+*Generated from `src/avo/` at version `0.7.2`. If you add a public
 symbol, an env var, a state, or an event and this file does not
 mention it, this file is out of date — update it in the same PR.*

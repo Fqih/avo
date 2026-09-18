@@ -18,6 +18,7 @@ import logging
 import os
 import secrets
 import sys
+import threading
 import urllib.parse
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -28,8 +29,75 @@ from avo.exceptions import AvoError
 _LOG = logging.getLogger("avo.auth")
 
 
+def _remember_login_provider(provider: str) -> None:
+    """Make a successful login the default route for the next Avo process."""
+
+    provider_key = provider.lower()
+    runtime_provider = {
+        "claude": "anthropic",
+        "gemini": "gemini-cli",
+        "chatgpt": "codex",
+    }.get(provider_key, provider_key)
+    default_model = {
+        "anthropic": "claude-sonnet-4-6",
+        "codex": "gpt-5.6-sol",
+        "gemini-cli": "gemini-2.5-pro",
+        "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    }.get(runtime_provider, "")
+    if not default_model:
+        return
+    try:
+        from avo.cli_setup import remember_last_provider
+
+        remember_last_provider(
+            {
+                "AVO_PROVIDER": runtime_provider,
+                "AVO_MODEL": default_model,
+                "AVO_ALLOW_SUBSCRIPTION": "1"
+                if runtime_provider in {"anthropic", "codex", "gemini-cli"}
+                else "0",
+            }
+        )
+    except OSError:
+        _LOG.debug("could not persist last login provider", exc_info=True)
+
+
 class AuthError(AvoError):
     """Raised when an authentication flow fails."""
+
+
+def login_provider_in_browser(
+    provider: str,
+    *,
+    output_writer: Callable[[str], object] = sys.stdout.write,
+) -> bool:
+    """Run the official vendor login without blocking an active event loop.
+
+    The existing CLI login entry point owns an ``asyncio.run`` call.  The chat
+    wizard itself runs inside an async REPL, so calling it directly there would
+    fail with ``asyncio.run() cannot be called from a running event loop``.
+    Running the unchanged login command in a short-lived worker thread keeps
+    the browser/callback flow in its own event loop and preserves one login
+    implementation for both ``avo login`` and first-run setup.
+    """
+
+    result: list[int] = []
+    failure: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            result.append(int(main_login([provider])))
+        except BaseException as exc:  # pragma: no cover - defensive thread boundary
+            failure.append(exc)
+
+    worker = threading.Thread(target=_run, name=f"avo-login-{provider}", daemon=True)
+    worker.start()
+    worker.join()
+
+    if failure:
+        output_writer(f"Login for {provider} failed: {failure[0]}\n")
+        return False
+    return bool(result and result[0] == 0)
 
 
 def default_auth_dir() -> Path:
@@ -395,6 +463,7 @@ def main_login(argv: Sequence[str] | None = None) -> int:
             print("Error: Empty API key provided via --key-stdin", file=sys.stderr)
             return 1
         target = store_token(store_key, key)
+        _remember_login_provider(store_key)
         print(f"✓ Stored API key for {store_key} in {target}")
         return 0
 
@@ -413,6 +482,7 @@ def main_login(argv: Sequence[str] | None = None) -> int:
 
             target = store_credential(importable)
             acc = importable.account or "active"
+            _remember_login_provider(store_key)
             print(f"✓ Imported {store_key} credentials ({acc}) into {target}")
             return 0
 
@@ -435,6 +505,7 @@ def main_login(argv: Sequence[str] | None = None) -> int:
             )
             print(f"✓ Logged in: {cred.account or 'authenticated'} ({store_key}{exp_str})")
             print(f"Stored in {target}")
+            _remember_login_provider(store_key)
             return 0
         except AuthError as exc:
             print(f"Error: {exc}", file=sys.stderr)
@@ -442,6 +513,7 @@ def main_login(argv: Sequence[str] | None = None) -> int:
     elif store_key == "openrouter":
         try:
             asyncio.run(login_openrouter(open_browser=open_browser))
+            _remember_login_provider(store_key)
             return 0
         except AuthError as exc:
             print(f"Error: {exc}", file=sys.stderr)

@@ -15,15 +15,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from avo.exceptions import AvoError
+from avo.plugin_policy import inspect_plugin_source
 
 PLUGIN_ROOT = Path.home() / ".avo" / "plugins"
 PLUGIN_INDEX = PLUGIN_ROOT / "index.json"
@@ -42,6 +45,7 @@ class InstalledPlugin:
     path: Path  # resolved on-disk path
     editable: bool
     groups: tuple[str, ...] = ()
+    version: str = "unknown"
 
     @property
     def description(self) -> str:
@@ -62,7 +66,17 @@ def _read_index() -> dict[str, dict[str, object]]:
 
 def _write_index(index: dict[str, dict[str, object]]) -> None:
     PLUGIN_ROOT.mkdir(parents=True, exist_ok=True)
-    PLUGIN_INDEX.write_text(json.dumps(index, indent=2, sort_keys=True), encoding="utf-8")
+    payload = json.dumps(index, indent=2, sort_keys=True) + "\n"
+    fd, temporary = tempfile.mkstemp(prefix="index.", suffix=".json", dir=PLUGIN_ROOT)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, PLUGIN_INDEX)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def _validate_name(name: str) -> str:
@@ -98,7 +112,13 @@ def _pip_install(target: Path, *, editable: bool) -> None:
         ) from exc
 
 
-def install(source: str, *, name: str | None = None, editable: bool = True) -> InstalledPlugin:
+def install(
+    source: str,
+    *,
+    name: str | None = None,
+    editable: bool = False,
+    confirm: bool = False,
+) -> InstalledPlugin:
     """Install a plugin from a git URL or local path.
 
     Git URLs are shallow-cloned into ``~/.avo/plugins/<name>``. Local
@@ -107,6 +127,13 @@ def install(source: str, *, name: str | None = None, editable: bool = True) -> I
     metadata is immediately discoverable.
     """
 
+    manifest = inspect_plugin_source(source, name=name)
+    if not confirm:
+        raise PluginCliError(
+            f"plugin preview: {manifest.name} v{manifest.version}; "
+            f"groups={','.join(manifest.groups) or '(none)'}; "
+            "installation requires explicit operator confirmation"
+        )
     if source.startswith(("git@", "git+", "https://", "http://", "ssh://")) or source.endswith(
         ".git"
     ):
@@ -160,6 +187,9 @@ def install(source: str, *, name: str | None = None, editable: bool = True) -> I
         "path": str(destination),
         "editable": editable,
         "kind": kind,
+        "version": manifest.version,
+        "groups": list(manifest.groups),
+        "active": False,
     }
     _write_index(index)
     return _entry_to_plugin(name, index[name])
@@ -212,11 +242,20 @@ def _entry_to_plugin(name: str, entry: dict[str, object]) -> InstalledPlugin:
     raw_source = entry.get("source")
     source = raw_source if isinstance(raw_source, str) else "<unknown>"
     editable = bool(entry.get("editable"))
+    raw_groups = entry.get("groups", ())
+    groups = (
+        tuple(item for item in raw_groups if isinstance(item, str))
+        if isinstance(raw_groups, list)
+        else ()
+    )
+    version = entry.get("version")
     return InstalledPlugin(
         name=name,
         source=source,
         path=Path(raw_path),
         editable=editable,
+        groups=groups,
+        version=version if isinstance(version, str) else "unknown",
     )
 
 
@@ -405,7 +444,17 @@ def build_parser() -> argparse.ArgumentParser:
     install_p.add_argument(
         "--no-editable",
         action="store_true",
-        help="pip install normally instead of editable.",
+        help="Deprecated alias; installs are non-editable by default.",
+    )
+    install_p.add_argument(
+        "--editable",
+        action="store_true",
+        help="Request editable installation (still requires explicit confirmation).",
+    )
+    install_p.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Confirm the exact previewed install action without a prompt.",
     )
 
     sub.add_parser("list", help="List installed plugins.")
@@ -467,11 +516,39 @@ def _confirm(prompt: str, *, assume_yes: bool) -> bool:
     return answer in ("y", "yes")
 
 
+def _confirm_exact(action: str, *, assume_yes: bool) -> bool:
+    """Require the operator to type the previewed action exactly."""
+
+    expected = f"CONFIRM {action}"
+    if assume_yes:
+        return True
+    try:
+        answer = input(f"Type '{expected}' to continue: ")
+    except EOFError:
+        print()
+        return False
+    return answer.strip() == expected
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.plugin_command == "install":
-        plugin = install(args.source, name=args.name, editable=not args.no_editable)
+        manifest = inspect_plugin_source(args.source, name=args.name)
+        action = f"install {manifest.name}"
+        print(
+            f"Plugin preview: {manifest.name} v{manifest.version} — "
+            f"groups={','.join(manifest.groups) or '(none)'}"
+        )
+        if not _confirm_exact(action, assume_yes=args.confirm):
+            print("Aborted.")
+            return 1
+        plugin = install(
+            args.source,
+            name=args.name,
+            editable=args.editable and not args.no_editable,
+            confirm=True,
+        )
         print(f"Installed plugin {plugin.name!r} from {plugin.source} → {plugin.path}")
         if plugin.description:
             print(f"  {plugin.description}")

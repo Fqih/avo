@@ -18,9 +18,15 @@ from dataclasses import dataclass
 from typing import IO, Any
 
 from avo.config import _PROVIDER_NAMES, build_provider_from_env
+from avo.config_resolver import (
+    AvoSecurityConfig,
+    render_security_diagnostics,
+    resolve_security_config,
+)
 
 _PROVIDER_LABELS = {
     "ollama": "Ollama",
+    "ollama-cloud": "Ollama Cloud",
     "openai": "OpenAI-compatible",
     "anthropic": "Anthropic",
     "minimax": "MiniMax",
@@ -28,15 +34,16 @@ _PROVIDER_LABELS = {
     "cerebras": "Cerebras",
     "openrouter": "OpenRouter",
     "gemini": "Google Gemini",
-    "codex": "ChatGPT Codex (subscription)",
-    "gemini_cli": "Google Gemini CLI (subscription)",
-    "gemini-cli": "Google Gemini CLI (subscription)",
+    "codex": "ChatGPT Codex account",
+    "gemini_cli": "Google Gemini CLI account",
+    "gemini-cli": "Google Gemini CLI account",
     "router": "Multi-Provider Router",
     "combo": "Multi-Tier Combo Router",
 }
 
 _REQUIRED_BY_PROVIDER: dict[str, tuple[str, ...]] = {
     "ollama": ("AVO_PROVIDER", "AVO_MODEL"),
+    "ollama-cloud": ("AVO_PROVIDER", "AVO_MODEL", "AVO_OLLAMA_CLOUD_API_KEY"),
     "openai": ("AVO_PROVIDER", "AVO_MODEL", "AVO_OPENAI_API_KEY"),
     "anthropic": ("AVO_PROVIDER", "AVO_MODEL", "AVO_ANTHROPIC_API_KEY"),
     "minimax": ("AVO_PROVIDER", "AVO_MODEL", "AVO_MINIMAX_API_KEY"),
@@ -65,6 +72,7 @@ class DoctorReport:
     missing_vars: tuple[str, ...]
     config_error: str | None
     extra_vars: tuple[str, ...]
+    security: AvoSecurityConfig | None = None
 
     @property
     def ok(self) -> bool:
@@ -85,11 +93,14 @@ def _endpoint_for(env: Mapping[str, str], provider: str) -> tuple[str | None, st
 
     fallback_model = env.get("AVO_MODEL", "x")
 
-    if provider == "ollama":
+    if provider in ("ollama", "ollama-cloud"):
         from avo.providers.ollama import OllamaConfig
 
         try:
-            ollama_cfg: Any = OllamaConfig.from_avo_env(env, fallback_model=fallback_model)
+            cloud_env = dict(env)
+            if provider == "ollama-cloud":
+                cloud_env.setdefault("AVO_OLLAMA_BASE_URL", "https://ollama.com")
+            ollama_cfg: Any = OllamaConfig.from_avo_env(cloud_env, fallback_model=fallback_model)
         except (ValueError, KeyError):
             return None, None
         return ollama_cfg.endpoint, None
@@ -200,7 +211,16 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
     Never raises; surfaces every failure as a field on :class:`DoctorReport`.
     """
 
-    env: Mapping[str, str] = os.environ if environ is None else environ
+    env_dict = dict(os.environ if environ is None else environ)
+    if environ is None and ("AVO_PROVIDER" not in env_dict or not env_dict["AVO_PROVIDER"].strip()):
+        try:
+            from avo.cli_setup import load_global_avo_config
+
+            for k, v in load_global_avo_config().items():
+                env_dict.setdefault(k, v)
+        except Exception:
+            pass
+    env: Mapping[str, str] = env_dict
 
     provider = _provider_for(env)
     model = env.get("AVO_MODEL", "").strip() or None
@@ -223,14 +243,27 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
                 env.get("OPENROUTER_API_KEY", "").strip() or get_stored_token("openrouter")
             ):
                 continue
+            if var == "AVO_OLLAMA_CLOUD_API_KEY" and (
+                env.get("AVO_OLLAMA_API_KEY", "").strip()
+                or get_stored_token("ollama-cloud")
+                or get_stored_token("ollama")
+            ):
+                continue
             if not env.get(var, "").strip():
                 missing.append(var)
 
-        api_key_var = f"AVO_{provider.upper()}_API_KEY"
+        api_key_var = (
+            "AVO_OLLAMA_CLOUD_API_KEY"
+            if provider == "ollama-cloud"
+            else f"AVO_{provider.upper()}_API_KEY"
+        )
         has_api_key = bool(
             env.get(api_key_var, "").strip()
+            or (provider == "ollama-cloud" and env.get("AVO_OLLAMA_API_KEY", "").strip())
             or (provider == "openrouter" and env.get("OPENROUTER_API_KEY", "").strip())
             or (provider == "openrouter" and get_stored_token("openrouter"))
+            or (provider == "ollama-cloud" and get_stored_token("ollama"))
+            or (provider == "ollama-cloud" and get_stored_token("ollama-cloud"))
         )
 
         base_url_key = f"AVO_{provider.upper()}_BASE_URL"
@@ -246,6 +279,14 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
 
     extra = tuple(sorted(k for k in env if k.startswith("AVO_") and k not in set(missing)))
 
+    security: AvoSecurityConfig | None
+    try:
+        security = resolve_security_config(environ=env_dict)
+    except Exception as exc:
+        security = None
+        if config_error is None:
+            config_error = str(exc)
+
     return DoctorReport(
         provider=provider,
         model=model,
@@ -256,6 +297,7 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
         missing_vars=tuple(missing),
         config_error=config_error,
         extra_vars=extra,
+        security=security,
     )
 
 
@@ -287,6 +329,26 @@ def render_report(report: DoctorReport, *, out: IO[str]) -> None:
 
     out.write(f"API key configured: {'yes' if report.has_api_key else 'no'}\n")
 
+    if report.security is not None:
+        out.write("security configuration:\n")
+        for line in render_security_diagnostics(report.security).splitlines():
+            out.write(f"  {line}\n")
+
+    try:
+        from avo.attachments import AttachmentPolicy
+        from avo.model_discovery import _cache_root
+
+        limits = AttachmentPolicy()
+        out.write(f"model catalog cache: {_cache_root(os.environ)}\n")
+        out.write(
+            "attachments: "
+            f"text={limits.max_file_bytes // 1024**2}MiB, "
+            f"image={limits.max_image_bytes // 1024**2}MiB, "
+            f"total={limits.max_total_bytes // 1024**2}MiB\n"
+        )
+    except Exception:
+        pass
+
     if report.missing_vars:
         out.write("missing variables:\n")
         for var in report.missing_vars:
@@ -295,12 +357,22 @@ def render_report(report: DoctorReport, *, out: IO[str]) -> None:
     if report.config_error:
         out.write(f"config error: {report.config_error}\n")
 
+    credential_backend_name = "unavailable"
+    try:
+        from avo.credentials import resolve_credential_backend
+
+        credential_backend_name = resolve_credential_backend().describe()
+        out.write(f"credential backend: {credential_backend_name}\n")
+    except Exception as exc:
+        out.write(f"credential backend: unavailable ({type(exc).__name__})\n")
+
     from avo.oauth.store import load_all_credentials
 
     try:
         stored_creds = load_all_credentials()
         if stored_creds:
-            out.write("\nstored credentials (auth.json):\n")
+            label = "auth.json" if credential_backend_name == "file-permissions" else "os-keyring"
+            out.write(f"\nstored credentials ({label}):\n")
             for _key, cred in sorted(stored_creds.items()):
                 acct = f" ({cred.account})" if cred.account else ""
                 exp = ""

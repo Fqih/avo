@@ -9,6 +9,7 @@ in separate modules.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import subprocess
 from pathlib import Path
@@ -17,7 +18,15 @@ import pytest
 
 from avo import ModelResponse, StopReason, ToolCall
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
-from avo.chat import build_chat_context, run_repl
+from avo.chat import (
+    _alternate_screen,
+    _highlight_prompt_input,
+    _place_completion_menu_above,
+    _position_prompt_at_bottom,
+    _prompt_toolkit_prompt,
+    build_chat_context,
+    run_repl,
+)
 from avo.config import ConfigError
 from avo.exceptions import AvoError
 from avo.providers.base import ModelProvider
@@ -34,8 +43,10 @@ class _ScriptedProvider(ModelProvider):
     def __init__(self, script: list[ModelResponse]) -> None:
         self.script = list(script)
         self.calls: list[str] = []
+        self.requests = []
 
     async def generate(self, request):  # type: ignore[override]
+        self.requests.append(request)
         self.calls.append(request.messages[-1].get("content", ""))  # type: ignore[union-attr]
         if not self.script:
             from avo.exceptions import FakeProviderExhaustedError
@@ -61,6 +72,147 @@ def _environ_with_ollama(model: str = "fake-test-model") -> dict[str, str]:
         "AVO_MODEL": model,
         "AVO_OLLAMA_BASE_URL": "http://example.invalid",
     }
+
+
+def test_prompt_position_targets_rows_above_toolbar() -> None:
+    out = io.StringIO()
+
+    _position_prompt_at_bottom(out, terminal_rows=40)
+
+    assert out.getvalue() == "\033[38;1H"
+
+
+def test_alternate_screen_restores_terminal_buffer() -> None:
+    out = io.StringIO()
+
+    with _alternate_screen(out, enabled=True):
+        out.write("inside Avo")
+
+    assert out.getvalue() == "\033[?1049h\033[2J\033[Hinside Avo\033[?1049l"
+
+
+def test_alternate_screen_restores_after_exception() -> None:
+    out = io.StringIO()
+
+    with pytest.raises(RuntimeError), _alternate_screen(out, enabled=True):
+        raise RuntimeError("leave the app")
+
+    assert out.getvalue().endswith("\033[?1049l")
+
+
+@pytest.mark.asyncio
+async def test_interactive_repl_uses_alternate_screen(
+    chat_env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _TTYBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    async def fake_repl_body(**kwargs: object) -> int:
+        cast_stdout = kwargs["stdout"]
+        assert isinstance(cast_stdout, _TTYBuffer)
+        cast_stdout.write("body")
+        return 7
+
+    monkeypatch.setattr("avo.chat._run_repl", fake_repl_body)
+    stdin = _TTYBuffer()
+    stdout = _TTYBuffer()
+    monkeypatch.setattr("sys.stdin", stdin)
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        environ=_environ_with_ollama(),
+    )
+
+    assert code == 7
+    assert stdout.getvalue() == "\033[?1049h\033[2J\033[Hbody\033[?1049l"
+
+
+def test_prompt_input_window_uses_compact_highlight() -> None:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.layout.controls import BufferControl
+
+    session = PromptSession(reserve_space_for_menu=0)
+    _highlight_prompt_input(session)
+
+    input_windows = [
+        window
+        for window in session.layout.find_all_windows()
+        if isinstance(window.content, BufferControl)
+        and window.content.buffer is session.default_buffer
+    ]
+    assert input_windows
+    assert all(window.style == "class:avo-input" for window in input_windows)
+
+
+def test_prompt_toolkit_prompt_parses_ansi_colors() -> None:
+    from prompt_toolkit.formatted_text import to_formatted_text
+
+    rendered = to_formatted_text(
+        _prompt_toolkit_prompt("\033[1;36m" + chr(0x276F) + "\033[0m ", True)
+    )
+
+    assert "\033" not in "".join(text for _style, text in rendered)
+    assert chr(0x276F) in "".join(text for _style, text in rendered)
+
+
+def test_completion_menu_is_positioned_above_the_input() -> None:
+    from prompt_toolkit import PromptSession
+
+    session = PromptSession(reserve_space_for_menu=0)
+    _place_completion_menu_above(session)
+
+    dynamic = session.layout.container.children[0].content.children[1].children[1]
+    float_container = dynamic.get_container()
+    completion_float = float_container.floats[0]
+    assert completion_float.bottom == 1
+    assert completion_float.xcursor is False
+    assert completion_float.ycursor is False
+
+
+def test_model_picker_options_keep_model_identity_separate_from_display() -> None:
+    from avo.chat_turn import _model_picker_options
+
+    options = _model_picker_options(
+        ("gpt-5.6-sol", "gpt-5.6-luna"),
+        current="gpt-5.6-luna",
+        recommended="gpt-5.6-sol",
+    )
+
+    assert options == (
+        ("1. gpt-5.6-sol (recommended)", "gpt-5.6-sol"),
+        ("2. gpt-5.6-luna (current)", "gpt-5.6-luna"),
+    )
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, asyncio.CancelledError])
+@pytest.mark.asyncio
+async def test_repl_handles_interrupt_during_turn_without_traceback(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt: type[BaseException],
+) -> None:
+    async def interrupt_turn(*args: object, **kwargs: object) -> None:
+        raise interrupt
+
+    monkeypatch.setattr("avo.chat._run_turn", interrupt_turn)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=io.StringIO("hello\n/quit\n"),
+        stdout=stdout,
+        stderr=stderr,
+        environ=_environ_with_ollama(),
+    )
+
+    assert code == 0
+    assert "interrupted" in stdout.getvalue()
+    assert "Traceback" not in stdout.getvalue() + stderr.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +293,7 @@ def test_build_chat_context_constructs_runtime_with_tools(
         "git_status",
         "git_diff",
         "git_commit",
+        "run_terminal",
     }
 
 
@@ -234,6 +387,33 @@ async def test_repl_runs_one_turn_per_non_empty_line(
             await _run_turn(ctx, line, stdout, stderr)
 
     assert scripted.calls == ["hello", "world"]
+    assert scripted.requests[0].messages[0]["role"] == "system"
+    assert "You are Avo" in scripted.requests[0].messages[0]["content"]
+    assert scripted.requests[0].messages[-1] == {"role": "user", "content": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_repl_attaches_workspace_files_to_the_user_message(
+    chat_env: dict[str, Path],
+) -> None:
+    attachment = chat_env["workspace"] / "snippet.py"
+    attachment.write_text("print('attached')\n", encoding="utf-8")
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=_environ_with_ollama(),
+    )
+    scripted = _ScriptedProvider([ModelResponse(content="reviewed")])
+    ctx.runtime.provider = scripted
+
+    from avo.chat import _run_turn
+
+    await _run_turn(ctx, "review @snippet.py", io.StringIO(), io.StringIO())
+
+    content = scripted.requests[0].messages[-1]["content"]
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "review"}
+    assert "--- snippet.py ---" in content[1]["text"]
 
 
 @pytest.mark.asyncio

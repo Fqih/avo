@@ -19,6 +19,7 @@ import pytest
 
 from avo import workspace_write
 from avo.app_tools.workspace import WorkspacePathError
+from avo.web_http import WebSecurityConfig, WebSecurityError, authenticate_mutation
 from avo.web_ui import AvoWebHandler, AvoWebServer, run_web_dashboard
 
 
@@ -60,6 +61,48 @@ def request(server, method="POST", path="/api/persona", data=None, headers=None)
 
 def bearer(server):
     return {"Authorization": f"Bearer {server.auth_token}"}
+
+
+def test_standalone_mutation_gate_requires_bearer_origin_csrf_and_confirmation() -> None:
+    base = {
+        "Authorization": "Bearer token",
+        "Origin": "http://127.0.0.1:43111",
+        "X-CSRF-Token": "csrf",
+    }
+    authenticate_mutation(
+        base,
+        expected_token="token",
+        csrf_token="csrf",
+        allowed_origin="http://127.0.0.1:43111",
+        confirmation=True,
+    )
+    with pytest.raises(WebSecurityError, match="Authentication"):
+        authenticate_mutation(
+            {**base, "Authorization": "Bearer wrong"},
+            expected_token="token",
+            csrf_token="csrf",
+            allowed_origin="http://127.0.0.1:43111",
+        )
+    with pytest.raises(WebSecurityError, match="CSRF"):
+        authenticate_mutation(
+            {**base, "X-CSRF-Token": "wrong"},
+            expected_token="token",
+            csrf_token="csrf",
+            allowed_origin="http://127.0.0.1:43111",
+        )
+    with pytest.raises(WebSecurityError, match="confirmation"):
+        authenticate_mutation(
+            {key: value for key, value in base.items() if key != "Origin"},
+            expected_token="token",
+            csrf_token="csrf",
+            allowed_origin="http://127.0.0.1:43111",
+            confirmation=False,
+        )
+
+
+def test_web_security_config_rejects_wildcard_origins() -> None:
+    with pytest.raises(ValueError, match="wildcard"):
+        WebSecurityConfig(allowed_origin="*")
 
 
 @pytest.mark.parametrize("confirmation", [None, False, "true", 1])

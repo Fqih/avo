@@ -13,7 +13,7 @@ import os
 
 import pytest
 
-from avo import ModelRequest, ToolMetadata
+from avo import ModelRequest
 from avo.config import ConfigError, build_provider_from_env
 from avo.exceptions import ProviderError
 
@@ -114,23 +114,12 @@ async def openai_provider():
 
 
 def simple_request(*, step: int = 1) -> ModelRequest:
-    """Build a one-message user turn with one no-op tool registered."""
+    """Build a plain text request without tools."""
 
     return ModelRequest(
         run_id="integration-run-1",
         step=step,
         messages=[{"role": "user", "content": "Reply with the single word: pong"}],
-        tools=[
-            ToolMetadata(
-                name="echo",
-                description="Echo the input back verbatim.",
-                input_schema={
-                    "type": "object",
-                    "properties": {"text": {"type": "string"}},
-                    "required": ["text"],
-                },
-            )
-        ],
     )
 
 
@@ -156,7 +145,7 @@ def ollama_reachable(url: str) -> bool:
     except ModuleNotFoundError:
         return False
     try:
-        with httpx.Client(timeout=2.0) as client:
+        with httpx.Client(timeout=2.0, trust_env=False) as client:
             response = client.get(f"{url.rstrip('/')}/api/tags")
     except (httpx.HTTPError, OSError):
         return False
@@ -171,7 +160,7 @@ def ollama_has_model(url: str, model: str) -> bool:
     except ModuleNotFoundError:
         return False
     try:
-        with httpx.Client(timeout=2.0) as client:
+        with httpx.Client(timeout=2.0, trust_env=False) as client:
             response = client.get(f"{url.rstrip('/')}/api/tags")
             if response.status_code != 200:
                 return False

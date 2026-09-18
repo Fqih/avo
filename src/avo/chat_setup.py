@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import getpass
 from collections.abc import Callable
-from typing import TextIO
+from typing import Any, TextIO
+
+from avo.config import available_models
 
 
 class _SetupAborted(Exception):
@@ -61,17 +63,29 @@ _PROVIDER_CATALOG: dict[str, dict[str, str | bool]] = {
         "default_model": "gemini-2.5-pro",
         "needs_api_key": False,
     },
+    "claude-account": {
+        "label": "Claude account",
+        "default_model": "claude-sonnet-4-6",
+        "needs_api_key": False,
+    },
+    "ollama-cloud": {
+        "label": "Ollama Cloud",
+        "default_model": "qwen3-coder:480b-cloud",
+        "needs_api_key": True,
+    },
 }
 
 _PROVIDER_DESCRIPTIONS: dict[str, str] = {
     "ollama": "Local free models via Ollama daemon",
     "openai": "OpenAI cloud models (GPT-4o, o3, etc.)",
-    "anthropic": "Anthropic cloud models (Claude 3.7 Sonnet)",
+    "anthropic": "Anthropic API or eligible account (access depends on quota)",
     "minimax": "MiniMax cloud models (MiniMax-M3)",
     "openrouter": "OpenRouter (Free tier models & 300+ endpoints)",
     "router": "Multi-Provider Fallback Router (Auto failover: Ollama -> OpenRouter)",
-    "codex": "ChatGPT subscription via Codex backend (subscription opt-in)",
-    "gemini-cli": "Google account subscription via Cloud Code (subscription opt-in)",
+    "codex": "ChatGPT/Codex account (free or paid quota; browser login)",
+    "gemini-cli": "Google account (free or paid quota; browser login)",
+    "claude-account": "Claude account (free or paid access; browser login)",
+    "ollama-cloud": "Remote Ollama models (API key/device key; cloud quota)",
 }
 
 
@@ -144,11 +158,166 @@ def _prompt_required(
         out_stream.flush()
 
 
+def _model_choices(provider_key: str, default: str) -> tuple[str, ...]:
+    """Return the picker choices with the provider's onboarding default first."""
+
+    aliases = {
+        "gemini-cli": "gemini_cli",
+        "claude-account": "anthropic",
+    }
+    catalog = available_models(aliases.get(provider_key, provider_key))
+    return (default, *(model for model in catalog if model != default))
+
+
+def _prompt_model(
+    stdin: TextIO,
+    stdout: TextIO,
+    provider_key: str,
+    *,
+    default: str,
+) -> str:
+    """Pick a known model by number while retaining an expert custom-name escape hatch."""
+
+    choices = _model_choices(provider_key, default)
+    terminal = (
+        hasattr(stdin, "isatty")
+        and stdin.isatty()
+        and hasattr(stdout, "isatty")
+        and stdout.isatty()
+    )
+    if terminal and provider_key == "gemini-cli":
+        try:
+            from avo.providers.gemini_cli import discover_antigravity_models
+
+            discovered = discover_antigravity_models()
+        except Exception:
+            discovered = ()
+        if discovered:
+            choices = tuple(item.model_id for item in discovered)
+            if default not in choices:
+                default = choices[0]
+
+    if terminal:
+        selected = _prompt_model_tui(stdin, stdout, choices, default=default)
+        if selected is not None:
+            return selected
+
+    stdout.write("\nAvailable models (actual access depends on account/quota):\n")
+    for index, model in enumerate(choices, start=1):
+        suffix = " (recommended)" if model == default else ""
+        stdout.write(f"  {index}. {model}{suffix}\n")
+    stdout.flush()
+
+    raw = _prompt_optional(
+        stdin,
+        stdout,
+        "Select model number or enter a custom model name",
+        default="1",
+    ).strip()
+    if raw.isdigit():
+        index = int(raw)
+        if 1 <= index <= len(choices):
+            return choices[index - 1]
+        stdout.write(f"model number must be between 1 and {len(choices)}; using {default}\n")
+        stdout.flush()
+        return default
+    return raw or default
+
+
+def _prompt_model_tui(
+    stdin: TextIO,
+    stdout: TextIO,
+    choices: tuple[str, ...],
+    *,
+    default: str,
+) -> str | None:
+    """Open the onboarding model picker when Avo is running in a terminal."""
+
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.completion import Completer, Completion
+        from prompt_toolkit.input import create_input
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.output import create_output
+        from prompt_toolkit.styles import Style
+    except ImportError:
+        return None
+
+    labels = {
+        model: f"{index}. {model}{' (recommended)' if model == default else ''}"
+        for index, model in enumerate(choices, start=1)
+    }
+
+    class ModelCompleter(Completer):
+        def get_completions(self, document: Any, complete_event: Any) -> Any:
+            query = document.text_before_cursor.lower()
+            for model in choices:
+                label = labels[model]
+                if not query or query in label.lower():
+                    yield Completion(
+                        model,
+                        start_position=-len(document.text_before_cursor),
+                        display=label,
+                    )
+
+    bindings = KeyBindings()
+
+    @bindings.add("down")
+    def _next(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_next()
+
+    @bindings.add("up")
+    def _previous(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_previous()
+
+    @bindings.add("escape")
+    def _cancel(event: Any) -> None:
+        event.app.exit(exception=KeyboardInterrupt)
+
+    stdout.write("\nSelect a model · ↑/↓ choose · Enter select · type to search · Esc cancel\n")
+    stdout.flush()
+    session: Any = PromptSession(
+        input=create_input(stdin),
+        output=create_output(stdout),
+        completer=ModelCompleter(),
+        complete_while_typing=True,
+        reserve_space_for_menu=min(8, max(1, len(choices))),
+        erase_when_done=True,
+        key_bindings=bindings,
+        style=Style.from_dict(
+            {
+                "completion-menu.completion": "bg:#20242b #d8dee9",
+                "completion-menu.completion.current": "bg:#42b883 #101418 bold",
+                "scrollbar.background": "bg:#20242b",
+                "scrollbar.button": "bg:#42b883",
+            }
+        ),
+    )
+    try:
+        selected = session.prompt(
+            "  > ",
+            pre_run=lambda: session.default_buffer.start_completion(select_first=True),
+        )
+    except (EOFError, KeyboardInterrupt):
+        stdout.write("\nUsing the recommended model.\n")
+        return default
+    return selected.strip() if selected.strip() in choices else default
+
+
 def interactive_first_run_setup(
     stdin: TextIO,
     stdout: TextIO,
     *,
     secret_reader: Callable[[str], str] | None = None,
+    vendor_login: Callable[[str], bool] | None = None,
 ) -> dict[str, str] | None:
     """Prompt the operator through provider, API key, and model selection.
 
@@ -192,7 +361,7 @@ def interactive_first_run_setup(
         provider_label = str(spec["label"])
 
         env: dict[str, str] = {"AVO_PROVIDER": provider_key}
-        uppercase_key = provider_key.upper()
+        uppercase_key = provider_key.upper().replace("-", "_")
 
         store_key = {
             "anthropic": "claude",
@@ -200,18 +369,31 @@ def interactive_first_run_setup(
             "gemini": "gemini",
             "codex": "codex",
             "gemini-cli": "gemini",
+            "claude-account": "claude",
+            "ollama-cloud": "ollama",
         }.get(provider_key, provider_key)
 
-        if provider_key in ("codex", "gemini-cli"):
+        if provider_key in ("codex", "gemini-cli", "claude-account"):
             env["AVO_ALLOW_SUBSCRIPTION"] = "1"
             from avo.oauth.store import get_credential
 
             stored = get_credential(store_key)
             if stored is None:
-                stdout.write(
-                    f"\nNote: No stored {store_key} login found. "
-                    f"Run 'avo login {store_key}' to authenticate.\n"
-                )
+                if vendor_login is not None:
+                    stdout.write(
+                        f"\nOpening the official {provider_label} login in your browser...\n"
+                    )
+                    stdout.flush()
+                    vendor_login(store_key)
+                    stored = get_credential(store_key)
+                if stored is None:
+                    stdout.write(
+                        f"\nNote: No stored {store_key} login found. "
+                        f"Run 'avo login {store_key}' to authenticate.\n"
+                    )
+
+            if provider_key == "claude-account":
+                env["AVO_PROVIDER"] = "anthropic"
 
         if spec["needs_api_key"]:
             from avo.oauth.store import Credential, get_credential, store_credential
@@ -350,7 +532,7 @@ def interactive_first_run_setup(
 
         if provider_key != "router":
             default_model = str(spec["default_model"])
-            model = _prompt_optional(stdin, stdout, "Model", default=default_model).strip()
+            model = _prompt_model(stdin, stdout, provider_key, default=default_model)
             env["AVO_MODEL"] = model or default_model
 
         stdout.write(f"\nProvider configured: {provider_label} ({env['AVO_MODEL']})\n")
