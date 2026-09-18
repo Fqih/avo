@@ -31,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read-only tool boundaries for delegated explorers.
 - Added deterministic event-ledger replay with request fingerprints, durable
   tool-result validation, `avo runs replay RUN_ID --json`, and `/replay`.
+- Added canonical security configuration resolution with source-aware `avo
+  doctor` diagnostics across permission, sandbox, plugin, and web settings.
+- Added capability metadata and non-escalating child-agent policies, final
+  workspace containment checks, required-sandbox enforcement, and bounded
+  execution/network defaults.
+- Added plugin metadata previews, explicit operator confirmation, atomic index
+  publication, and local web mutation protection with bearer, origin, CSRF,
+  and confirmation gates.
+- Added Milestone Three migration guidance and API/CLI documentation for
+  resume versus replay, host versus sandbox execution, OAuth/API keys, and
+  permission protection versus encryption.
 
 ## [0.7.2] - 2026-09-18
 

@@ -223,24 +223,24 @@
 - Modify only files required by failing checks.
 - Update: `CHANGELOG.md`, `docs/superpowers/plans/2026-09-18-milestone-three.md`
 
-- [ ] **Step 1: Run the Milestone 3 focused suite.**
+- [x] **Step 1: Run the Milestone 3 focused suite.**
 
   Run: `python -m pytest -q tests/test_config_resolver.py tests/test_capabilities.py tests/test_sandbox_policy.py tests/test_plugin_policy.py tests/test_web_security.py tests/test_doctor.py tests/test_delegation.py tests/test_chat_repl.py`
 
-- [ ] **Step 2: Run repository quality gates.**
+- [x] **Step 2: Run repository quality gates.**
 
   Run: `ruff check . && ruff format --check . && python -m mypy src/avo && bandit -r src/avo -c pyproject.toml --severity-level medium && git diff --check`
 
-- [ ] **Step 3: Run the full suite with a bounded timeout.**
+- [x] **Step 3: Run the full suite with a bounded timeout.**
 
   Run: `timeout 90s python -m pytest -q`
 
   Report OAuth callback/refresh waits separately from product assertion failures if the offline environment cannot complete them.
 
-- [ ] **Step 4: Run build and repository-safe secret scan.**
+- [x] **Step 4: Run build and repository-safe secret scan.**
 
   Run: `python -m build` and scan tracked source/docs for credential-shaped literals, excluding existing redaction fixtures with an explicit report.
 
-- [ ] **Step 5: Review status, changelog, and commits.**
+- [x] **Step 5: Review status, changelog, and commits.**
 
   Confirm `.avo/` remains untracked and untouched, no secrets were added, the public runtime/provider protocols are unchanged, and all completed plan steps are checked.
