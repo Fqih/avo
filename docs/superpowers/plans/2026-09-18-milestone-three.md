@@ -142,23 +142,23 @@
 - `PluginPolicy(editable_allowed: bool = False, activation_allowed: bool = False)`.
 - `install(..., confirm: bool = False)` defaults to non-editable and refuses mutation without explicit confirmation.
 
-- [ ] **Step 1: Write failing plugin trust tests.**
+- [x] **Step 1: Write failing plugin trust tests.**
 
   Assert metadata inspection is read-only, install preview includes source/groups/version, default editable mode is false, missing or incorrect confirmation performs no clone/pip/index write, index replacement is atomic, and one broken plugin does not prevent core startup.
 
-- [ ] **Step 2: Run tests and verify RED.**
+- [x] **Step 2: Run tests and verify RED.**
 
   Run: `python -m pytest -q tests/test_plugin_policy.py tests/test_cli_plugins.py`
 
-- [ ] **Step 3: Implement policy and atomic index writes.**
+- [x] **Step 3: Implement policy and atomic index writes.**
 
   Keep legacy list/show/remove behavior. Add explicit `--confirm`/interactive confirmation at the CLI boundary and reject confirmation values originating from model/agent text. Store groups and activation state in the index without credentials.
 
-- [ ] **Step 4: Add chat/plugin command coverage.**
+- [x] **Step 4: Add chat/plugin command coverage.**
 
   Ensure `/plugin install` shows a preview and stops for confirmation; agent-delegated prompts cannot invoke install implicitly.
 
-- [ ] **Step 5: Run focused tests and commit.**
+- [x] **Step 5: Run focused tests and commit.**
 
   Run: `python -m pytest -q tests/test_plugin_policy.py tests/test_cli_plugins.py tests/test_chat_repl.py`
 
