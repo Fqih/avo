@@ -19,6 +19,7 @@ import pytest
 from avo import ModelResponse, StopReason, ToolCall
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
 from avo.chat import (
+    _alternate_screen,
     _highlight_prompt_input,
     _place_completion_menu_above,
     _position_prompt_at_bottom,
@@ -79,6 +80,55 @@ def test_prompt_position_targets_rows_above_toolbar() -> None:
     _position_prompt_at_bottom(out, terminal_rows=40)
 
     assert out.getvalue() == "\033[38;1H"
+
+
+def test_alternate_screen_restores_terminal_buffer() -> None:
+    out = io.StringIO()
+
+    with _alternate_screen(out, enabled=True):
+        out.write("inside Avo")
+
+    assert out.getvalue() == "\033[?1049h\033[2J\033[Hinside Avo\033[?1049l"
+
+
+def test_alternate_screen_restores_after_exception() -> None:
+    out = io.StringIO()
+
+    with pytest.raises(RuntimeError), _alternate_screen(out, enabled=True):
+        raise RuntimeError("leave the app")
+
+    assert out.getvalue().endswith("\033[?1049l")
+
+
+@pytest.mark.asyncio
+async def test_interactive_repl_uses_alternate_screen(
+    chat_env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _TTYBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    async def fake_repl_body(**kwargs: object) -> int:
+        cast_stdout = kwargs["stdout"]
+        assert isinstance(cast_stdout, _TTYBuffer)
+        cast_stdout.write("body")
+        return 7
+
+    monkeypatch.setattr("avo.chat._run_repl", fake_repl_body)
+    stdin = _TTYBuffer()
+    stdout = _TTYBuffer()
+    monkeypatch.setattr("sys.stdin", stdin)
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        environ=_environ_with_ollama(),
+    )
+
+    assert code == 7
+    assert stdout.getvalue() == "\033[?1049h\033[2J\033[Hbody\033[?1049l"
 
 
 def test_prompt_input_window_uses_compact_highlight() -> None:

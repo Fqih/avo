@@ -1,6 +1,6 @@
 # Avo API Reference
 
-**Package:** `avo` **Version:** `0.7.1` (`src/avo/__init__.py: __version__ = "0.7.1"`)
+**Package:** `avo` **Version:** `0.7.2` (`src/avo/__init__.py: __version__ = "0.7.2"`)
 **Python:** `>=3.11` **Core dependency:** `pydantic>=2.8,<3` (only one)
 **Stable ABI target:** `0.2.0` (`_STABLE_ABI` in `src/avo/__init__.py`)
 
@@ -1371,7 +1371,7 @@ it).
 
 ```python
 def serve_stdio(registry: ToolRegistry, *, server_name: str = "avo",
-                server_version: str = "0.7.1", workspace_root=None,
+                server_version: str = "0.7.2", workspace_root=None,
                 read_fn=None, write_fn=None) -> None
 async def serve_stdio_async(...)   # same parameters
 
@@ -1381,7 +1381,7 @@ def build_default_registry() -> ToolRegistry
 
 class AvoMcpServer:
     def __init__(self, registry: ToolRegistry, *, server_name: str = "avo",
-                 server_version: str = "0.7.1", workspace_root=None) -> None
+                 server_version: str = "0.7.2", workspace_root=None) -> None
     def serve_stdio(self, *, read_fn=None, write_fn=None) -> None
     def run_forever(self, ...) -> None      # asyncio.run wrapper
 ```
@@ -2146,6 +2146,6 @@ Settings of record (`pyproject.toml`):
 
 ---
 
-*Generated from `src/avo/` at version `0.7.1`. If you add a public
+*Generated from `src/avo/` at version `0.7.2`. If you add a public
 symbol, an env var, a state, or an event and this file does not
 mention it, this file is out of date — update it in the same PR.*

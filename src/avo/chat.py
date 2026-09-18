@@ -25,7 +25,7 @@ import shlex
 import shutil
 import sys
 from collections.abc import Callable, Sequence
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO, cast
@@ -441,7 +441,69 @@ def build_chat_context(
     )
 
 
+@contextmanager
+def _alternate_screen(out_stream: TextIO, *, enabled: bool) -> Any:
+    """Temporarily run Avo in the terminal's alternate screen buffer.
+
+    The alternate buffer gives the CLI an application-like canvas without
+    destroying the shell's scrollback.  The ``finally`` block is important:
+    it restores the shell even when the REPL exits through EOF, Ctrl+C, or an
+    unexpected exception.
+    """
+
+    if not enabled:
+        yield
+        return
+
+    out_stream.write("\033[?1049h\033[2J\033[H")
+    out_stream.flush()
+    try:
+        yield
+    finally:
+        out_stream.write("\033[?1049l")
+        out_stream.flush()
+
+
 async def run_repl(
+    *,
+    database_path: Path,
+    workspace_root: Path,
+    stdin: TextIO | None = None,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+    environ: dict[str, str] | None = None,
+    prompt: str = "You > ",
+    secret_reader: Callable[[str], str] | None = None,
+    session_id: str | None = None,
+    force_new_session: bool = False,
+    resume_latest: bool = False,
+) -> int:
+    """Run the REPL and restore the caller's terminal buffer on exit."""
+
+    in_stream = stdin or sys.stdin
+    out_stream = stdout or sys.stdout
+    is_interactive = (
+        (stdin is None or stdin is sys.stdin)
+        and hasattr(in_stream, "isatty")
+        and in_stream.isatty()
+    )
+    with _alternate_screen(out_stream, enabled=is_interactive):
+        return await _run_repl(
+            database_path=database_path,
+            workspace_root=workspace_root,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            environ=environ,
+            prompt=prompt,
+            secret_reader=secret_reader,
+            session_id=session_id,
+            force_new_session=force_new_session,
+            resume_latest=resume_latest,
+        )
+
+
+async def _run_repl(
     *,
     database_path: Path,
     workspace_root: Path,
@@ -546,9 +608,8 @@ async def run_repl(
             out_stream.write("No resumable sessions found; starting a new session.\n")
 
     if is_interactive:
-        # Starting `avo` must not erase the shell's existing scrollback.
-        # `/clear` remains the explicit command for clearing Avo's screen.
-        out_stream.write("\n")
+        # The public wrapper already put interactive sessions in a clean
+        # alternate screen buffer, so no separator is needed here.
         out_stream.flush()
     _print_header(out_stream, ctx, workspace_root, resumed_from=resumed_from)
     if resumed_from is not None:
@@ -774,6 +835,7 @@ __all__ = [
     "SLASH_COMMANDS",
     "_FIRST_RUN_MESSAGE",
     "ChatContext",
+    "_alternate_screen",
     "_clear_screen",
     "_compact_session_history",
     "_detect_shell_rc_path",

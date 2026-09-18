@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   persisted settings, provider wrapping, `SAVER_APPLIED` trace events, and
   reproducible benchmark results.
 
+## [0.7.2] - 2026-09-18
+
+### Fixed
+
+- Interactive `avo` sessions now use the terminal alternate screen buffer,
+  hiding previous shell commands while Avo is running and restoring the shell
+  view after `/quit`, EOF, or Ctrl+C without deleting scrollback.
+
 ## [0.7.1] - 2026-09-18
 
 ### Added
@@ -459,7 +467,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ruff check` + `ruff format --check` clean.
 - Coverage gate: `fail_under = 90`.
 
-[Unreleased]: https://github.com/Fqih/avo/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/Fqih/avo/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/Fqih/avo/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/Fqih/avo/compare/v0.1.7...v0.7.1
 [0.1.6]: https://github.com/Fqih/avo/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Fqih/avo/compare/v0.1.4...v0.1.5

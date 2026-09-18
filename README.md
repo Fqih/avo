@@ -83,7 +83,7 @@ $ export AVO_PROVIDER=combo
 $ export AVO_COMBO=coder
 $ avo
 
-       ▄██▄           Avo CLI 0.7.1
+       ▄██▄           Avo CLI 0.7.2
      ▄██████▄         Fqih (account quota)
     ███    ███        provider: combo · model: coder [account -> cheap -> free]
    ███  ▄▄  ███       workspace: ~/Project/Loopward
