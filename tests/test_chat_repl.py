@@ -243,6 +243,7 @@ def test_build_chat_context_constructs_runtime_with_tools(
         "git_status",
         "git_diff",
         "git_commit",
+        "run_terminal",
     }
 
 

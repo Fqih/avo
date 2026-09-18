@@ -206,7 +206,7 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
     """
 
     env_dict = dict(os.environ if environ is None else environ)
-    if "AVO_PROVIDER" not in env_dict or not env_dict["AVO_PROVIDER"].strip():
+    if environ is None and ("AVO_PROVIDER" not in env_dict or not env_dict["AVO_PROVIDER"].strip()):
         try:
             from avo.cli_setup import load_global_avo_config
 
