@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Milestone Three migration guidance and API/CLI documentation for
   resume versus replay, host versus sandbox execution, OAuth/API keys, and
   permission protection versus encryption.
+- Fixed CI's optional keyring type-check dependency and native workflow
+  bootstrap so native wheels build from the checkout without requiring a
+  previously published `avo-native` package.
 
 ## [0.7.2] - 2026-09-18
 
