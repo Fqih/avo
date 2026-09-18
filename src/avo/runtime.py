@@ -137,6 +137,7 @@ class AgentRuntime:
         task: str,
         *,
         system_prompt: str | None = None,
+        message_content: list[dict[str, JsonValue]] | None = None,
         user_state: dict[str, JsonValue] | None = None,
         run_id: str | None = None,
         stream_callback: Callable[[str], None] | None = None,
@@ -174,7 +175,12 @@ class AgentRuntime:
                             "content": "Relevant memories:\n- " + "\n- ".join(recalled),
                         }
                     )
-            messages.append({"role": "user", "content": task})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": cast(JsonValue, message_content if message_content else task),
+                }
+            )
             context = _RunContext(
                 run=record,
                 policy=self.policy,

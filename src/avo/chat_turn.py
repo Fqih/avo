@@ -17,6 +17,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any, TextIO
 
 from avo.app_tools.file_tools import bind_workspace
+from avo.attachments import AttachmentError, prepare_prompt
 from avo.chat_render import render_cooked_footer, render_thought_duration
 from avo.chat_session import render_session_row
 from avo.chat_stream import LiveAnswerPrinter, TerminalSpinner
@@ -320,8 +321,15 @@ async def _resume_chat_session(
 async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> None:
     """Execute one user turn against ``ctx.runtime``."""
 
+    try:
+        prepared = prepare_prompt(task, workspace_root=ctx.workspace.root)
+    except AttachmentError as exc:
+        err.write(f"attachment error: {exc}\n")
+        return
+
     ctx.session.record_user_turn(ctx.session_id, task)
-    effective_task = task
+    effective_task = prepared.text
+    message_content = prepared.content if prepared.attachments else None
     system_prompt = ctx.persona.render_system_prompt()
     started_at = monotonic()
     if ctx.pending_preamble is not None:
@@ -331,6 +339,10 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
             f"User's current message (continue directly without greeting):\n{effective_task}"
         )
         ctx.pending_preamble = None
+        if message_content is not None:
+            first = dict(message_content[0])
+            first["text"] = effective_task
+            message_content = [first, *message_content[1:]]
 
     spinner = TerminalSpinner(out, message="Thinking...")
     printer: LiveAnswerPrinter | None = None
@@ -361,6 +373,7 @@ async def _run_turn(ctx: ChatContext, task: str, out: TextIO, err: TextIO) -> No
                 result = await ctx.runtime.run(
                     effective_task,
                     system_prompt=system_prompt,
+                    message_content=message_content,
                     stream_callback=printer.feed if printer is not None else None,
                     stream_interrupt_callback=(
                         printer.on_interrupt if printer is not None else None

@@ -393,6 +393,30 @@ async def test_repl_runs_one_turn_per_non_empty_line(
 
 
 @pytest.mark.asyncio
+async def test_repl_attaches_workspace_files_to_the_user_message(
+    chat_env: dict[str, Path],
+) -> None:
+    attachment = chat_env["workspace"] / "snippet.py"
+    attachment.write_text("print('attached')\n", encoding="utf-8")
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=_environ_with_ollama(),
+    )
+    scripted = _ScriptedProvider([ModelResponse(content="reviewed")])
+    ctx.runtime.provider = scripted
+
+    from avo.chat import _run_turn
+
+    await _run_turn(ctx, "review @snippet.py", io.StringIO(), io.StringIO())
+
+    content = scripted.requests[0].messages[-1]["content"]
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "review"}
+    assert "--- snippet.py ---" in content[1]["text"]
+
+
+@pytest.mark.asyncio
 async def test_repl_quit_command_exits(
     chat_env: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
