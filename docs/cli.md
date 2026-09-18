@@ -32,6 +32,9 @@ and permission configuration.
 | `avo models ollama recommend` | Recommend models for local hardware              |
 | `avo models ollama pull MODEL` | Confirm and download a local model                |
 | `avo models ollama cloud` | Show remote Ollama Cloud guidance                    |
+| `avo models ollama cloud list` | List models exposed by the Cloud account       |
+| `avo models ollama cloud health` | Check Cloud availability                       |
+| `avo models ollama cloud usage` | Show optional Cloud quota metadata             |
 | `avo saver list` | List built-in token-saver presets. |
 | `avo saver show NAME` | Inspect a preset's style guide and compression pipeline. |
 | `avo saver use NAME` / `avo saver off` | Enable or disable the persisted saver choice. |
@@ -70,3 +73,15 @@ model name can still be entered for compatible or newly released endpoints.
 
 Use `/model` inside a chat to inspect the current provider's catalog and
 `/model NAME` to switch models for the next turn.
+
+### Dynamic catalogs and attachments
+
+Interactive `/model` first fetches the provider's live catalog, then uses a
+bounded cache when the provider is unavailable, and only then shows the
+maintained static catalog. The picker labels the source so a stale list is
+never mistaken for current account access.
+
+Paste or drag a workspace path into the prompt, or use `@path` / `file://path`.
+Use `@clipboard` for an image in the Wayland/X11 clipboard. Avo validates
+workspace containment, symlinks, file type, and size before sending content to
+the provider.

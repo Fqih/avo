@@ -52,7 +52,10 @@ extras, so you can install only the capabilities your deployment needs.
 ```
 
 ### 1. 🔑 Vendor Account Login & Universal Login
-Open the official **Claude**, **ChatGPT/Codex**, or **Google Gemini** login in your browser via standard PKCE flows (`avo login claude`, `avo login codex`, `avo login gemini`). Free and paid accounts can have different model access and quotas; Avo never claims that a plan is required or bypasses vendor limits. `AVO_ALLOW_SUBSCRIPTION=1` is an explicit opt-in for OAuth-backed inference. Tokens are stored as plaintext alongside API keys in `~/.config/avo/auth.json`, protected by `0600` file permissions rather than encryption, and refreshed automatically in the background with deduplication.
+Open the official **Claude**, **ChatGPT/Codex**, or **Google Gemini** login in your browser via standard PKCE flows (`avo login claude`, `avo login codex`, `avo login gemini`). Free and paid accounts can have different model access and quotas; Avo never claims that a plan is required or bypasses vendor limits. `AVO_ALLOW_SUBSCRIPTION=1` is an explicit opt-in for OAuth-backed inference. Tokens are stored in the permission-protected fallback file `~/.config/avo/auth.json`, or in the optional OS keyring when `AVO_CREDENTIAL_BACKEND=keyring`/`auto` is selected.
+
+Install `avo[keyring]` to enable the keyring backend. `avo doctor` reports the
+active backend without printing secrets.
 
 ### 2. 🔀 Multi-Tier Combo Routing & Quota Failover
 Never suffer crashed agent runs from HTTP 429 or exhausted token quotas again. Configure named combo profiles (`default`, `coder`, `budget`) where models are organized in priority order (`account` &rarr; `cheap API` &rarr; `free local floor`). Avo detects rate limits and credit exhaustion mid-turn, switches to the next tier, and continues streaming.
@@ -206,6 +209,23 @@ Inside the REPL:
 - Type `/diff` to inspect uncommitted workspace modifications.
 - Type `/model` to pick a specific standalone model.
 
+### Attach files and images
+
+Paste or drag a workspace path into the prompt, or make the attachment
+explicit with `@path` / `file://path`. Text and source files become labeled
+text blocks; PNG, JPEG, GIF, and WebP images are sent as multimodal blocks
+when the selected provider supports them. Use `@clipboard` to attach an
+image from the Wayland/X11 clipboard:
+
+```text
+review @src/avo/runtime.py and @tests/test_runtime.py
+describe @clipboard
+```
+
+Avo rejects symlink escapes, unsupported binary files, and oversized files
+before inference. Defaults are 2 MiB per text file, 10 MiB per image, and
+20 MiB total per turn.
+
 ---
 
 ### 4. Python API Example
@@ -319,7 +339,9 @@ avo
 ```
 
 When neither a proxy nor `agy` is available, Avo reports the missing
-transport instead of silently using a stale model catalog. The coding agent
+transport instead of silently using a stale model catalog. A live catalog is
+cached briefly for offline continuity and the interactive picker labels
+`live`, `cache`, `stale`, or `static` fallback. The coding agent
 also exposes a `run_terminal` tool for commands, tests, and linters in the
 active workspace; require explicit approval with
 `AVO_TOOLS_REQUIRE_APPROVAL=run_terminal` when needed.
@@ -340,6 +362,7 @@ active workspace; require explicit approval with
 | `avo models ollama recommend` | Recommend local models from this computer's hardware. |
 | `avo models ollama pull MODEL` | Show size and ask for confirmation before downloading locally. |
 | `avo models ollama cloud` | Show remote Ollama Cloud guidance; no local download. |
+| `avo models ollama cloud list|health|usage` | Inspect Cloud models, health, or optional quota metadata. |
 | `avo saver list` | List built-in token-saver presets. |
 | `avo saver show NAME` | Inspect a preset's style guide and compression pipeline. |
 | `avo saver use NAME` / `avo saver off` | Enable or disable the persisted saver choice. |

@@ -131,6 +131,17 @@ def test_render_report_shows_credential_backend() -> None:
     assert "credential backend: file-permissions" in out.getvalue()
 
 
+def test_render_report_shows_catalog_and_attachment_diagnostics() -> None:
+    report = run_doctor({"AVO_PROVIDER": "ollama", "AVO_MODEL": "llama3.1"})
+    out = io.StringIO()
+
+    render_report(report, out=out)
+
+    text = out.getvalue()
+    assert "model catalog cache:" in text
+    assert "attachments: text=2MiB, image=10MiB, total=20MiB" in text
+
+
 def test_render_report_not_ok_lists_missing() -> None:
     report = run_doctor({"AVO_PROVIDER": "minimax", "AVO_MODEL": "x"})
     out = io.StringIO()

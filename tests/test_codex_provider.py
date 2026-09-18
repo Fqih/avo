@@ -150,6 +150,37 @@ async def test_maps_system_and_tool_items() -> None:
 
 
 @pytest.mark.asyncio
+async def test_maps_image_content_to_responses_input_parts() -> None:
+    client = FakeClient(COMPLETED_TEXT)
+    p = CodexProvider(CodexConfig(model="m"), token_provider=_token, client=client)
+    await p.generate(
+        _req(
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "describe"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "AAAA",
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+    )
+    item = client.requests[0]["body"]["input"][0]
+    assert item["content"] == [
+        {"type": "input_text", "text": "describe"},
+        {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_empty_output_raises() -> None:
     p = CodexProvider(
         CodexConfig(model="m"),

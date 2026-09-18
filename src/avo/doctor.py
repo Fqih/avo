@@ -237,7 +237,11 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
                 env.get("OPENROUTER_API_KEY", "").strip() or get_stored_token("openrouter")
             ):
                 continue
-            if var == "AVO_OLLAMA_CLOUD_API_KEY" and get_stored_token("ollama"):
+            if var == "AVO_OLLAMA_CLOUD_API_KEY" and (
+                env.get("AVO_OLLAMA_API_KEY", "").strip()
+                or get_stored_token("ollama-cloud")
+                or get_stored_token("ollama")
+            ):
                 continue
             if not env.get(var, "").strip():
                 missing.append(var)
@@ -249,9 +253,11 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
         )
         has_api_key = bool(
             env.get(api_key_var, "").strip()
+            or (provider == "ollama-cloud" and env.get("AVO_OLLAMA_API_KEY", "").strip())
             or (provider == "openrouter" and env.get("OPENROUTER_API_KEY", "").strip())
             or (provider == "openrouter" and get_stored_token("openrouter"))
             or (provider == "ollama-cloud" and get_stored_token("ollama"))
+            or (provider == "ollama-cloud" and get_stored_token("ollama-cloud"))
         )
 
         base_url_key = f"AVO_{provider.upper()}_BASE_URL"
@@ -307,6 +313,21 @@ def render_report(report: DoctorReport, *, out: IO[str]) -> None:
         out.write(f"endpoint: {report.endpoint}\n")
 
     out.write(f"API key configured: {'yes' if report.has_api_key else 'no'}\n")
+
+    try:
+        from avo.attachments import AttachmentPolicy
+        from avo.model_discovery import _cache_root
+
+        limits = AttachmentPolicy()
+        out.write(f"model catalog cache: {_cache_root(os.environ)}\n")
+        out.write(
+            "attachments: "
+            f"text={limits.max_file_bytes // 1024**2}MiB, "
+            f"image={limits.max_image_bytes // 1024**2}MiB, "
+            f"total={limits.max_total_bytes // 1024**2}MiB\n"
+        )
+    except Exception:
+        pass
 
     if report.missing_vars:
         out.write("missing variables:\n")

@@ -114,12 +114,19 @@ avo models ollama pull qwen2.5-coder:7b
 
 # Cloud: remote models and account quota; no local download
 avo login ollama-cloud --key-stdin
-avo models ollama cloud
+avo models ollama cloud list
+avo models ollama cloud health
+avo models ollama cloud usage
 ```
 
 The recommendation is advisory and based on local CPU, RAM, GPU memory when
 available, and free disk space. Avo never silently downloads a multi-gigabyte
 model.
+
+Cloud discovery is read-only. `cloud list` reads the models exposed by the
+account, `health` checks the remote endpoint, and `usage` displays quota
+metadata only when the account exposes that optional endpoint. Avo never
+calls the local `/api/pull` flow for Cloud models.
 
 ## 5. Universal API Key Login
 

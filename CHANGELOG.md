@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added opt-in deterministic token savers with `avo saver list|show|use|off`,
   persisted settings, provider wrapping, `SAVER_APPLIED` trace events, and
   reproducible benchmark results.
+- Added live provider model catalogs with bounded cache/static fallback labels,
+  optional OS-keyring credentials, and read-only Ollama Cloud model/health/
+  usage inspection.
+- Added safe workspace file/image attachments via pasted or dragged paths,
+  `@clipboard`, size/containment validation, multimodal provider rendering,
+  and `avo doctor` attachment/catalog diagnostics.
 
 ## [0.7.2] - 2026-09-18
 
