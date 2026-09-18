@@ -38,27 +38,27 @@
 - `ModelCatalogCache(root: Path, *, ttl_seconds: int = 900, max_entries: int = 256)` exposes `load(provider: str) -> ModelCatalogResult | None` and `save(result: ModelCatalogResult) -> None`.
 - `normalize_model_ids(provider: str, raw: object) -> tuple[str, ...]` accepts only non-empty bounded strings and deduplicates deterministically.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   Cover normalization/deduplication, JSON cache round-trip, expired cache marked stale, bounded cache entries, provider-key path safety, and omission of credential-looking fields from serialized cache data.
 
-- [ ] **Step 2: Run the focused tests to verify RED**
+- [x] **Step 2: Run the focused tests to verify RED**
 
   Run: `python -m pytest -q tests/test_model_catalog_service.py`
 
   Expected: collection/import failures because the service types and cache do not exist.
 
-- [ ] **Step 3: Implement the minimal catalog service**
+- [x] **Step 3: Implement the minimal catalog service**
 
   Use frozen Pydantic/dataclass value objects, UTC timestamps, atomic replacement, mode `0600` cache files, and deterministic sorting by recommendation then label then model ID. Keep the existing hardware recommendation catalog as an input to `recommended` metadata rather than replacing it.
 
-- [ ] **Step 4: Run focused tests and quality checks**
+- [x] **Step 4: Run focused tests and quality checks**
 
   Run: `python -m pytest -q tests/test_model_catalog_service.py && python -m ruff check src/avo/model_catalog_service.py tests/test_model_catalog_service.py`
 
   Expected: all focused tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   `git add src/avo/model_catalog_service.py src/avo/model_catalog.py tests/test_model_catalog_service.py && git commit -m "feat: add provider-neutral model catalog cache"`
 
@@ -78,27 +78,27 @@
 - Adapters: `OllamaLocalDiscovery`, `OllamaCloudDiscovery`, `OpenAICompatibleDiscovery`, `GeminiCliDiscovery`; each returns normalized IDs and never includes auth headers in exceptions.
 - `_run_model_command` consumes `ModelCatalogResult` and displays source/stale status while preserving `/model NAME` compatibility.
 
-- [ ] **Step 1: Write failing adapter and picker tests**
+- [x] **Step 1: Write failing adapter and picker tests**
 
   Test OpenAI-compatible `/v1/models` normalization, Ollama `/api/tags`, live failure with fresh cache, stale fallback warning, static fallback labeling, and picker selection using the discovered model ID rather than the old static list.
 
-- [ ] **Step 2: Run focused tests to verify RED**
+- [x] **Step 2: Run focused tests to verify RED**
 
   Run: `python -m pytest -q tests/test_model_discovery.py tests/test_chat_repl.py -k "model or catalog"`
 
   Expected: failures for the missing discovery service and source metadata.
 
-- [ ] **Step 3: Implement adapters and integrate the picker**
+- [x] **Step 3: Implement adapters and integrate the picker**
 
   Reuse injected HTTP clients where existing providers already expose them, keep local Ollama proxy bypass behavior, and make `/model` degrade cleanly in non-TTY tests. Never reject a currently configured model solely because a vendor catalog is temporarily unavailable.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
   Run: `python -m pytest -q tests/test_model_discovery.py tests/test_chat_repl.py -k "model or catalog"`
 
   Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   `git add src/avo/model_discovery.py src/avo/chat_turn.py src/avo/config.py src/avo/provider_catalog.py tests/test_model_discovery.py tests/test_chat_repl.py && git commit -m "feat: discover provider models dynamically"`
 
@@ -121,27 +121,27 @@
 - `resolve_credential_backend(environ: Mapping[str, str] | None = None) -> CredentialBackend` selects keyring when explicitly requested or available, otherwise the secure file backend; invalid backend selection fails with an actionable error.
 - Existing `get_credential`, `store_credential`, and related functions delegate through the backend without changing their public signatures.
 
-- [ ] **Step 1: Write failing backend tests**
+- [x] **Step 1: Write failing backend tests**
 
   Test file backend permissions and atomic replacement, keyring round-trip with an injected fake keyring module, migration from existing `auth.json`, backend selection, deletion, and secret-free diagnostics.
 
-- [ ] **Step 2: Run focused tests to verify RED**
+- [x] **Step 2: Run focused tests to verify RED**
 
   Run: `python -m pytest -q tests/test_credentials.py tests/test_oauth_store.py`
 
   Expected: failures because the backend abstraction and resolver do not exist.
 
-- [ ] **Step 3: Implement backends and delegate the OAuth store**
+- [x] **Step 3: Implement backends and delegate the OAuth store**
 
   Keep token values out of `repr`, logs, cache files, and shell persistence. For keyring serialization use the existing validated `Credential` schema. For fallback migration, read the old file once, write through the selected backend, and retain the file only when fallback is selected.
 
-- [ ] **Step 4: Update doctor and test it**
+- [x] **Step 4: Update doctor and test it**
 
   Run: `python -m pytest -q tests/test_credentials.py tests/test_oauth_store.py tests/test_doctor.py`
 
   Expected: all selected tests pass and doctor reports backend type without secrets.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   `git add src/avo/credentials.py src/avo/oauth/store.py src/avo/auth.py src/avo/doctor.py pyproject.toml tests/test_credentials.py tests/test_oauth_store.py tests/test_doctor.py && git commit -m "feat: add pluggable credential backends"`
 
@@ -161,27 +161,27 @@
 - `OllamaUsage` contains optional `remaining_tokens`, `limit_tokens`, `reset_at`, and `raw_fields: tuple[str, ...]` without retaining raw secret values.
 - `avo models ollama cloud list|health|usage` performs read-only remote operations; `pull` remains explicitly local-only.
 
-- [ ] **Step 1: Write failing cloud tests**
+- [x] **Step 1: Write failing cloud tests**
 
   Test bearer header, remote model normalization, health, optional usage response, HTTP error redaction, and that cloud commands never call local `/api/pull`.
 
-- [ ] **Step 2: Run focused tests to verify RED**
+- [x] **Step 2: Run focused tests to verify RED**
 
   Run: `python -m pytest -q tests/test_ollama_cloud.py tests/test_ollama_manager.py tests/test_cli_models.py`
 
   Expected: missing cloud manager/config and CLI subcommands fail.
 
-- [ ] **Step 3: Implement cloud manager and CLI**
+- [x] **Step 3: Implement cloud manager and CLI**
 
   Use the existing injected-client pattern, keep local and cloud endpoints explicit, and return a useful “provider does not expose usage” result rather than inventing quota values.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
   Run: `python -m pytest -q tests/test_ollama_cloud.py tests/test_ollama_manager.py tests/test_cli_models.py`
 
   Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   `git add src/avo/ollama_manager.py src/avo/cli_models.py src/avo/config.py tests/test_ollama_cloud.py tests/test_ollama_manager.py tests/test_cli_models.py && git commit -m "feat: add Ollama Cloud discovery and usage"`
 
@@ -200,27 +200,27 @@
 - `attachment_blocks(parsed: ParsedPrompt) -> list[TextBlock | ImageBlock]` creates labelled text/image blocks and rejects unsupported binary input with an actionable error.
 - `parse_clipboard_image(raw: bytes, media_type: str, *, workspace: Path, settings: AttachmentSettings) -> Attachment` validates clipboard data before writing any temporary file.
 
-- [ ] **Step 1: Write failing attachment tests**
+- [x] **Step 1: Write failing attachment tests**
 
   Cover `@path`, dropped absolute path, `file://` URI decoding, quoted spaces, ordinary prose non-attachment behavior, workspace containment, symlink escape, external-root opt-in, image MIME allowlist, text decoding, binary rejection, size limits, total limits, and no secret/path leakage in errors.
 
-- [ ] **Step 2: Run focused tests to verify RED**
+- [x] **Step 2: Run focused tests to verify RED**
 
   Run: `python -m pytest -q tests/test_attachments.py tests/test_content_blocks.py`
 
   Expected: missing parser/settings/block integration failures.
 
-- [ ] **Step 3: Implement parser and block conversion**
+- [x] **Step 3: Implement parser and block conversion**
 
   Use `Path.resolve(strict=True)` for existing paths, `relative_to` containment checks, `urllib.parse.unquote` for file URIs, `mimetypes` plus a strict image allowlist, UTF-8 decoding with a clear error, and immutable records. Never inline unsupported binary data into a prompt.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
   Run: `python -m pytest -q tests/test_attachments.py tests/test_content_blocks.py`
 
   Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   `git add src/avo/attachments.py src/avo/content_blocks.py tests/test_attachments.py tests/test_content_blocks.py && git commit -m "feat: add secure file and image attachments"`
 
@@ -249,31 +249,31 @@
 - `PreparedPrompt.text` is the clean user text; `PreparedPrompt.blocks` is the canonical content list; `PreparedPrompt.summary` is safe UI text.
 - `AgentRuntime.run` gains an optional `user_blocks` argument only through a backward-compatible keyword path; plain `task: str` remains unchanged.
 
-- [ ] **Step 1: Write failing integration tests**
+- [x] **Step 1: Write failing integration tests**
 
   Test clipboard command parsing with an injected subprocess runner, REPL prompt preparation, session persistence of a safe attachment summary, OpenAI-compatible image payload, Ollama `images` payload, Anthropic image block, Gemini inline data, and rejection for providers that cannot accept images.
 
-- [ ] **Step 2: Run focused tests to verify RED**
+- [x] **Step 2: Run focused tests to verify RED**
 
   Run: `python -m pytest -q tests/test_clipboard.py tests/test_chat_repl.py tests/test_ollama_provider.py tests/test_gemini.py tests/test_content_blocks.py -k "attach or image or clipboard"`
 
   Expected: integration failures because prompt input and provider payloads do not consume parsed blocks consistently.
 
-- [ ] **Step 3: Implement clipboard and REPL integration**
+- [x] **Step 3: Implement clipboard and REPL integration**
 
   Add a prompt-toolkit binding that inserts a non-secret attachment marker for clipboard images, parse dropped paths at submit time, show a compact colored attachment summary, and pass canonical blocks into the existing message history/runtime path. Keep the prompt one line high when no attachment is active.
 
-- [ ] **Step 4: Implement provider renderers**
+- [x] **Step 4: Implement provider renderers**
 
   Reuse the existing `content_blocks` dumpers, extend Gemini and Ollama where their native schemas differ, and make unsupported provider behavior explicit. Keep all provider payload tests deterministic and injected.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
   Run: `python -m pytest -q tests/test_clipboard.py tests/test_chat_repl.py tests/test_ollama_provider.py tests/test_gemini.py tests/test_content_blocks.py -k "attach or image or clipboard"`
 
   Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   `git add src/avo/clipboard.py src/avo/chat.py src/avo/chat_turn.py src/avo/runtime.py src/avo/providers/http_common.py src/avo/providers/ollama.py src/avo/providers/gemini.py src/avo/providers/gemini_cli.py src/avo/providers/anthropic.py src/avo/providers/codex.py tests/test_clipboard.py tests/test_chat_repl.py tests/test_ollama_provider.py tests/test_gemini.py tests/test_content_blocks.py && git commit -m "feat: connect terminal attachments to providers"`
 
@@ -297,27 +297,27 @@
 - `avo doctor` reports catalog cache location, credential backend, Ollama local/cloud reachability, and attachment limits without secrets.
 - CLI help documents `avo models ollama cloud list|health|usage`, `/model`, attachment syntax, and optional keyring setup.
 
-- [ ] **Step 1: Write failing docs/diagnostic tests**
+- [x] **Step 1: Write failing docs/diagnostic tests**
 
   Assert help text contains the new commands and attachment syntax, doctor output contains backend/source labels, and no output contains token values or raw authorization headers.
 
-- [ ] **Step 2: Run focused tests to verify RED**
+- [x] **Step 2: Run focused tests to verify RED**
 
   Run: `python -m pytest -q tests/test_milestone_one_docs.py tests/test_cli_help.py tests/test_chat_setup.py`
 
   Expected: missing help/diagnostic strings fail.
 
-- [ ] **Step 3: Implement onboarding and documentation**
+- [x] **Step 3: Implement onboarding and documentation**
 
   Update setup to prefer live model choices, add migration notes for old `auth.json`, and document terminal limitations: drag/drop depends on the terminal sending a path; binary files are not silently uploaded.
 
-- [ ] **Step 4: Run focused tests and documentation checks**
+- [x] **Step 4: Run focused tests and documentation checks**
 
   Run: `python -m pytest -q tests/test_milestone_one_docs.py tests/test_cli_help.py tests/test_chat_setup.py && python -m ruff check src tests`
 
   Expected: all selected tests and lint pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   `git add src/avo/chat_setup.py src/avo/doctor.py src/avo/cli.py README.md docs/cli.md docs/guides/quickstart.md docs/guides/subscription-auth.md CHANGELOG.md tests/test_milestone_one_docs.py tests/test_cli_help.py tests/test_chat_setup.py && git commit -m "docs: document milestone one provider and attachment flows"`
 
@@ -354,4 +354,3 @@
 - [ ] **Step 5: Commit any final quality fixes**
 
   Use a focused commit message for each correction; do not amend unrelated history.
-
