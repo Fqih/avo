@@ -49,6 +49,17 @@ Add your global preferences, coding conventions, or operating guidelines here.
 
 _DEFAULT_MCP: dict[str, dict[str, object]] = {"mcpServers": {}}
 
+_SECURITY_CONFIG_ENV_KEYS = {
+    "require_approval": "AVO_TOOLS_REQUIRE_APPROVAL",
+    "sandbox_required": "AVO_SANDBOX_REQUIRED",
+    "sandbox_network": "AVO_SANDBOX_NETWORK",
+    "sandbox_timeout_seconds": "AVO_SANDBOX_TIMEOUT_SECONDS",
+    "plugin_editable": "AVO_PLUGIN_EDITABLE",
+    "plugin_activation": "AVO_PLUGIN_ACTIVATION",
+    "web_allowed_origin": "AVO_WEB_ALLOWED_ORIGIN",
+    "web_cors_enabled": "AVO_WEB_CORS_ENABLED",
+}
+
 
 class SetupCliError(AvoError):
     """User-facing failure in `avo setup`."""
@@ -88,6 +99,14 @@ def load_global_avo_config(base_dir: Path | None = None) -> dict[str, str]:
         if permission_mode == "bypass":
             permission_mode = "bypass_permissions"
         env_mapping["AVO_PERMISSION_MODE"] = permission_mode
+    for config_key, env_key in _SECURITY_CONFIG_ENV_KEYS.items():
+        value = data.get(config_key)
+        if isinstance(value, bool):
+            env_mapping[env_key] = "1" if value else "0"
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            env_mapping[env_key] = str(value)
+        elif isinstance(value, str) and value.strip():
+            env_mapping[env_key] = value.strip()
     if "stream" in data:
         env_mapping["AVO_CHAT_STREAM"] = "1" if bool(data["stream"]) else "0"
     if data.get("allow_subscription") is True:

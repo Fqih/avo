@@ -39,25 +39,25 @@
 - `resolve_security_config(*, explicit: Mapping[str, object] | None = None, environ: Mapping[str, str] | None = None, workspace_root: Path | None = None, user_root: Path | None = None) -> AvoSecurityConfig`.
 - `parse_permission_mode(value: object, *, source: str) -> PermissionMode` remains the single user-facing parser used by CLI, chat, and web paths.
 
-- [ ] **Step 1: Write failing resolver tests.**
+- [x] **Step 1: Write failing resolver tests.**
 
   Cover precedence `explicit > environment > project > user > default`, invalid permission values, invalid booleans/timeouts, project config containment, XDG user-root selection, and redacted diagnostic rendering.
 
-- [ ] **Step 2: Run resolver tests and verify RED.**
+- [x] **Step 2: Run resolver tests and verify RED.**
 
   Run: `python -m pytest -q tests/test_config_resolver.py`
 
   Expected: import/API failures because the resolver module does not exist.
 
-- [ ] **Step 3: Implement typed resolution with compatibility wrappers.**
+- [x] **Step 3: Implement typed resolution with compatibility wrappers.**
 
   Read `.avo/config.toml` or the existing project config format if present, then the user config, and apply explicit/environment values last. Keep current `resolve_database_path`, `permission_policy_from_env`, and setup APIs working by delegating to the resolver.
 
-- [ ] **Step 4: Add doctor/setup integration tests and implementation.**
+- [x] **Step 4: Add doctor/setup integration tests and implementation.**
 
   Ensure `avo doctor` reports the mode/source/backend posture without values that look like credentials, and setup writes canonical permission values.
 
-- [ ] **Step 5: Run focused tests and commit.**
+- [x] **Step 5: Run focused tests and commit.**
 
   Run: `python -m pytest -q tests/test_config_resolver.py tests/test_permissions.py tests/test_doctor.py`
 

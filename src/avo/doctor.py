@@ -18,6 +18,11 @@ from dataclasses import dataclass
 from typing import IO, Any
 
 from avo.config import _PROVIDER_NAMES, build_provider_from_env
+from avo.config_resolver import (
+    AvoSecurityConfig,
+    render_security_diagnostics,
+    resolve_security_config,
+)
 
 _PROVIDER_LABELS = {
     "ollama": "Ollama",
@@ -67,6 +72,7 @@ class DoctorReport:
     missing_vars: tuple[str, ...]
     config_error: str | None
     extra_vars: tuple[str, ...]
+    security: AvoSecurityConfig | None = None
 
     @property
     def ok(self) -> bool:
@@ -273,6 +279,14 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
 
     extra = tuple(sorted(k for k in env if k.startswith("AVO_") and k not in set(missing)))
 
+    security: AvoSecurityConfig | None
+    try:
+        security = resolve_security_config(environ=env_dict)
+    except Exception as exc:
+        security = None
+        if config_error is None:
+            config_error = str(exc)
+
     return DoctorReport(
         provider=provider,
         model=model,
@@ -283,6 +297,7 @@ def run_doctor(environ: Mapping[str, str] | None = None) -> DoctorReport:
         missing_vars=tuple(missing),
         config_error=config_error,
         extra_vars=extra,
+        security=security,
     )
 
 
@@ -313,6 +328,11 @@ def render_report(report: DoctorReport, *, out: IO[str]) -> None:
         out.write(f"endpoint: {report.endpoint}\n")
 
     out.write(f"API key configured: {'yes' if report.has_api_key else 'no'}\n")
+
+    if report.security is not None:
+        out.write("security configuration:\n")
+        for line in render_security_diagnostics(report.security).splitlines():
+            out.write(f"  {line}\n")
 
     try:
         from avo.attachments import AttachmentPolicy
