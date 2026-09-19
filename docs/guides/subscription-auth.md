@@ -38,8 +38,10 @@ gated and remain the recommended path for production workloads.
 
 | Provider | CLI Command | Backend Endpoint | Identity Header |
 |---|---|---|---|
-| **Claude (Anthropic)** | `avo login claude` | `https://api.anthropic.com/v1/messages?beta=true` | `anthropic-beta: claude-code-20250219,oauth-2025-04-20` |
-| **ChatGPT (Codex)** | `avo login codex` | `https://chatgpt.com/backend-api/codex/responses` | `originator: codex_cli_rs` |
+| **Claude Web** | `avo login claude` or `avo login claude-web` | Browser only | No Avo inference credential |
+| **Claude Code** | `avo login claude-code` | `https://api.anthropic.com/v1/messages?beta=true` | `anthropic-beta: claude-code-20250219,oauth-2025-04-20` |
+| **ChatGPT Web** | `avo login chatgpt` or `avo login chatgpt-web` | Browser only | No Codex credential |
+| **Codex** | `avo login codex` | `https://chatgpt.com/backend-api/codex/responses` | `originator: codex_cli_rs` |
 | **Gemini CLI** | `avo login gemini` | `https://cloudcode-pa.googleapis.com/v1internal` | `x-goog-api-client: google-genai-sdk/1.41.0` |
 
 ---
@@ -51,7 +53,7 @@ gated and remain the recommended path for production workloads.
 Run the login command for your desired provider:
 
 ```bash
-avo login claude
+avo login claude-code
 ```
 
 1. Avo generates an RFC 7636 PKCE code challenge and starts a temporary local
@@ -92,11 +94,15 @@ existing credentials:
 - **Claude Code**: `~/.claude/.credentials.json`
 - **OpenAI Codex CLI**: `~/.codex/auth.json`
 
-When running `avo login claude` or `avo login codex`, Avo prompts:
+When running `avo login claude-code` or `avo login codex`, Avo prompts:
 ```
 Found existing Claude Code credentials for user@example.com. Reuse? [Y/n]:
 ```
 Answering `Y` imports the tokens immediately without needing a browser flow.
+
+`avo login claude` and `avo login chatgpt` intentionally open only the vendor
+website. They do not import browser cookies and do not enable Claude Code or
+Codex inside Avo.
 
 ---
 

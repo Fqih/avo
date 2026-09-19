@@ -18,6 +18,10 @@ from avo.app_tools.web_fetch import (
 )
 
 
+def _public_resolver(_hostname: str, _port: int) -> tuple[str, ...]:
+    return ("93.184.216.34",)
+
+
 class _FakeResponse:
     def __init__(
         self,
@@ -55,6 +59,7 @@ async def test_fetch_returns_decoded_body() -> None:
     result = await _fetch_with_client(
         client,
         WebFetchArguments(url="https://example.com/"),
+        resolver=_public_resolver,
     )
     assert result["body"] == "hello world"
     assert result["status_code"] == 200
@@ -70,6 +75,7 @@ async def test_fetch_truncates_oversized_body() -> None:
     result = await _fetch_with_client(
         client,
         WebFetchArguments(url="https://example.com/big", max_bytes=128),
+        resolver=_public_resolver,
     )
     assert len(result["body"]) == 128  # type: ignore[arg-type]
     assert result["truncated"] is True
@@ -108,6 +114,7 @@ async def test_fetch_passes_timeout_to_client() -> None:
     await _fetch_with_client(
         client,
         WebFetchArguments(url="https://x/", timeout_seconds=3.5),
+        resolver=_public_resolver,
     )
     assert client.calls[0]["timeout"] == 3.5
 
@@ -115,14 +122,22 @@ async def test_fetch_passes_timeout_to_client() -> None:
 async def test_fetch_handles_missing_encoding_header() -> None:
     response = _FakeResponse(url="https://x/", content=b"hi", encoding=None)
     client = _FakeClient(response)
-    result = await _fetch_with_client(client, WebFetchArguments(url="https://x/"))
+    result = await _fetch_with_client(
+        client,
+        WebFetchArguments(url="https://x/"),
+        resolver=_public_resolver,
+    )
     assert result["body"] == "hi"
 
 
 async def test_fetch_handles_invalid_encoding_header() -> None:
     response = _FakeResponse(url="https://x/", content=b"hi", encoding="garbage")
     client = _FakeClient(response)
-    result = await _fetch_with_client(client, WebFetchArguments(url="https://x/"))
+    result = await _fetch_with_client(
+        client,
+        WebFetchArguments(url="https://x/"),
+        resolver=_public_resolver,
+    )
     assert result["body"] == "hi"
 
 

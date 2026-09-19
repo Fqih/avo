@@ -1,6 +1,6 @@
 # Avo API Reference
 
-**Package:** `avo` **Version:** `0.7.2` (`src/avo/__init__.py: __version__ = "0.7.2"`)
+**Package:** `avo` **Version:** `0.7.3` (`src/avo/__init__.py: __version__ = "0.7.3"`)
 **Python:** `>=3.11` **Core dependency:** `pydantic>=2.8,<3` (only one)
 **Stable ABI target:** `0.2.0` (`_STABLE_ABI` in `src/avo/__init__.py`)
 
@@ -1371,7 +1371,7 @@ it).
 
 ```python
 def serve_stdio(registry: ToolRegistry, *, server_name: str = "avo",
-                server_version: str = "0.7.2", workspace_root=None,
+                server_version: str = "0.7.3", workspace_root=None,
                 read_fn=None, write_fn=None) -> None
 async def serve_stdio_async(...)   # same parameters
 
@@ -1381,7 +1381,7 @@ def build_default_registry() -> ToolRegistry
 
 class AvoMcpServer:
     def __init__(self, registry: ToolRegistry, *, server_name: str = "avo",
-                 server_version: str = "0.7.2", workspace_root=None) -> None
+                 server_version: str = "0.7.3", workspace_root=None) -> None
     def serve_stdio(self, *, read_fn=None, write_fn=None) -> None
     def run_forever(self, ...) -> None      # asyncio.run wrapper
 ```
@@ -1807,11 +1807,20 @@ class PluginEntry:
     group: str; name: str; factory: Callable[[], Any]; package: str | None = None
 
 def discover(group: str, *, package=None) -> list[PluginEntry]
+def discover_from_paths(group: str, paths, *, package=None) -> tuple[PluginEntry, ...]
 def discover_all(*, groups=ALL_GROUPS) -> dict[str, list[PluginEntry]]
 def names(group: str, *, package=None) -> list[str]
 ```
 
-Managed from the shell with `avo plugin install|list|show|remove|init`.
+Managed from the shell with `avo plugin install|list|show|activate|deactivate|remove|init`.
+Installation is isolated per plugin: dependencies go into
+`~/.avo/plugins/.venvs/<name>/`, not the active Avo environment. The index
+records the source SHA-256 digest and the private environment path. Editable
+installs are disabled unless `AVO_PLUGIN_EDITABLE=1` is explicitly set for
+trusted development work. Plugins start inactive; enable one with
+`avo plugin activate NAME` and opt in at runtime with `AVO_PLUGIN_ACTIVATION=1`.
+Credential storage supports OS keyring and the optional `avo[security]`
+Fernet-encrypted file backend.
 
 ### 18.5 Subagents (`src/avo/subagent.py`)
 
@@ -2148,6 +2157,6 @@ Settings of record (`pyproject.toml`):
 
 ---
 
-*Generated from `src/avo/` at version `0.7.2`. If you add a public
+*Generated from `src/avo/` at version `0.7.3`. If you add a public
 symbol, an env var, a state, or an event and this file does not
 mention it, this file is out of date — update it in the same PR.*

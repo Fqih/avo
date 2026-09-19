@@ -53,12 +53,13 @@ class DelegationRequest:
     """One or more agent mentions from a chat prompt."""
 
     parts: tuple[AgentMention, ...]
+    is_pipeline: bool = False
 
     @property
     def is_parallel(self) -> bool:
         """Whether the prompt contains more than one delegated child."""
 
-        return len(self.parts) > 1
+        return len(self.parts) > 1 and not self.is_pipeline
 
 
 def _builtin_profiles() -> tuple[AgentProfile, ...]:
@@ -97,33 +98,80 @@ def _builtin_profiles() -> tuple[AgentProfile, ...]:
     )
 
 
-def _split_top_level_pipes(text: str) -> tuple[str, ...]:
-    """Split unquoted pipes while preserving the original segment text."""
+def _split_top_level_delimiters(text: str) -> tuple[tuple[str, ...], bool]:
+    """Split unquoted '->' (pipeline) or '|' (parallel) while preserving segment text."""
 
-    segments: list[str] = []
-    start = 0
+    has_arrow = False
     quote: str | None = None
     escaped = False
-    for index, char in enumerate(text):
+    i = 0
+    while i < len(text):
+        char = text[i]
         if escaped:
             escaped = False
+            i += 1
             continue
         if char == "\\" and quote is not None:
             escaped = True
+            i += 1
             continue
         if quote is not None:
             if char == quote:
                 quote = None
+            i += 1
             continue
         if char in {"'", '"'}:
             quote = char
-        elif char == "|":
-            segments.append(text[start:index])
-            start = index + 1
+            i += 1
+            continue
+        if i + 1 < len(text) and text[i : i + 2] == "->":
+            has_arrow = True
+            break
+        i += 1
+
+    delim = "->" if has_arrow else "|"
+    delim_len = len(delim)
+    segments: list[str] = []
+    start = 0
+    quote = None
+    escaped = False
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if escaped:
+            escaped = False
+            i += 1
+            continue
+        if char == "\\" and quote is not None:
+            escaped = True
+            i += 1
+            continue
+        if quote is not None:
+            if char == quote:
+                quote = None
+            i += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            i += 1
+            continue
+        if text[i : i + delim_len] == delim:
+            segments.append(text[start:i])
+            start = i + delim_len
+            i += delim_len
+            continue
+        i += 1
+
     if quote is not None:
         raise AgentProfileError("unterminated quote in agent delegation")
     segments.append(text[start:])
-    return tuple(segments)
+    return tuple(segments), has_arrow
+
+
+def _split_top_level_pipes(text: str) -> tuple[str, ...]:
+    """Split unquoted pipes while preserving the original segment text."""
+    segments, _ = _split_top_level_delimiters(text)
+    return segments
 
 
 class AgentProfileRegistry:
@@ -184,10 +232,13 @@ class AgentProfileRegistry:
                     warnings.append(f"agent profile {name!r} exceeds size limit; ignored")
                     continue
                 raw = resolved.read_text(encoding="utf-8")
+            except UnicodeError as exc:
+                warnings.append(f"agent profile {name!r} could not be loaded: {type(exc).__name__}")
+                continue
             except ValueError:
                 warnings.append(f"agent profile {name!r} escapes the workspace; ignored")
                 continue
-            except (OSError, UnicodeError) as exc:
+            except OSError as exc:
                 warnings.append(f"agent profile {name!r} could not be loaded: {type(exc).__name__}")
                 continue
             lines = raw.splitlines()
@@ -261,11 +312,11 @@ class AgentProfileRegistry:
         return profile
 
     def parse_prompt(self, text: str) -> DelegationRequest | None:
-        """Parse a leading registered mention and optional parallel segments."""
+        """Parse a leading registered mention and optional parallel/pipeline segments."""
 
         if not text.strip():
             return None
-        segments = _split_top_level_pipes(text)
+        segments, is_pipeline = _split_top_level_delimiters(text)
         first_match = _MENTION_RE.match(segments[0])
         if len(segments) == 1 and first_match is None:
             return None
@@ -295,7 +346,7 @@ class AgentProfileRegistry:
             if not prompt:
                 raise AgentProfileError(f"agent @{name} requires a prompt")
             mentions.append(AgentMention(agent=profile, prompt=prompt))
-        return DelegationRequest(parts=tuple(mentions))
+        return DelegationRequest(parts=tuple(mentions), is_pipeline=is_pipeline)
 
 
 __all__ = [

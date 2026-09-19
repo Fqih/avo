@@ -67,6 +67,7 @@ def _read_environ() -> dict[str, str]:
     subscription_keys = {
         "codex": "codex",
         "anthropic": "claude",
+        "claude-code": "claude",
         "gemini-cli": "gemini",
         "gemini_cli": "gemini",
     }
@@ -92,7 +93,7 @@ def _resolve_provider_label(environ: dict[str, str]) -> tuple[str, str]:
             from avo.oauth.store import get_credential
 
             for candidate, candidate_provider, def_model in (
-                ("claude", "anthropic", "claude-sonnet-4-5"),
+                ("claude", "claude-code", "claude-sonnet-4-6"),
                 ("codex", "codex", "gpt-5.6-sol"),
                 ("gemini", "gemini_cli", "gemini-2.5-pro"),
                 ("openrouter", "openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
@@ -184,6 +185,32 @@ def render_cooked_footer(
     return f"  {dim}* Cooked for {_format_duration(seconds)} · done {clock}{reset}\n"
 
 
+def render_unified_diff(diff: str, *, color: bool = True) -> str:
+    """Format unified diff text with terminal colors."""
+    if not color or not diff:
+        return diff
+
+    green = "\033[32m"
+    red = "\033[31m"
+    cyan = "\033[36m"
+    bold = "\033[1m"
+    reset = "\033[0m"
+
+    out_lines: list[str] = []
+    for line in diff.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            out_lines.append(f"{bold}{line}{reset}")
+        elif line.startswith("+"):
+            out_lines.append(f"{green}{line}{reset}")
+        elif line.startswith("-"):
+            out_lines.append(f"{red}{line}{reset}")
+        elif line.startswith("@@"):
+            out_lines.append(f"{cyan}{line}{reset}")
+        else:
+            out_lines.append(line)
+    return "\n".join(out_lines) + "\n"
+
+
 def render_chat_toolbar(
     provider_name: str,
     model_name: str,
@@ -196,8 +223,20 @@ def render_chat_toolbar(
 
     jobs = f" · jobs: {running_jobs}" if running_jobs else ""
     path = _format_workspace_path(workspace_root)
+    saver_preset = os.environ.get("AVO_SAVER", "").strip()
+    if not saver_preset:
+        try:
+            from avo.savers.config_store import read_saver_setting
+
+            saved = read_saver_setting()
+            if saved:
+                saver_preset = saved
+        except Exception:
+            pass
+
     if not color:
-        return f"provider: {provider_name} · model: {model_name} · path: {path}{jobs}"
+        saver_text = f" · saver: {saver_preset}" if saver_preset else ""
+        return f"provider: {provider_name} · model: {model_name} · path: {path}{saver_text}{jobs}"
 
     dim = "\033[90m"
     cyan = "\033[36m"
@@ -205,10 +244,12 @@ def render_chat_toolbar(
     yellow = "\033[33m"
     white = "\033[97m"
     reset = "\033[0m"
+    saver_colored = f" {dim}· saver:{reset} {cyan}{saver_preset}{reset}" if saver_preset else ""
     return (
         f"{dim}provider:{reset} {cyan}{provider_name}{reset}"
         f" {dim}· model:{reset} {white}{model_name}{reset}"
         f" {dim}· path:{reset} {green}{path}{reset}"
+        f"{saver_colored}"
         f"{yellow}{jobs}{reset}"
     )
 

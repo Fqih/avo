@@ -226,7 +226,6 @@ class WebApiMixin(WebHttpMixin):
             self._send_json({"ok": True, "mode": mode})
             return True
 
-
         if path == "/api/router/probe":
             self._send_json(self.server.sync_probe_router())
             return True
@@ -271,7 +270,6 @@ class WebApiMixin(WebHttpMixin):
             current_model = model or os.environ.get("AVO_MODEL", "")
             self._send_json({"ok": True, "provider": provider, "model": current_model})
             return True
-
 
         return False
 

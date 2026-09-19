@@ -105,6 +105,21 @@ def test_web_security_config_rejects_wildcard_origins() -> None:
         WebSecurityConfig(allowed_origin="*")
 
 
+def test_web_server_uses_resolved_origin_policy(tmp_path, monkeypatch):
+    monkeypatch.setenv("AVO_WEB_ALLOWED_ORIGIN", "https://dashboard.example.test")
+    monkeypatch.setenv("AVO_WEB_CORS_ENABLED", "true")
+    monkeypatch.setattr(ThreadingHTTPServer, "__init__", lambda *args, **kwargs: None)
+
+    server = AvoWebServer(
+        ("127.0.0.1", 43111),
+        tmp_path / "avo.db",
+        workspace_root=tmp_path,
+    )
+
+    assert server.web_security.allowed_origin == "https://dashboard.example.test"
+    assert server.web_security.cors_enabled is True
+
+
 @pytest.mark.parametrize("confirmation", [None, False, "true", 1])
 def test_persona_registration_requires_confirmation(server, confirmation):
     response = request(

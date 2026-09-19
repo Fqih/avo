@@ -40,6 +40,9 @@ async def test_edit_file_replaces_single_match(tmp_path: Path, workspace: Worksp
         )
 
     assert result["matches_replaced"] == 1
+    assert "diff" in result
+    assert "-hello again" in str(result["diff"])
+    assert "+hi again" in str(result["diff"])
     assert target.read_text(encoding="utf-8") == "hello world\nhi again\n"
 
 

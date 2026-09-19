@@ -12,9 +12,12 @@ filters / instantiates the discovered factories.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import sys
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib import metadata
+from pathlib import Path
 from typing import Any
 
 from avo.exceptions import AvoError
@@ -51,6 +54,12 @@ def discover(group: str, *, package: str | None = None) -> tuple[PluginEntry, ..
         selected = eps.select(group=group)
     except AttributeError:  # pragma: no cover  — Python < 3.10 fallback
         selected = eps.get(group, ())  # type: ignore[arg-type]
+    return _load_entries(selected, group=group, package=package)
+
+
+def _load_entries(
+    selected: Iterable[Any], *, group: str, package: str | None = None
+) -> tuple[PluginEntry, ...]:
     entries: list[PluginEntry] = []
     for ep in selected:
         if package is not None and ep.dist and ep.dist.name != package:
@@ -70,6 +79,47 @@ def discover(group: str, *, package: str | None = None) -> tuple[PluginEntry, ..
             )
         )
     return tuple(entries)
+
+
+@contextmanager
+def _private_import_path(paths: Iterable[Path]) -> Iterator[None]:
+    """Temporarily expose private plugin environments to entry-point imports."""
+
+    original = sys.path[:]
+    private = [str(path.expanduser().resolve()) for path in paths]
+    sys.path[:0] = [path for path in private if path not in sys.path]
+    try:
+        yield
+    finally:
+        sys.path[:] = original
+
+
+def discover_from_paths(
+    group: str,
+    paths: Iterable[Path],
+    *,
+    package: str | None = None,
+) -> tuple[PluginEntry, ...]:
+    """Discover entry points from explicitly activated private environments.
+
+    This deliberately avoids the host interpreter's global distributions. A
+    plugin must be installed into one of ``paths`` and activated in Avo's
+    plugin index before its code can be imported.
+    """
+
+    normalized = tuple(path.expanduser().resolve() for path in paths)
+    if not normalized:
+        return ()
+    selected: list[Any] = []
+    for distribution in metadata.distributions(path=[str(path) for path in normalized]):
+        distribution_name = getattr(distribution, "name", None)
+        if package is not None and distribution_name != package:
+            continue
+        for entry_point in distribution.entry_points:
+            if entry_point.group == group:
+                selected.append(entry_point)
+    with _private_import_path(normalized):
+        return _load_entries(selected, group=group, package=package)
 
 
 def discover_all(*, groups: Iterable[str] = ALL_GROUPS) -> tuple[PluginEntry, ...]:
@@ -106,5 +156,6 @@ __all__ = [
     "PluginError",
     "discover",
     "discover_all",
+    "discover_from_paths",
     "names",
 ]

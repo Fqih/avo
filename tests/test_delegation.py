@@ -6,8 +6,11 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from pydantic import JsonValue
 
-from avo.agent_profiles import AgentProfileRegistry
+from avo import delegation as delegation_module
+from avo.agent_profiles import AgentCapability, AgentProfileRegistry
+from avo.config_resolver import resolve_security_config
 from avo.delegation import DelegationCoordinator, child_tools
 from avo.models import ModelRequest, ModelResponse, ToolCall
 from avo.policies import LoopPolicy
@@ -131,7 +134,7 @@ async def test_coder_child_inherits_parent_approval_callback() -> None:
     registry = AgentProfileRegistry(Path("/tmp"))
     approved: list[str] = []
 
-    async def record_tool(arguments: ValueArguments) -> object:
+    async def record_tool(arguments: ValueArguments) -> dict[str, JsonValue]:
         return {"value": arguments.value}
 
     tool = FunctionTool(
@@ -167,3 +170,94 @@ async def test_coder_child_inherits_parent_approval_callback() -> None:
 
     assert result[0].status == "completed"
     assert approved == ["write_file"]
+
+
+@pytest.mark.asyncio
+async def test_child_runtime_receives_derived_security_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = AgentProfileRegistry(tmp_path)
+    parent_policy = resolve_security_config(
+        explicit={
+            "sandbox_required": False,
+            "sandbox_network": True,
+            "plugin_editable": True,
+            "plugin_activation": True,
+        },
+        user_root=tmp_path / "config",
+    )
+    parent = AgentRuntime(
+        provider=FakeProvider([]),
+        policy=LoopPolicy(max_steps=2),
+        security_config=parent_policy,
+    )
+    captured: list[object] = []
+    original_init = delegation_module.AgentRuntime.__init__
+
+    def capture_init(self: AgentRuntime, *args: object, **kwargs: object) -> None:
+        captured.append(kwargs.get("security_config"))
+        original_init(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(delegation_module.AgentRuntime, "__init__", capture_init)
+
+    coordinator = DelegationCoordinator(
+        parent,
+        provider_factory=lambda: FakeProvider([ModelResponse(content="read")]),
+    )
+    request = registry.parse_prompt("@explore inspect")
+    assert request is not None
+
+    result = await coordinator.run("parent-run", request.parts)
+
+    assert result[0].status == "completed"
+    child_policy = captured[0]
+    assert child_policy is not None
+    assert child_policy.sandbox_required.value is True  # type: ignore[union-attr]
+    assert child_policy.sandbox_network.value is False  # type: ignore[union-attr]
+    assert child_policy.plugin_activation.value is False  # type: ignore[union-attr]
+    assert AgentCapability.READ_ONLY.value == request.parts[0].agent.capability
+
+
+@pytest.mark.asyncio
+async def test_coordinator_pipeline_executes_sequentially_and_passes_output() -> None:
+    registry = AgentProfileRegistry(Path("/tmp"))
+    parent = _parent_runtime([])
+
+    received_prompts: list[str] = []
+
+    class _TrackingProvider(FakeProvider):
+        def __init__(self, responses: list[ModelResponse]) -> None:
+            super().__init__(responses)
+
+        async def generate(self, request: ModelRequest) -> ModelResponse:
+            received_prompts.append(str(request.messages[0]["content"]))
+            return await super().generate(request)
+
+    responses_list = [
+        [ModelResponse(content="plan output")],
+        [ModelResponse(content="code output")],
+    ]
+    call_idx = 0
+
+    def make_provider() -> _TrackingProvider:
+        nonlocal call_idx
+        p = _TrackingProvider(responses_list[call_idx])
+        call_idx += 1
+        return p
+
+    coordinator = DelegationCoordinator(parent, provider_factory=make_provider)
+    request = registry.parse_prompt("@explore plan task -> @coder implement task")
+    assert request is not None
+    assert request.is_pipeline is True
+
+    results = await coordinator.pipeline("pipeline-run", request.parts)
+
+    assert len(results) == 2
+    assert results[0].agent_name == "explore"
+    assert results[0].output == "plan output"
+    assert results[1].agent_name == "coder"
+    assert results[1].output == "code output"
+
+    # Verify stage 2 received output from stage 1
+    assert "plan output" in received_prompts[1]
+    assert "--- Output from prior stage (@explore) ---" in received_prompts[1]

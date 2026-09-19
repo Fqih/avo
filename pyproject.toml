@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "avo"
-version = "0.7.2"
+version = "0.7.3"
 description = "Reliable execution infrastructure for long-running AI agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -97,6 +97,10 @@ keyring = [
   # Optional OS-backed credential storage. The secure 0600 JSON backend
   # remains the dependency-free fallback.
   "keyring>=25.0",
+]
+security = [
+  # Fernet-encrypted file credential backend for headless environments.
+  "cryptography>=43",
 ]
 sandbox = [
   "docker>=7.0",

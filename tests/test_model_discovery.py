@@ -51,6 +51,24 @@ async def test_openai_compatible_discovery_normalizes_live_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_discovery_snapshot_includes_provider_metadata(tmp_path: Path) -> None:
+    from avo.model_catalog_service import CatalogSource, ModelCatalogCache
+    from avo.model_discovery import discover_provider_models
+
+    result = await discover_provider_models(
+        "codex",
+        {"AVO_CLIPROXYAPI_BASE_URL": "https://proxy.test/v1"},
+        cache=ModelCatalogCache(tmp_path),
+        client=FakeClient({"data": [{"id": "gpt-5.6-sol"}]}),
+    )
+
+    assert result.source is CatalogSource.LIVE
+    assert result.models[0].auth_requirement == "oauth"
+    assert result.models[0].transport == "openai-compatible"
+    assert "text" in result.models[0].capabilities
+
+
+@pytest.mark.asyncio
 async def test_ollama_discovery_uses_tags_endpoint_without_auth_for_local() -> None:
     from avo.model_discovery import OllamaDiscovery
 
@@ -60,6 +78,34 @@ async def test_ollama_discovery_uses_tags_endpoint_without_auth_for_local() -> N
     assert await discovery.list_models() == ("llama3.2:3b", "qwen2.5:7b")
     assert client.calls[0][0].endswith("/api/tags")
     assert client.calls[0][1] == {}
+
+
+@pytest.mark.asyncio
+async def test_gemini_cli_discovery_prefers_configured_cliproxyapi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import avo.providers.gemini_cli as gemini_cli
+    from avo.model_discovery import GeminiCliDiscovery
+
+    monkeypatch.setattr(
+        gemini_cli,
+        "discover_cliproxyapi_models",
+        lambda **kwargs: (gemini_cli.AntigravityModel("live-gemini", "Live Gemini"),),
+    )
+    monkeypatch.setattr(
+        gemini_cli,
+        "discover_antigravity_models",
+        lambda **kwargs: pytest.fail("agy should not be used when CLIProxyAPI is configured"),
+    )
+
+    discovery = GeminiCliDiscovery(
+        environ={
+            "AVO_CLIPROXYAPI_BASE_URL": "http://127.0.0.1:8317",
+            "AVO_CLIPROXYAPI_API_KEY": "local-key",
+        }
+    )
+
+    assert await discovery.list_models() == ("live-gemini",)
 
 
 @pytest.mark.asyncio

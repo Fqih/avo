@@ -23,6 +23,7 @@ ProviderName = Literal[
     "ollama-cloud",
     "minimax",
     "anthropic",
+    "claude-code",
     "openai",
     "groq",
     "cerebras",
@@ -39,6 +40,7 @@ _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "ollama-cloud",
     "minimax",
     "anthropic",
+    "claude-code",
     "openai",
     "groq",
     "cerebras",
@@ -94,6 +96,11 @@ PROVIDER_MODELS: dict[ProviderName, tuple[str, ...]] = {
         "claude-3-5-sonnet",
         "claude-3-5-haiku",
         "claude-3-opus",
+    ),
+    "claude-code": (
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+        "claude-haiku-4-5",
     ),
     "minimax": (
         "MiniMax-M2",
@@ -266,7 +273,7 @@ def _build_base_provider_from_env(
         from avo.oauth.store import get_credential
 
         for candidate, candidate_provider, def_model in (
-            ("claude", "anthropic", "claude-sonnet-4-5"),
+            ("claude", "claude-code", "claude-sonnet-4-6"),
             ("codex", "codex", "gpt-5.6-sol"),
             ("gemini", "gemini_cli", "gemini-2.5-pro"),
             ("openrouter", "openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
@@ -348,7 +355,7 @@ def _build_base_provider_from_env(
 
             return ComboRouterProvider(profile, tiers=tier_routes)
 
-        if name == "anthropic":
+        if name in ("anthropic", "claude-code"):
             from avo.providers.anthropic import AnthropicConfig, AnthropicProvider
 
             anthropic_config = AnthropicConfig.from_avo_env(env, fallback_model=model)

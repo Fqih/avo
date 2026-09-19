@@ -12,6 +12,8 @@ makes it trivial to test and to compose with retry/backoff helpers.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -91,9 +93,37 @@ class BudgetChecker:
         )
 
 
+def resolve_budget_config(environ: Mapping[str, str] | None = None) -> BudgetConfig:
+    """Resolve budget limits from environment variables."""
+    env = environ if environ is not None else os.environ
+    hard_raw = (
+        env.get("AVO_BUDGET_HARD_LIMIT_USD")
+        or env.get("AVO_BUDGET_USD")
+        or env.get("AVO_DAILY_BUDGET")
+    )
+    warn_raw = env.get("AVO_BUDGET_WARNING_USD")
+
+    hard_val: Decimal | None = None
+    if hard_raw and hard_raw.strip():
+        try:
+            hard_val = Decimal(hard_raw.strip())
+        except (ArithmeticError, ValueError) as exc:
+            raise BudgetError(f"invalid budget hard limit: {hard_raw!r}") from exc
+
+    warn_val: Decimal | None = None
+    if warn_raw and warn_raw.strip():
+        try:
+            warn_val = Decimal(warn_raw.strip())
+        except (ArithmeticError, ValueError) as exc:
+            raise BudgetError(f"invalid budget warning limit: {warn_raw!r}") from exc
+
+    return BudgetConfig(warning_usd=warn_val, hard_limit_usd=hard_val)
+
+
 __all__ = [
     "BudgetChecker",
     "BudgetConfig",
     "BudgetDecision",
     "BudgetError",
+    "resolve_budget_config",
 ]

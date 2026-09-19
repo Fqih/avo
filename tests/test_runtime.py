@@ -463,4 +463,3 @@ async def test_runtime_aclose_is_noop_for_provider_without_aclose() -> None:
     rt = AgentRuntime(provider=FakeProvider([ModelResponse(content="hi")]))
     # FakeProvider has no aclose; this must not raise
     await rt.aclose()
-

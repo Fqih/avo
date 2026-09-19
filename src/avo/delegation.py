@@ -10,7 +10,7 @@ from typing import Any, cast
 from pydantic import JsonValue
 
 from avo.agent_profiles import AgentCapability, AgentMention
-from avo.capabilities import filter_tools
+from avo.capabilities import filter_tools, inherit_runtime_security
 from avo.exceptions import AvoError
 from avo.models import TokenUsage
 from avo.providers.base import ModelProvider
@@ -102,12 +102,17 @@ class DelegationCoordinator:
                     provider = self._provider_for_child()
                     store = self.event_store_factory()
                     tools = child_tools(mention.agent, self.parent_runtime.tools._tools.values())
+                    security_config = inherit_runtime_security(
+                        self.parent_runtime.security_config,
+                        AgentCapability(mention.agent.capability),
+                    )
                     child = AgentRuntime(
                         provider=provider,
                         tools=tools,
                         policy=self.parent_runtime.policy,
+                        security_config=security_config,
                         event_store=store,
-                        approval_callback=self.parent_runtime._approval_callback,
+                        approval_callback=self.parent_runtime.approval_callback,
                     )
                     metadata: dict[str, JsonValue] = {
                         "parent_run_id": parent_run_id,
@@ -155,6 +160,101 @@ class DelegationCoordinator:
         results = await asyncio.gather(
             *(run_one(index, mention) for index, mention in enumerate(requests))
         )
+        return tuple(results)
+
+    async def pipeline(
+        self,
+        parent_run_id: str,
+        stages: Sequence[AgentMention],
+        *,
+        user_state: dict[str, JsonValue] | None = None,
+        pass_previous_output: bool = True,
+    ) -> tuple[DelegationResult, ...]:
+        """Run named agents sequentially as a pipeline, passing output downstream."""
+        if not parent_run_id:
+            raise DelegationError("parent_run_id must be non-empty")
+        if not stages:
+            raise DelegationError("at least one agent request is required")
+
+        results: list[DelegationResult] = []
+        prev_output: str | None = None
+        prev_name: str | None = None
+
+        for index, mention in enumerate(stages):
+            child_id = f"{parent_run_id}.{mention.agent.name}.{index + 1}"
+            prompt = mention.prompt
+            if pass_previous_output and prev_output and index > 0:
+                prompt = (
+                    f"{prompt}\n\n--- Output from prior stage (@{prev_name}) ---\n{prev_output}"
+                )
+
+            try:
+                provider = self._provider_for_child()
+                store = self.event_store_factory()
+                tools = child_tools(mention.agent, self.parent_runtime.tools._tools.values())
+                security_config = inherit_runtime_security(
+                    self.parent_runtime.security_config,
+                    AgentCapability(mention.agent.capability),
+                )
+                child = AgentRuntime(
+                    provider=provider,
+                    tools=tools,
+                    policy=self.parent_runtime.policy,
+                    security_config=security_config,
+                    event_store=store,
+                    approval_callback=self.parent_runtime.approval_callback,
+                )
+                metadata: dict[str, JsonValue] = {
+                    "parent_run_id": parent_run_id,
+                    "agent_name": mention.agent.name,
+                    "agent_capability": mention.agent.capability,
+                    "pipeline_stage": index + 1,
+                    "pipeline_total": len(stages),
+                }
+                if user_state:
+                    metadata.update(user_state)
+                result = await child.run(
+                    prompt,
+                    system_prompt=mention.agent.system_prompt,
+                    user_state=metadata,
+                    run_id=child_id,
+                )
+                delegation_res = DelegationResult(
+                    agent_name=mention.agent.name,
+                    child_run_id=child_id,
+                    status=result.status.value,
+                    output=_bounded_text(result.output, _MAX_OUTPUT_CHARS),
+                    error=_bounded_text(
+                        result.error
+                        or (
+                            None if result.status.value == "completed" else result.stop_reason.value
+                        ),
+                        _MAX_ERROR_CHARS,
+                    ),
+                    steps=result.steps,
+                    token_usage=result.token_usage,
+                )
+                results.append(delegation_res)
+                if delegation_res.status != "completed":
+                    break
+                prev_output = delegation_res.output
+                prev_name = mention.agent.name
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                results.append(
+                    DelegationResult(
+                        agent_name=mention.agent.name,
+                        child_run_id=child_id,
+                        status="failed",
+                        output=None,
+                        error=_bounded_text(f"{type(exc).__name__}: {exc}", _MAX_ERROR_CHARS),
+                        steps=0,
+                        token_usage=TokenUsage(),
+                    )
+                )
+                break
+
         return tuple(results)
 
     def _can_clone_provider(self) -> bool:

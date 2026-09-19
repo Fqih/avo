@@ -34,12 +34,14 @@ def _remember_login_provider(provider: str) -> None:
 
     provider_key = provider.lower()
     runtime_provider = {
-        "claude": "anthropic",
+        "claude": "claude-code",
+        "claude-code": "claude-code",
         "gemini": "gemini-cli",
         "chatgpt": "codex",
     }.get(provider_key, provider_key)
     default_model = {
         "anthropic": "claude-sonnet-4-6",
+        "claude-code": "claude-sonnet-4-6",
         "codex": "gpt-5.6-sol",
         "gemini-cli": "gemini-2.5-pro",
         "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
@@ -54,7 +56,7 @@ def _remember_login_provider(provider: str) -> None:
                 "AVO_PROVIDER": runtime_provider,
                 "AVO_MODEL": default_model,
                 "AVO_ALLOW_SUBSCRIPTION": "1"
-                if runtime_provider in {"anthropic", "codex", "gemini-cli"}
+                if runtime_provider in {"anthropic", "claude-code", "codex", "gemini-cli"}
                 else "0",
             }
         )
@@ -388,8 +390,8 @@ def main_login(argv: Sequence[str] | None = None) -> int:
         nargs="?",
         default="openrouter",
         help=(
-            "Provider to authenticate with (claude, codex, chatgpt, "
-            "gemini, github, openrouter; default: openrouter)."
+            "Provider to authenticate with (claude-web, claude-code, codex, "
+            "chatgpt-web, gemini, github, openrouter; default: openrouter)."
         ),
     )
     parser.add_argument(
@@ -455,7 +457,28 @@ def main_login(argv: Sequence[str] | None = None) -> int:
         return 0
 
     raw_provider = args.provider.lower()
-    store_key = "codex" if raw_provider == "chatgpt" else raw_provider
+    # Browser products and CLI products share an identity at some vendors,
+    # but they are not interchangeable credentials or inference routes.
+    if raw_provider == "claude":
+        raw_provider = "claude-web"
+    elif raw_provider == "chatgpt":
+        raw_provider = "chatgpt-web"
+
+    if raw_provider in {"claude-web", "chatgpt-web"}:
+        import webbrowser
+
+        url = "https://claude.ai/login" if raw_provider == "claude-web" else "https://chatgpt.com"
+        label = "Claude Web" if raw_provider == "claude-web" else "ChatGPT Web"
+        print(f"{label} login (browser only)")
+        print("This opens the website and does not create Claude Code/Codex credentials for Avo.")
+        if not args.no_browser:
+            webbrowser.open(url)
+        print(f"Opened: {url}")
+        return 0
+
+    if raw_provider == "claude-code":
+        raw_provider = "claude"
+    store_key = raw_provider
 
     if args.key_stdin:
         key = sys.stdin.readline().strip()
@@ -526,7 +549,9 @@ def main_login(argv: Sequence[str] | None = None) -> int:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
     else:
-        supported = sorted(["claude", "codex (chatgpt)", "gemini", "github", "openrouter"])
+        supported = sorted(
+            ["claude-web", "claude-code", "codex", "chatgpt-web", "gemini", "github", "openrouter"]
+        )
         print(
             f"Unknown login provider {args.provider!r}. Supported: {', '.join(supported)}. "
             "(Or use --key-stdin to store an API key for any provider.)",

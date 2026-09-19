@@ -82,6 +82,19 @@ def test_registry_ignores_symlink_that_escapes_workspace(tmp_path: Path) -> None
     assert any("outside" in warning for warning in registry.warnings)
 
 
+def test_registry_reports_invalid_utf8_profile(tmp_path: Path) -> None:
+    agents = tmp_path / ".avo" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "broken.md").write_bytes(b"description\n\n\xff")
+
+    registry = AgentProfileRegistry(tmp_path)
+
+    assert registry.get("broken") is None
+    assert any(
+        "broken" in warning and "could not be loaded" in warning for warning in registry.warnings
+    )
+
+
 def test_parse_single_mention_returns_registered_agent_and_prompt(tmp_path: Path) -> None:
     registry = AgentProfileRegistry(tmp_path)
 
@@ -134,3 +147,17 @@ def test_parse_rejects_empty_agent_prompt(tmp_path: Path) -> None:
 
     with pytest.raises(AgentProfileError, match="prompt"):
         registry.parse_prompt("@explore")
+
+
+def test_parse_pipeline_mentions_with_arrow(tmp_path: Path) -> None:
+    registry = AgentProfileRegistry(tmp_path)
+
+    request = registry.parse_prompt("@explore inspect task -> @coder implement -> @reviewer verify")
+
+    assert request is not None
+    assert request.is_pipeline is True
+    assert request.is_parallel is False
+    assert [part.agent.name for part in request.parts] == ["explore", "coder", "reviewer"]
+    assert request.parts[0].prompt == "inspect task"
+    assert request.parts[1].prompt == "implement"
+    assert request.parts[2].prompt == "verify"

@@ -43,14 +43,14 @@ _READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "read_file",
         "git_diff",
         "git_status",
-        "lint",
-        "test_runner",
         "grep",
         "glob",
         "symbols",
         "workspace_map",
     }
 )
+_EXECUTION_TOOLS: frozenset[str] = frozenset({"run_shell", "run_terminal", "test_runner", "lint"})
+_NETWORK_TOOLS: frozenset[str] = frozenset({"web_fetch", "web_search", "http_fetch"})
 _MUTATING_TOOLS: frozenset[str] = frozenset(
     {"write_file", "edit_file", "batch_replace", "git_commit"}
 )
@@ -142,7 +142,7 @@ def should_require_approval(
         return False
     if tool_name in require_approval:
         return True
-    if tool_name in _SHELL_TOOLS:
+    if tool_name in _SHELL_TOOLS or tool_name in _EXECUTION_TOOLS or tool_name in _NETWORK_TOOLS:
         return True  # shell always asks in non-bypass modes
     if mode is PermissionMode.ACCEPT_EDITS:
         return tool_name not in _READ_ONLY_TOOLS and tool_name not in _MUTATING_TOOLS
@@ -154,6 +154,21 @@ def should_require_approval(
         return True
     # DEFAULT: every tool asks.
     return True
+
+
+def build_deny_by_default_callback() -> ApprovalCallback:
+    """Return the safe callback used by runtimes without an app policy.
+
+    Read-only tools are safe to inspect. Mutating, executable, network, and
+    unknown tools are denied until the caller supplies an explicit policy.
+    """
+
+    def callback(call: ToolCall) -> bool:
+        from avo.capabilities import ToolCapability, classify_tool
+
+        return classify_tool(call.name) is ToolCapability.READ
+
+    return callback
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +294,7 @@ __all__ = [
     "PermissionPolicy",
     "active_run_id",
     "build_approval_callback",
+    "build_deny_by_default_callback",
     "clear_active_run",
     "is_plan_submitted",
     "mark_plan_submitted",

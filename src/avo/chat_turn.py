@@ -321,7 +321,10 @@ async def _run_agent_request(
             event_store_factory=lambda: SQLiteEventStore(ctx.store.path),
         )
         with bind_workspace(ctx.workspace):
-            results = await coordinator.run(parent_run_id, request.parts)
+            if getattr(request, "is_pipeline", False):
+                results = await coordinator.pipeline(parent_run_id, request.parts)
+            else:
+                results = await coordinator.run(parent_run_id, request.parts)
     except (DelegationError, AgentProfileError) as exc:
         err.write(f"agent delegation error: {exc}\n")
         return True

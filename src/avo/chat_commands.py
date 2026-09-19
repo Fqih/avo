@@ -453,7 +453,10 @@ def _manage_permissions(
         err.flush()
         return
 
-    new_policy = PermissionPolicy(mode=new_mode)
+    new_policy = PermissionPolicy(
+        mode=new_mode,
+        require_approval=ctx.permission_policy.require_approval,
+    )
     ctx.permission_policy = new_policy
     if new_mode is PermissionMode.BYPASS_PERMISSIONS:
         ctx.runtime._approval_callback = lambda call: True

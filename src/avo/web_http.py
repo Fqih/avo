@@ -134,11 +134,15 @@ class WebHttpMixin(BaseHTTPRequestHandler):
         if port == 80:
             allowed_hosts.update({"127.0.0.1", "localhost", "[::1]"})
         origins = self.headers.get_all("Origin", [])
+        allowed_origins = {f"http://{host}"}
+        configured_origin = self.server.web_security.allowed_origin
+        if self.server.web_security.cors_enabled and configured_origin:
+            allowed_origins.add(configured_origin)
         if (
             len(self.headers.get_all("Host", [])) != 1
             or host not in allowed_hosts
             or len(origins) > 1
-            or (origins and origins[0] != f"http://{host}")
+            or (origins and origins[0] not in allowed_origins)
             or self.headers.get("Sec-Fetch-Site") == "cross-site"
         ):
             self._send_error("origin_forbidden", "Forbidden origin or host", status=403)
@@ -228,6 +232,17 @@ class WebHttpMixin(BaseHTTPRequestHandler):
             return
         self.send_response(204)
         self.send_header("Allow", "GET, POST, OPTIONS")
+        if self.server.web_security.cors_enabled:
+            origin = self.headers.get("Origin", "")
+            if origin and origin == self.server.web_security.allowed_origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Credentials", "true")
+                self.send_header(
+                    "Access-Control-Allow-Headers",
+                    "Authorization, Content-Type, X-CSRF-Token",
+                )
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Vary", "Origin")
         self.end_headers()
 
 

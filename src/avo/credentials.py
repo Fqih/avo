@@ -123,6 +123,102 @@ class FileCredentialBackend:
         return "file-permissions"
 
 
+class EncryptedFileCredentialBackend:
+    """Store credentials in a Fernet-encrypted, permission-protected file."""
+
+    def __init__(self, path: Path, *, key: str | bytes | None = None) -> None:
+        try:
+            from cryptography.fernet import Fernet
+        except ImportError as exc:
+            raise ValueError(
+                "encrypted credential storage requires the optional dependency; "
+                "install `avo[security]` or use AVO_CREDENTIAL_BACKEND=keyring"
+            ) from exc
+        raw_key = key if key is not None else os.environ.get("AVO_CREDENTIAL_ENCRYPTION_KEY", "")
+        if isinstance(raw_key, str):
+            raw_key = raw_key.encode("ascii")
+        if not raw_key:
+            raise ValueError(
+                "AVO_CREDENTIAL_ENCRYPTION_KEY is required for encrypted credential storage"
+            )
+        try:
+            self._fernet: Any = Fernet(raw_key)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("AVO_CREDENTIAL_ENCRYPTION_KEY must be a valid Fernet key") from exc
+        self.path = Path(path).expanduser()
+
+    def _load_raw(self) -> dict[str, object]:
+        if not self.path.is_file():
+            return {}
+        try:
+            envelope = json.loads(self.path.read_text(encoding="utf-8"))
+            token = envelope["ciphertext"]
+            plaintext = self._fernet.decrypt(str(token).encode("ascii"))
+            raw = json.loads(plaintext.decode("utf-8"))
+        except (OSError, TypeError, ValueError, KeyError):
+            return {}
+        except Exception:
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    def list(self) -> tuple[Credential, ...]:
+        records = [
+            _credential_from_raw(str(provider).lower(), value)
+            for provider, value in self._load_raw().items()
+        ]
+        return tuple(sorted(records, key=lambda item: item.provider))
+
+    def get(self, provider: str) -> Credential | None:
+        target = provider.strip().lower()
+        return next((item for item in self.list() if item.provider == target), None)
+
+    def put(self, credential: Credential) -> Path:
+        current = {item.provider: item for item in self.list()}
+        current[credential.provider.lower()] = credential
+        self._write(current)
+        return self.path
+
+    def delete(self, provider: str) -> bool:
+        target = provider.strip().lower()
+        current = {item.provider: item for item in self.list()}
+        if target not in current:
+            return False
+        del current[target]
+        if current:
+            self._write(current)
+        else:
+            with suppress(FileNotFoundError):
+                self.path.unlink()
+        return True
+
+    def _write(self, credentials: Mapping[str, Credential]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self.path.parent, 0o700)
+        payload = {
+            provider: _credential_to_raw(credential)
+            for provider, credential in sorted(credentials.items())
+        }
+        plaintext = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        encoded = json.dumps(
+            {"version": 1, "ciphertext": self._fernet.encrypt(plaintext).decode("ascii")},
+            separators=(",", ":"),
+        )
+        fd, temp_name = tempfile.mkstemp(prefix=f".{self.path.name}.", dir=self.path.parent)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(encoded + "\n")
+            Path(temp_name).replace(self.path)
+            os.chmod(self.path, 0o600)
+        except BaseException:
+            with suppress(OSError):
+                os.unlink(temp_name)
+            raise
+
+    def describe(self) -> str:
+        return "encrypted-file"
+
+
 class KeyringCredentialBackend:
     """Store credential records in an OS keyring-compatible module."""
 
@@ -230,16 +326,23 @@ def resolve_credential_backend(
         return FileCredentialBackend(_auth_path(env))
     if choice == "keyring":
         return KeyringCredentialBackend()
+    if choice in {"encrypted", "encrypted-file"}:
+        return EncryptedFileCredentialBackend(
+            _auth_path(env), key=env.get("AVO_CREDENTIAL_ENCRYPTION_KEY")
+        )
     if choice == "auto":
         try:
             return KeyringCredentialBackend()
         except ValueError:
             return FileCredentialBackend(_auth_path(env))
-    raise ValueError("invalid AVO_CREDENTIAL_BACKEND; choose file, keyring, or auto")
+    raise ValueError(
+        "invalid AVO_CREDENTIAL_BACKEND; choose file, encrypted-file, keyring, or auto"
+    )
 
 
 __all__ = [
     "CredentialBackend",
+    "EncryptedFileCredentialBackend",
     "FileCredentialBackend",
     "KeyringCredentialBackend",
     "resolve_credential_backend",

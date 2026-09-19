@@ -32,6 +32,7 @@ from typing import Any
 
 from avo import __version__ as AVO_VERSION  # re-export
 from avo.config import resolve_database_path
+from avo.config_resolver import resolve_security_config
 from avo.permissions import permission_policy_from_env
 from avo.persona import PersonaManager
 from avo.web_api import ApiServerMixin, WebApiMixin, _mask_secret  # re-export
@@ -109,10 +110,14 @@ class AvoWebServer(
         self.auth_token = secrets.token_urlsafe(32)
         self.session_token = secrets.token_urlsafe(32)
         self.csrf_token = secrets.token_urlsafe(32)
-        self.web_security = WebSecurityConfig()
         self.database_path = database_path
         self.workspace_root = (
             Path(workspace_root).resolve() if workspace_root is not None else Path.cwd().resolve()
+        )
+        security = resolve_security_config(workspace_root=self.workspace_root)
+        self.web_security = WebSecurityConfig(
+            allowed_origin=security.web_allowed_origin.value,
+            cors_enabled=security.web_cors_enabled.value,
         )
         self.persona_manager = (
             persona_manager if persona_manager is not None else PersonaManager(self.workspace_root)

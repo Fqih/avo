@@ -81,7 +81,7 @@ def test_login_oauth_claude(
         )
 
     monkeypatch.setattr("avo.oauth.flows.run_pkce_login", fake_pkce)
-    rc = main_login(["claude", "--no-browser"])
+    rc = main_login(["claude-code", "--no-browser"])
     assert rc == 0
     assert called is True
     out = capsys.readouterr().out
@@ -95,10 +95,6 @@ def test_successful_login_remembers_vendor_as_default(
     tmp_path: Any,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from avo import cli_setup
-
-    monkeypatch.setattr(cli_setup, "GLOBAL_AVO_DIR", tmp_path / ".avo")
-
     async def fake_pkce(entry: Any, **kwargs: Any) -> Credential:
         return Credential(
             provider="codex",
@@ -111,7 +107,7 @@ def test_successful_login_remembers_vendor_as_default(
     monkeypatch.setattr("avo.oauth.flows.run_pkce_login", fake_pkce)
 
     assert main_login(["codex", "--no-browser"]) == 0
-    config = json.loads((tmp_path / ".avo" / "config.json").read_text(encoding="utf-8"))
+    config = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert config["provider"] == "codex"
     assert config["model"] == "gpt-5.6-sol"
     assert config["allow_subscription"] is True

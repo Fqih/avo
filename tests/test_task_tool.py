@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import pytest
 
+import avo.app_tools.task_tool as task_module
+from avo.agent_profiles import AgentCapability
 from avo.app_tools.file_tools import read_file_tool, write_file_tool
 from avo.app_tools.task_tool import AgentType, TaskArguments, task_tool
+from avo.capabilities import inherit_runtime_security
+from avo.config_resolver import resolve_security_config
 from avo.models import ModelResponse, ToolCall
 from avo.policies import LoopPolicy
 from avo.providers.fake import FakeProvider
@@ -100,6 +104,61 @@ async def test_task_child_run_is_isolated() -> None:
     # The parent must still only have its own run, not the child's.
     parent_runs_after = len(await parent_store.list_runs())
     assert parent_runs_after == parent_runs_before
+
+
+async def test_task_child_inherits_callback_and_narrows_security(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = object()
+    parent = AgentRuntime(
+        provider=FakeProvider(responses=[ModelResponse(content="done")]),
+        event_store=InMemoryEventStore(),
+        approval_callback=callback,  # type: ignore[arg-type]
+        security_config=resolve_security_config(
+            explicit={"sandbox_network": True, "plugin_activation": True},
+            environ={},
+        ),
+    )
+    captured: dict[str, object] = {}
+    original_runtime = task_module.AgentRuntime
+
+    class RecordingRuntime(original_runtime):
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+            super().__init__(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(task_module, "AgentRuntime", RecordingRuntime)
+    tool = task_tool(parent_runtime=parent, tools=[read_file_tool()])
+
+    await tool._function(TaskArguments(agent_type=AgentType.GENERAL, prompt="inspect"))
+
+    assert captured["approval_callback"] is callback
+    security = captured["security_config"]
+    assert security is not None
+    assert security.sandbox_required.value is True  # type: ignore[union-attr]
+    assert security.sandbox_network.value is True  # type: ignore[union-attr]
+    assert security.plugin_activation.value is True  # type: ignore[union-attr]
+
+
+async def test_task_read_only_child_narrows_network_and_plugins() -> None:
+    parent = AgentRuntime(
+        provider=FakeProvider(responses=[ModelResponse(content="done")]),
+        event_store=InMemoryEventStore(),
+        security_config=resolve_security_config(
+            explicit={"sandbox_network": True, "plugin_activation": True},
+            environ={},
+        ),
+    )
+    tool = task_tool(parent_runtime=parent, tools=[read_file_tool()])
+
+    await tool._function(TaskArguments(agent_type=AgentType.EXPLORE, prompt="inspect"))
+
+    child_security = inherit_runtime_security(
+        parent.security_config,
+        AgentCapability.READ_ONLY,
+    )
+    assert child_security.sandbox_network.value is False
+    assert child_security.plugin_activation.value is False
 
 
 async def test_task_respects_max_steps_override() -> None:

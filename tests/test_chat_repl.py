@@ -18,9 +18,12 @@ import pytest
 
 from avo import ModelResponse, StopReason, ToolCall
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
+from avo.capabilities import ToolCapability, classify_tool
 from avo.chat import (
     _alternate_screen,
+    _find_prompt_float_container,
     _highlight_prompt_input,
+    _install_command_palette,
     _place_completion_menu_above,
     _position_prompt_at_bottom,
     _prompt_toolkit_prompt,
@@ -159,17 +162,57 @@ def test_prompt_toolkit_prompt_parses_ansi_colors() -> None:
     assert chr(0x276F) in "".join(text for _style, text in rendered)
 
 
+@pytest.mark.asyncio
+async def test_enter_accepts_selected_slash_command() -> None:
+    from prompt_toolkit.buffer import Buffer
+
+    from avo import chat as chat_module
+    from avo.chat import SlashCompleter
+
+    buffer = Buffer(completer=SlashCompleter((("/resume", "resume a session"),)))
+    buffer.insert_text("/res")
+    buffer.start_completion(select_first=True)
+    await asyncio.sleep(0)
+
+    assert chat_module._accept_slash_completion(buffer) is True
+    assert buffer.text == "/resume"
+
+
 def test_completion_menu_is_positioned_above_the_input() -> None:
     from prompt_toolkit import PromptSession
 
     session = PromptSession(reserve_space_for_menu=0)
     _place_completion_menu_above(session)
 
-    dynamic = session.layout.container.children[0].content.children[1].children[1]
-    float_container = dynamic.get_container()
+    float_container = _find_prompt_float_container(session)
+    assert float_container is not None
     completion_float = float_container.floats[0]
     assert completion_float.bottom == 1
     assert completion_float.xcursor is False
+    assert completion_float.ycursor is False
+
+
+@pytest.mark.asyncio
+async def test_command_palette_is_a_bottom_anchored_float() -> None:
+    """The native palette stays above the editor without a custom duplicate."""
+
+    from prompt_toolkit import PromptSession
+
+    session = PromptSession(reserve_space_for_menu=0)
+    _place_completion_menu_above(session)
+    float_container = _find_prompt_float_container(session)
+    assert float_container is not None
+    native_float_count = len(float_container.floats)
+
+    _install_command_palette(session, (("/help", "show help"),))
+
+    float_container = _find_prompt_float_container(session)
+    assert float_container is not None
+    assert len(float_container.floats) == native_float_count
+    completion_float = float_container.floats[0]
+    assert type(completion_float.content).__name__ == "CompletionsMenu"
+    assert completion_float.bottom == 1
+    assert completion_float.top is None
     assert completion_float.ycursor is False
 
 
@@ -295,6 +338,80 @@ def test_build_chat_context_constructs_runtime_with_tools(
         "git_commit",
         "run_terminal",
     }
+
+
+def test_build_chat_context_passes_resolved_security_to_terminal_tool(
+    chat_env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from avo import chat as chat_module
+
+    captured: dict[str, object] = {}
+    original = chat_module.run_terminal_tool
+
+    def capture_terminal_tool(**kwargs: object):
+        captured.update(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(chat_module, "run_terminal_tool", capture_terminal_tool)
+    build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=_environ_with_ollama(),
+    )
+
+    config = captured["security_config"]
+    assert config.sandbox_required.value is True  # type: ignore[union-attr]
+
+
+def test_build_chat_context_marks_execution_tools_with_canonical_capabilities(
+    chat_env: dict[str, Path],
+) -> None:
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=_environ_with_ollama(),
+    )
+
+    capabilities = {
+        tool.metadata.name: tool.metadata.capability
+        for tool in ctx.runtime.tools._tools.values()  # type: ignore[attr-defined]
+    }
+    assert capabilities["lint"] is ToolCapability.EXECUTE
+    assert capabilities["test_runner"] is ToolCapability.EXECUTE
+    assert capabilities["run_terminal"] is ToolCapability.EXECUTE
+    assert classify_tool("web_fetch") is ToolCapability.NETWORK
+
+
+@pytest.mark.asyncio
+async def test_build_chat_context_denies_terminal_without_approval(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=_environ_with_ollama(),
+    )
+    ctx.runtime.provider = _ScriptedProvider(
+        [
+            ModelResponse(
+                tool_call=ToolCall(
+                    name="run_terminal",
+                    arguments={"command": "printf should-not-run"},
+                )
+            )
+        ]
+    )
+
+    try:
+        with bind_workspace(ctx.workspace):
+            result = await ctx.runtime.run("run the command")
+        assert result.stop_reason is StopReason.POLICY_DENIED
+    finally:
+        await ctx.store.close()
+        ctx.session.close()
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,7 @@ class ComboProfile(BaseModel):
 
     name: str = Field(min_length=1)
     description: str = ""
+    strategy: str = Field(default="priority")
     tiers: list[ComboTier] = Field(min_length=1)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

@@ -3,8 +3,9 @@
 A plugin is a Python package that registers entry points under the
 ``avo.tools``, ``avo.providers``, or ``avo.notifiers`` groups. The
 ``install`` command clones a git URL (or copies a local path) into
-``~/.avo/plugins/<name>/`` and ``pip install -e``'s it into the active
-Python so entry-point discovery picks it up immediately.
+``~/.avo/plugins/<name>/`` and installs dependencies into a dedicated
+virtual environment under ``~/.avo/plugins/.venvs/<name>/``. Avo's own
+Python environment is never mutated by plugin installation.
 
 This mirrors Claude Code's ``/plugin install <name-or-url>`` and Codex's
 ``codex plugin install <pkg>`` — same shape, simpler transport (Python
@@ -14,6 +15,7 @@ packaging instead of a marketplace daemon).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -21,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import venv
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +49,9 @@ class InstalledPlugin:
     editable: bool
     groups: tuple[str, ...] = ()
     version: str = "unknown"
+    environment: Path | None = None
+    source_digest: str | None = None
+    active: bool = False
 
     @property
     def description(self) -> str:
@@ -99,8 +105,34 @@ def _description_for(path: Path) -> str:
     return description if isinstance(description, str) else ""
 
 
-def _pip_install(target: Path, *, editable: bool) -> None:
-    cmd: list[str] = [sys.executable, "-m", "pip", "install"]
+def _plugin_environment_root() -> Path:
+    return PLUGIN_ROOT / ".venvs"
+
+
+def _plugin_python(environment: Path) -> Path:
+    return environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def _plugin_site_packages(environment: Path) -> Path:
+    """Return the private site-packages directory for a plugin environment."""
+
+    if os.name == "nt":
+        return environment / "Lib" / "site-packages"
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return environment / "lib" / version / "site-packages"
+
+
+def _pip_install_isolated(target: Path, *, environment: Path, editable: bool) -> None:
+    """Install a plugin into its own virtualenv, never into Avo's environment."""
+
+    environment.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        venv.EnvBuilder(with_pip=True, clear=True).create(environment)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PluginCliError(f"could not create plugin environment {environment}: {exc}") from exc
+
+    cmd: list[str] = [str(_plugin_python(environment)), "-m", "pip", "install"]
+    cmd.extend(("--disable-pip-version-check", "--no-input"))
     if editable:
         cmd.append("-e")
     cmd.append(str(target))
@@ -112,19 +144,39 @@ def _pip_install(target: Path, *, editable: bool) -> None:
         ) from exc
 
 
+def _source_digest(root: Path) -> str:
+    """Return a stable digest of source files used to build a plugin."""
+
+    digest = hashlib.sha256()
+    ignored = {".git", ".venv", ".venvs", "__pycache__", "build", "dist"}
+    files = (
+        path
+        for path in root.rglob("*")
+        if path.is_file() and not any(part in ignored for part in path.relative_to(root).parts)
+    )
+    for path in sorted(files, key=lambda item: item.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(path.read_bytes())
+    return f"sha256:{digest.hexdigest()}"
+
+
 def install(
     source: str,
     *,
     name: str | None = None,
     editable: bool = False,
     confirm: bool = False,
+    allow_editable: bool | None = None,
 ) -> InstalledPlugin:
     """Install a plugin from a git URL or local path.
 
     Git URLs are shallow-cloned into ``~/.avo/plugins/<name>``. Local
     paths are symlinked (or copied when symlinks are not supported).
-    Once on disk, the plugin is ``pip install``'d so the entry-point
-    metadata is immediately discoverable.
+    Once on disk, the plugin is installed into a private virtualenv. Editable
+    installs are disabled unless explicitly enabled with
+    ``AVO_PLUGIN_EDITABLE=1`` or ``allow_editable=True``.
     """
 
     manifest = inspect_plugin_source(source, name=name)
@@ -133,6 +185,15 @@ def install(
             f"plugin preview: {manifest.name} v{manifest.version}; "
             f"groups={','.join(manifest.groups) or '(none)'}; "
             "installation requires explicit operator confirmation"
+        )
+    if editable and not (
+        allow_editable
+        if allow_editable is not None
+        else os.environ.get("AVO_PLUGIN_EDITABLE", "").strip().lower() in {"1", "true", "yes"}
+    ):
+        raise PluginCliError(
+            "editable plugin installs are disabled by policy; set AVO_PLUGIN_EDITABLE=1 "
+            "only for a trusted development plugin"
         )
     if source.startswith(("git@", "git+", "https://", "http://", "ssh://")) or source.endswith(
         ".git"
@@ -179,7 +240,19 @@ def install(
             shutil.copytree(src, destination)
         kind = "local"
 
-    _pip_install(destination, editable=editable)
+    environment = _plugin_environment_root() / name
+    try:
+        _pip_install_isolated(destination, environment=environment, editable=editable)
+    except Exception:
+        if destination.is_symlink():
+            destination.unlink()
+        elif destination.exists() and destination.is_dir():
+            shutil.rmtree(destination)
+        if environment.exists():
+            shutil.rmtree(environment)
+        raise
+
+    source_digest = _source_digest(destination.resolve())
 
     index = _read_index()
     index[name] = {
@@ -189,6 +262,8 @@ def install(
         "kind": kind,
         "version": manifest.version,
         "groups": list(manifest.groups),
+        "environment": str(environment),
+        "source_digest": source_digest,
         "active": False,
     }
     _write_index(index)
@@ -196,7 +271,7 @@ def install(
 
 
 def remove(name: str, *, uninstall: bool = True) -> None:
-    """Remove a plugin by name, optionally uninstalling it from pip."""
+    """Remove a plugin and its private environment."""
 
     name = _validate_name(name)
     index = _read_index()
@@ -204,13 +279,19 @@ def remove(name: str, *, uninstall: bool = True) -> None:
         raise PluginCliError(f"plugin {name!r} is not installed.")
     record = index[name]
     target = Path(str(record.get("path", "")))
-    if uninstall:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "uninstall", "-y", name],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+    del uninstall  # Compatibility argument; active Avo dependencies are never uninstalled.
+    raw_environment = record.get("environment")
+    if isinstance(raw_environment, str):
+        environment = Path(raw_environment).expanduser()
+        environment_root = _plugin_environment_root().resolve()
+        try:
+            environment.resolve().relative_to(environment_root)
+        except ValueError as exc:
+            raise PluginCliError(
+                f"refusing to remove plugin environment outside {environment_root}: {environment}"
+            ) from exc
+        if environment.exists():
+            shutil.rmtree(environment)
     if target.is_symlink():
         target.unlink()
     elif target.exists() and target.is_dir():
@@ -223,6 +304,58 @@ def list_installed() -> tuple[InstalledPlugin, ...]:
     """Return all installed plugins (sorted by name)."""
 
     return tuple(_entry_to_plugin(name, entry) for name, entry in sorted(_read_index().items()))
+
+
+def active_plugin_site_packages() -> tuple[Path, ...]:
+    """Return private import paths for explicitly activated plugins.
+
+    Legacy plugin records are intentionally ignored: they must be reinstalled
+    so Avo can guarantee that dependencies live in a private environment.
+    """
+
+    environment_root = _plugin_environment_root().resolve()
+    paths: list[Path] = []
+    for plugin in list_installed():
+        if not plugin.active or plugin.environment is None:
+            continue
+        environment = plugin.environment.expanduser()
+        try:
+            environment.resolve().relative_to(environment_root)
+        except ValueError:
+            continue
+        paths.append(_plugin_site_packages(environment))
+    return tuple(paths)
+
+
+def set_active(name: str, *, active: bool) -> InstalledPlugin:
+    """Explicitly activate or deactivate one installed plugin."""
+
+    name = _validate_name(name)
+    index = _read_index()
+    entry = index.get(name)
+    if entry is None:
+        raise PluginCliError(f"plugin {name!r} is not installed.")
+    raw_environment = entry.get("environment")
+    raw_digest = entry.get("source_digest")
+    if not isinstance(raw_environment, str) or not isinstance(raw_digest, str):
+        raise PluginCliError(
+            f"plugin {name!r} uses a legacy install record; reinstall it before activation."
+        )
+    environment = Path(raw_environment).expanduser()
+    environment_root = _plugin_environment_root().resolve()
+    try:
+        environment.resolve().relative_to(environment_root)
+    except ValueError as exc:
+        raise PluginCliError(
+            f"refusing to activate plugin environment outside {environment_root}: {environment}"
+        ) from exc
+    if not environment.exists():
+        raise PluginCliError(
+            f"plugin environment is missing for {name!r}; reinstall the plugin before activation."
+        )
+    entry["active"] = bool(active)
+    _write_index(index)
+    return _entry_to_plugin(name, entry)
 
 
 def show(name: str) -> InstalledPlugin:
@@ -249,6 +382,10 @@ def _entry_to_plugin(name: str, entry: dict[str, object]) -> InstalledPlugin:
         else ()
     )
     version = entry.get("version")
+    raw_environment = entry.get("environment")
+    environment = Path(raw_environment) if isinstance(raw_environment, str) else None
+    source_digest = entry.get("source_digest")
+    active = bool(entry.get("active"))
     return InstalledPlugin(
         name=name,
         source=source,
@@ -256,6 +393,9 @@ def _entry_to_plugin(name: str, entry: dict[str, object]) -> InstalledPlugin:
         editable=editable,
         groups=groups,
         version=version if isinstance(version, str) else "unknown",
+        environment=environment,
+        source_digest=source_digest if isinstance(source_digest, str) else None,
+        active=active,
     )
 
 
@@ -343,7 +483,8 @@ Scaffolded by `avo plugin init`. Fill in the description and ship it.
 avo plugin install .
 
 # exercise the bundled sample tool
-avo chat
+avo plugin activate {package}
+AVO_PLUGIN_ACTIVATION=1 avo
 # then in the REPL:
 #   use plugin_{slug}_echo with message="hello"
 ```
@@ -354,8 +495,10 @@ avo chat
 |-------------|---------------------------------|
 | avo.tools   | `{package} = {module}:register` |
 
-Add new `FunctionTool` instances inside `register()` and they will be
-discovered on the next `avo chat` start (or after `avo plugin install`).
+Add new `FunctionTool` instances inside `register()`. After installation,
+explicitly enable the plugin with `avo plugin activate {package}` and opt into
+loading with `AVO_PLUGIN_ACTIVATION=1`; Avo will then discover it in the next
+chat process.
 """
 
 
@@ -476,6 +619,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the interactive confirmation prompt.",
     )
 
+    activate_p = sub.add_parser("activate", help="Activate an installed plugin explicitly.")
+    activate_p.add_argument("name")
+
+    deactivate_p = sub.add_parser("deactivate", help="Deactivate an installed plugin.")
+    deactivate_p.add_argument("name")
+
     init_p = sub.add_parser(
         "init",
         help="Scaffold a new avo plugin directory (see `avo plugin init --help`).",
@@ -550,6 +699,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             confirm=True,
         )
         print(f"Installed plugin {plugin.name!r} from {plugin.source} → {plugin.path}")
+        print(f"  environment: {plugin.environment}")
+        print(f"  source digest: {plugin.source_digest}")
+        print(f"  activation: inactive (run `avo plugin activate {plugin.name}`)")
         if plugin.description:
             print(f"  {plugin.description}")
         return 0
@@ -562,7 +714,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{'NAME':24}  {'SOURCE':48}  PATH")
         for plugin in plugins:
             source = plugin.source if len(plugin.source) <= 48 else plugin.source[:45] + "..."
-            print(f"{plugin.name:24}  {source:48}  {plugin.path}")
+            state = "active" if plugin.active else "inactive"
+            print(f"{plugin.name:24}  {state:8}  {source:48}  {plugin.path}")
         return 0
 
     if args.plugin_command == "show":
@@ -571,8 +724,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"source      : {plugin.source}")
         print(f"path        : {plugin.path}")
         print(f"editable    : {plugin.editable}")
+        print(f"active      : {plugin.active}")
+        print(f"environment : {plugin.environment or '(legacy/unknown)'}")
+        print(f"source hash : {plugin.source_digest or '(legacy/unknown)'}")
         if plugin.description:
             print(f"description : {plugin.description}")
+        return 0
+
+    if args.plugin_command in {"activate", "deactivate"}:
+        active = args.plugin_command == "activate"
+        plugin = set_active(args.name, active=active)
+        state = "Activated" if active else "Deactivated"
+        print(f"{state} plugin {plugin.name!r}.")
         return 0
 
     if args.plugin_command == "remove":
@@ -608,10 +771,13 @@ __all__ = [
     "PLUGIN_ROOT",
     "InstalledPlugin",
     "PluginCliError",
+    "_pip_install_isolated",
+    "active_plugin_site_packages",
     "init_scaffold",
     "install",
     "list_installed",
     "main",
     "remove",
+    "set_active",
     "show",
 ]

@@ -81,7 +81,25 @@ def test_expired_cache_is_marked_stale(tmp_path: Path) -> None:
 
     assert loaded is not None
     assert loaded.stale is True
-    assert loaded.source is CatalogSource.CACHE
+    assert loaded.source is CatalogSource.STALE
+
+
+def test_catalog_entry_preserves_capability_and_auth_metadata() -> None:
+    from avo.model_catalog_service import CatalogSource, ModelCatalogEntry
+
+    entry = ModelCatalogEntry(
+        provider="codex",
+        model_id="gpt-5.6-sol",
+        label="GPT-5.6 Sol",
+        source=CatalogSource.LIVE,
+        capabilities=("text", "tools"),
+        auth_requirement="oauth",
+        transport="openai-compatible",
+    )
+
+    assert entry.capabilities == ("text", "tools")
+    assert entry.auth_requirement == "oauth"
+    assert entry.transport == "openai-compatible"
 
 
 def test_cache_rejects_path_traversal_provider(tmp_path: Path) -> None:

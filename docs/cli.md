@@ -68,9 +68,11 @@ One-off environment variables such as `AVO_PROVIDER` and `AVO_MODEL` still
 override the saved route.
 
 The setup wizard displays a numbered model picker instead of requiring a
-model name. The list is Avo's maintained provider catalog and the selected
-model remains subject to the vendor account, plan, quota, and region. A custom
-model name can still be entered for compatible or newly released endpoints.
+model name. In an interactive chat, `/model` first fetches the provider's
+live catalog (with a bounded cache and clearly labelled static fallback), so
+new vendor models do not require an Avo release. The selected model remains
+subject to the vendor account, plan, quota, and region. A custom model name
+can still be entered for compatible or newly released endpoints.
 
 Use `/model` inside a chat to inspect the current provider's catalog and
 `/model NAME` to switch models for the next turn.
@@ -83,6 +85,13 @@ workspace config, user config, then defaults. The default posture requires a
 sandbox, disables sandbox networking, and keeps plugin editable installs and
 activation off.
 
+Plugin installation is dependency-isolated: `avo plugin install` creates a
+private virtualenv under `~/.avo/plugins/.venvs/<name>/` and records a source
+SHA-256 digest. It never installs into Avo's active Python environment. Legacy
+plugin records without an environment or digest are shown as legacy and must
+be reinstalled before activation. Editable installs require the explicit
+development override `AVO_PLUGIN_EDITABLE=1`.
+
 These controls are intentionally separate:
 
 - `avo resume` continues a prior chat session; `avo runs replay` verifies a
@@ -91,6 +100,11 @@ These controls are intentionally separate:
   development exception, not a sandbox feature.
 - OAuth/API-key login authenticates a vendor; permission mode controls which
   tools may run. Permission protection is not encryption.
+- Prefer `AVO_CREDENTIAL_BACKEND=keyring` (or `auto`) when an OS keyring is
+  available. For headless hosts, install `avo[security]`, set
+  `AVO_CREDENTIAL_BACKEND=encrypted-file`, and provide a Fernet key through
+  `AVO_CREDENTIAL_ENCRYPTION_KEY`. The restricted file backend remains the
+  dependency-free compatibility fallback.
 
 See [`docs/migrations/0.7.x-to-milestone-three.md`](migrations/0.7.x-to-milestone-three.md)
 for rollback-safe upgrade notes.

@@ -1,0 +1,10 @@
+title = "Avo secret scanning policy"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secret fixture values are tracked in .gitleaksignore."
+paths = [
+  '''^tests/fixtures/''',
+]

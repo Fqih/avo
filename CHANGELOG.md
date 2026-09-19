@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-20
+
 ### Added
 
 - `avo` now starts chat by default, with a complete discoverable `avo --help`
@@ -42,9 +44,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Milestone Three migration guidance and API/CLI documentation for
   resume versus replay, host versus sandbox execution, OAuth/API keys, and
   permission protection versus encryption.
+- Added `StructuralCollapseStage` deterministic token saver stage to collapse
+  excessive blank lines, divider rules, and trailing whitespace in tool outputs.
+- Added dynamic combo routing strategies (`priority`, `latency`, `cost`) to
+  `ComboProfile` and `ComboRouterProvider` for latency-aware and cost-optimized
+  multi-tier execution.
+- Added unified diff calculation and payload emission to `edit_file` tool.
+- Added live token-saver preset indicator and unified diff color rendering to
+  chat REPL status bar.
+- Added sequential multi-agent pipeline orchestration (`@agent1 -> @agent2 -> @agent3`)
+  via `DelegationCoordinator.pipeline()` with intermediate output handoff downstream.
+- Added `resolve_budget_config()` in `avo.budget` for environment-driven session
+  and daily spend caps (`AVO_BUDGET_HARD_LIMIT_USD`, `AVO_BUDGET_WARNING_USD`).
+- Added official multi-stage `Dockerfile` with unprivileged `avo` operator user.
+- Updated `docs/api-stability.md` with complete package layout, Web Control-Plane
+  HTTP API specification, and full CLI subcommand surface.
+- Updated `CONTRIBUTING.md` with custom model provider SDK guide and review policies.
 - Fixed CI's optional keyring type-check dependency and native workflow
   bootstrap so native wheels build from the checkout without requiring a
   previously published `avo-native` package.
+
+### Fixed
+
+- Hardened ephemeral Docker container creation parameters: removed invalid `auto_remove`,
+  `stdout`, and `stderr` kwargs, added `security_opt=["no-new-privileges:true"]` and
+  writable tmpfs `/tmp`.
+- Restricted project-level configuration (`.avo/config.toml`) from disabling sandbox
+  enforcement (`sandbox_required = false`), forcing permission bypass, or enabling
+  editable plugins.
+- Hardened workspace git operations with `-c core.fsmonitor=false -c core.hooksPath=/dev/null`
+  to prevent hook and fsmonitor execution on the host.
+- Protected `.git` directory against modification from write tools (`write_file`,
+  `edit_file`, `batch_replace`).
+- Preserved operator `require_approval` tool lists across interactive `/permissions`
+  mode switches.
+- Fixed `CLAUDE.md` and `README.md` documentation pointers and aligned status badges
+  with project development status.
 
 ## [0.7.2] - 2026-09-18
 
@@ -492,7 +527,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ruff check` + `ruff format --check` clean.
 - Coverage gate: `fail_under = 90`.
 
-[Unreleased]: https://github.com/Fqih/avo/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/Fqih/avo/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/Fqih/avo/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/Fqih/avo/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/Fqih/avo/compare/v0.1.7...v0.7.1
 [0.1.6]: https://github.com/Fqih/avo/compare/v0.1.5...v0.1.6

@@ -34,6 +34,26 @@ def test_shell_always_asks_except_bypass(mode: PermissionMode) -> None:
     assert should_require_approval("run_shell", mode) is True
 
 
+@pytest.mark.parametrize(
+    "tool_name",
+    ["run_terminal", "test_runner", "lint", "web_fetch", "web_search", "http_fetch"],
+)
+@pytest.mark.parametrize(
+    "mode",
+    [PermissionMode.DEFAULT, PermissionMode.ACCEPT_EDITS, PermissionMode.PLAN],
+)
+def test_execution_and_network_tools_always_require_approval(
+    tool_name: str,
+    mode: PermissionMode,
+) -> None:
+    assert should_require_approval(tool_name, mode, plan_submitted=True) is True
+
+
+def test_execution_and_network_tools_are_only_auto_approved_by_bypass() -> None:
+    for name in ("run_terminal", "test_runner", "lint", "web_fetch", "web_search", "http_fetch"):
+        assert should_require_approval(name, PermissionMode.BYPASS_PERMISSIONS) is False
+
+
 def test_bypass_permissions_approves_everything() -> None:
     for name in ("read_file", "write_file", "edit_file", "run_shell"):
         assert should_require_approval(name, PermissionMode.BYPASS_PERMISSIONS) is False

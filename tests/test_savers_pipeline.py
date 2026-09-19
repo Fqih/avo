@@ -110,3 +110,18 @@ def test_configs_are_frozen() -> None:
     config = PipelineConfig()
     with pytest.raises(ValidationError):
         config.json_minify = False  # type: ignore[misc]
+
+
+def test_pipeline_applies_structural_collapse() -> None:
+    raw = (
+        "header\n"
+        "====================================================\n"
+        "\n\n\n\n"
+        "text with trailing spaces   \n"
+        "----------------------------------------------------\n"
+        "footer"
+    )
+    messages: Messages = [_tool(raw, "t1")]
+    res = run_pipeline(messages, PipelineConfig())
+    assert "structural_collapse" in res.stages_applied
+    assert res.tokens_after <= res.tokens_before

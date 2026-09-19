@@ -18,8 +18,9 @@ import asyncio
 import contextlib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from avo.exceptions import ToolExecutionError
 
@@ -31,6 +32,8 @@ SandboxError = ToolExecutionError
 _DEFAULT_IMAGE = "python:3.12-slim"
 _DEFAULT_MEM_LIMIT = "256m"
 _DEFAULT_CPU_QUOTA = 50000  # 0.5 CPU
+_DEFAULT_PIDS_LIMIT = 128
+_DEFAULT_USER = "65532:65532"
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _IN_CONTAINER_WORKDIR = "/workspace"
 
@@ -62,6 +65,124 @@ class ExecutionPolicy:
         """Return the Docker network mode implied by this policy."""
 
         return "bridge" if self.network_enabled else "none"
+
+
+class ExecutionMode(StrEnum):
+    """Execution boundary selected for one command."""
+
+    SANDBOX = "sandbox"
+    HOST = "host"
+
+
+@dataclass(frozen=True)
+class ExecutionDecision:
+    """Immutable command decision produced before execution begins."""
+
+    mode: ExecutionMode
+    workspace_root: Path
+    timeout_seconds: float
+    network_enabled: bool
+    approval_required: bool
+    audit_label: str
+
+
+_SAFE_ENVIRONMENT_KEYS = frozenset(
+    {
+        "CI",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "NO_COLOR",
+        "PATH",
+        "TERM",
+        "TMPDIR",
+    }
+)
+_SAFE_AVO_ENVIRONMENT_KEYS = frozenset(
+    {
+        "AVO_MODEL",
+        "AVO_OLLAMA_BASE_URL",
+        "AVO_OLLAMA_MODEL",
+        "AVO_PROVIDER",
+    }
+)
+_SECRET_ENV_MARKERS = (
+    "API_KEY",
+    "AUTH",
+    "COOKIE",
+    "CREDENTIAL",
+    "PASSWORD",
+    "SECRET",
+    "TOKEN",
+)
+
+
+def _is_secret_environment_key(key: str) -> bool:
+    normalized = key.upper().replace("-", "_")
+    return any(marker in normalized for marker in _SECRET_ENV_MARKERS)
+
+
+def build_safe_environment(
+    environment: Mapping[str, object] | None = None,
+    *,
+    workspace_root: Path | None = None,
+) -> dict[str, str]:
+    """Build the minimal environment safe to pass to an agent command."""
+
+    import os
+
+    source = environment if environment is not None else os.environ
+    safe: dict[str, str] = {}
+    for key, value in source.items():
+        if not isinstance(value, str):
+            raise TypeError("environment values must be strings")
+        if _is_secret_environment_key(key):
+            continue
+        if key not in _SAFE_ENVIRONMENT_KEYS and key not in _SAFE_AVO_ENVIRONMENT_KEYS:
+            continue
+        safe[key] = value
+    if workspace_root is not None:
+        safe["PWD"] = str(Path(workspace_root).resolve())
+    return safe
+
+
+def resolve_execution_decision(
+    *,
+    policy: ExecutionPolicy,
+    workspace_root: Path,
+    operation: str,
+    sandbox_available: bool,
+    approval_granted: bool = False,
+) -> ExecutionDecision:
+    """Resolve the only execution mode allowed for one command."""
+
+    root = Path(workspace_root).resolve()
+    if policy.sandbox_required:
+        require_execution_policy(
+            policy,
+            sandbox_available=sandbox_available,
+            operation=operation,
+        )
+        return ExecutionDecision(
+            mode=ExecutionMode.SANDBOX,
+            workspace_root=root,
+            timeout_seconds=policy.timeout_seconds,
+            network_enabled=policy.network_enabled,
+            approval_required=False,
+            audit_label=f"{operation}:sandbox",
+        )
+    if not approval_granted:
+        raise SandboxError(f"operator approval is required before host execution for {operation}")
+    return ExecutionDecision(
+        mode=ExecutionMode.HOST,
+        workspace_root=root,
+        timeout_seconds=policy.timeout_seconds,
+        network_enabled=policy.network_enabled,
+        approval_required=False,
+        audit_label=f"{operation}:host",
+    )
 
 
 def require_execution_policy(
@@ -156,18 +277,14 @@ class _Container(Protocol):
     def wait(self) -> dict[str, Any]: ...
     def logs(self, *, stdout: bool = ..., stderr: bool = ...) -> bytes: ...
     def remove(self, *, force: bool = ...) -> None: ...
-
-
-class _ContainersAPI(Protocol):
-    """Subset of ``docker.DockerClient.containers`` we depend on."""
-
-    def create(self, **kwargs: Any) -> _Container: ...
+    def stop(self, *, timeout: int = ...) -> None: ...
 
 
 class _DockerClient(Protocol):
     """Subset of ``docker.DockerClient`` we depend on."""
 
-    def containers(self) -> _ContainersAPI: ...
+    @property
+    def containers(self) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -280,10 +397,9 @@ class SandboxExecutor:
     ) -> SandboxResult:
         """Run ``command`` inside an ephemeral container.
 
-        ``workspace_dir`` is reserved for future mounting support; today
-        the executor only records it so the caller can scope shell I/O
-        to a known directory. Network is off by default, so the
-        container cannot reach the host or the internet.
+        ``workspace_dir`` is mounted read-write at ``/workspace`` so the
+        command sees the same bounded workspace as the file tools. Network is
+        off by default, so the container cannot reach the host or internet.
 
         Raises:
             SandboxError: when the docker client is unavailable, the
@@ -291,12 +407,16 @@ class SandboxExecutor:
         """
 
         effective_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
-        del workspace_dir  # reserved for future bind-mount support
-
         client = self._resolve_client()
 
         try:
-            container = await asyncio.to_thread(self._create_container, client, command, env or {})
+            container = await asyncio.to_thread(
+                self._create_container,
+                client,
+                command,
+                workspace_dir,
+                env or {},
+            )
         except SandboxError:
             raise
         except Exception as exc:  # pragma: no cover - docker errors vary
@@ -310,6 +430,10 @@ class SandboxExecutor:
                     timeout=effective_timeout,
                 )
             except TimeoutError as exc:
+                stop = getattr(container, "stop", None)
+                if callable(stop):
+                    with contextlib.suppress(Exception):
+                        await asyncio.to_thread(stop, timeout=1)
                 raise SandboxError(
                     f"sandbox command {command!r} exceeded the configured timeout of "
                     f"{effective_timeout} seconds."
@@ -336,23 +460,36 @@ class SandboxExecutor:
         self,
         client: _DockerClient,
         command: str,
+        workspace_dir: Path,
         env: Mapping[str, str],
     ) -> _Container:
         """Create the ephemeral container; called in a worker thread."""
 
-        containers = client.containers()
-        return containers.create(
-            image=self.image,
-            command=["sh", "-c", command],
-            environment=dict(env),
-            network_mode=self.network_mode,
-            mem_limit=self.mem_limit,
-            cpu_quota=self.cpu_quota,
-            working_dir=_IN_CONTAINER_WORKDIR,
-            remove=True,
-            detach=True,
-            stdout=True,
-            stderr=True,
+        resolved_workspace = workspace_dir.resolve(strict=True)
+        if not resolved_workspace.is_dir():
+            raise SandboxError(f"sandbox workspace is not a directory: {resolved_workspace}")
+        safe_env = build_safe_environment(env, workspace_root=resolved_workspace)
+        containers_attr = getattr(client, "containers", None)
+        containers: Any = containers_attr() if callable(containers_attr) else containers_attr
+        return cast(
+            _Container,
+            containers.create(
+                image=self.image,
+                command=["sh", "-c", command],
+                environment=safe_env,
+                volumes={str(resolved_workspace): {"bind": "/workspace", "mode": "rw"}},
+                network_mode=self.network_mode,
+                mem_limit=self.mem_limit,
+                cpu_quota=self.cpu_quota,
+                pids_limit=_DEFAULT_PIDS_LIMIT,
+                user=_DEFAULT_USER,
+                read_only=True,
+                cap_drop=["ALL"],
+                security_opt=["no-new-privileges:true"],
+                tmpfs={"/tmp": "size=64m,mode=1777"},
+                working_dir=_IN_CONTAINER_WORKDIR,
+                detach=True,
+            ),
         )
 
     @staticmethod
@@ -367,11 +504,15 @@ class SandboxExecutor:
 
 
 __all__ = [
+    "ExecutionDecision",
+    "ExecutionMode",
     "ExecutionPolicy",
     "SandboxError",
     "SandboxExecutor",
     "SandboxResult",
+    "build_safe_environment",
     "language_from_path",
     "require_execution_policy",
+    "resolve_execution_decision",
     "resolve_image",
 ]

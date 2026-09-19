@@ -83,7 +83,7 @@ def _run_git(
 
     try:
         return subprocess.run(  # host helper, no shell
-            ["git", *args],
+            ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", *args],
             cwd=str(cwd),
             capture_output=True,
             text=True,

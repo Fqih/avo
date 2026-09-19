@@ -10,6 +10,7 @@ one-way: ``runtime`` -> ``{handlers, persistence}``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,6 +35,7 @@ from avo.models import (
     RunResult,
     TokenUsage,
     ToolCall,
+    ToolResult,
     utc_now,
 )
 from avo.observability import record_usage, span_for_turn
@@ -46,6 +48,7 @@ from avo.storage.memory import InMemoryEventStore
 from avo.tools import Tool, ToolRegistry
 
 if TYPE_CHECKING:
+    from avo.config_resolver import AvoSecurityConfig
     from avo.tracing import RunTrace
 
 Clock = Callable[[], datetime]
@@ -92,6 +95,7 @@ class AgentRuntime:
         event_store: EventStore | None = None,
         clock: Clock = utc_now,
         approval_callback: ApprovalCallback | None = None,
+        security_config: AvoSecurityConfig | None = None,
         memory: LetheMemoryAdapter | None = None,
         hooks: HookRegistry | None = None,
         stream_callback: Callable[[str], None] | None = None,
@@ -100,14 +104,15 @@ class AgentRuntime:
         self.provider = provider
         self.tools = ToolRegistry(tools)
         self.policy = policy or LoopPolicy()
+        self.security_config = security_config
         self.event_store = event_store or InMemoryEventStore()
         self._clock = clock
         if approval_callback is not None:
             self._approval_callback: ApprovalCallback = approval_callback
         else:
-            from avo.app_tools.approval import build_approval_callback
+            from avo.permissions import build_deny_by_default_callback
 
-            self._approval_callback = build_approval_callback()
+            self._approval_callback = build_deny_by_default_callback()
         # Purely observational display plumbing (see handle_model_pending);
         # public so callers can swap them per turn like ``provider``.
         # Each run/resume snapshots both at entry, so a swap only binds
@@ -124,6 +129,12 @@ class AgentRuntime:
             else None
         )
         self._execution_lock = asyncio.Lock()
+
+    @property
+    def approval_callback(self) -> ApprovalCallback:
+        """Return the callback governing tool approval for this runtime."""
+
+        return self._approval_callback
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -455,10 +466,8 @@ class AgentRuntime:
         """
         aclose_fn = getattr(self.provider, "aclose", None)
         if callable(aclose_fn):
-            try:
+            with contextlib.suppress(Exception):
                 await aclose_fn()
-            except Exception:  # pragma: no cover – best-effort cleanup
-                pass
 
     async def __aenter__(self) -> AgentRuntime:
         return self
@@ -471,7 +480,6 @@ class AgentRuntime:
     # so existing callers (and runtime_handlers) can keep using
     # ``self._append``, ``self._checkpoint`` etc.
     # ------------------------------------------------------------------
-
 
     async def _append(
         self,

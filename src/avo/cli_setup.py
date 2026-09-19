@@ -33,6 +33,52 @@ GLOBAL_PLUGINS_DIR = GLOBAL_AVO_DIR / "plugins"
 GLOBAL_MCP_FILE = GLOBAL_AVO_DIR / "mcp.json"
 GLOBAL_HISTORY_FILE = GLOBAL_AVO_DIR / "history"
 
+_GLOBAL_PATH_NAMES = frozenset(
+    {
+        "config.json",
+        "instructions.md",
+        "personas",
+        "skills",
+        "plugins",
+        "mcp.json",
+        "history",
+    }
+)
+
+
+def global_avo_dir(
+    environ: Mapping[str, str] | None = None,
+    *,
+    home: Path | None = None,
+) -> Path:
+    """Resolve the global config directory at call time.
+
+    ``Path.home()`` and ``AVO_CONFIG_DIR`` are intentionally evaluated for
+    every call.  Import-time path constants made tests and embedded callers
+    write to the developer's real ``~/.avo`` directory after changing their
+    environment.
+    """
+
+    env = os.environ if environ is None else environ
+    configured = env.get("AVO_CONFIG_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ((home if home is not None else Path.home()) / ".avo").expanduser().resolve()
+
+
+def global_avo_path(
+    name: str,
+    environ: Mapping[str, str] | None = None,
+    *,
+    home: Path | None = None,
+) -> Path:
+    """Return a supported path below the call-time global config directory."""
+
+    if name not in _GLOBAL_PATH_NAMES:
+        raise ValueError(f"Unsupported global Avo path: {name!r}")
+    return global_avo_dir(environ, home=home) / name
+
+
 _DEFAULT_CONFIG = {
     "provider": "codex",
     "model": "gpt-5.6-sol",
@@ -77,7 +123,7 @@ class SetupReport:
 def load_global_avo_config(base_dir: Path | None = None) -> dict[str, str]:
     """Read ~/.avo/config.json and return standard AVO_* environment variables."""
 
-    target = (base_dir or GLOBAL_AVO_DIR) / "config.json"
+    target = (base_dir / "config.json") if base_dir is not None else global_avo_path("config.json")
     if not target.is_file():
         return {}
 
@@ -136,7 +182,14 @@ def remember_last_provider(
     if not provider or not model:
         return None
 
-    target_dir = (base_dir or GLOBAL_AVO_DIR).expanduser().resolve()
+    if base_dir is not None:
+        target_dir = base_dir.expanduser().resolve()
+    else:
+        # Login callers pass only the runtime provider/model mapping.  Keep
+        # the process-level config override in that case instead of silently
+        # falling back to an import-time ~/.avo path.
+        path_environ = environ if "AVO_CONFIG_DIR" in environ else os.environ
+        target_dir = global_avo_dir(path_environ)
     target_dir.mkdir(parents=True, exist_ok=True)
     config_path = target_dir / "config.json"
     try:
@@ -161,7 +214,7 @@ def setup_global_avo(
 ) -> SetupReport:
     """Ensure ~/.avo/ structure exists and is populated with defaults."""
 
-    base = (target_dir or GLOBAL_AVO_DIR).expanduser().resolve()
+    base = target_dir.expanduser().resolve() if target_dir is not None else global_avo_dir()
     base.mkdir(parents=True, exist_ok=True)
 
     created: list[Path] = []
@@ -287,7 +340,7 @@ def main(argv: Sequence[str] | None = None, stdout: TextIO | None = None) -> int
     )
 
     args = parser.parse_args(argv)
-    target = args.dir if args.dir is not None else GLOBAL_AVO_DIR
+    target = args.dir if args.dir is not None else global_avo_dir()
     color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
 
     try:

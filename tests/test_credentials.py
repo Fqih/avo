@@ -79,6 +79,42 @@ def test_keyring_backend_round_trip_and_index() -> None:
     assert backend.get("codex") is None
 
 
+def test_encrypted_file_backend_round_trip_does_not_store_plaintext(tmp_path: Path) -> None:
+    from cryptography.fernet import Fernet
+
+    from avo.credentials import EncryptedFileCredentialBackend
+
+    path = tmp_path / "auth.enc"
+    backend = EncryptedFileCredentialBackend(path, key=Fernet.generate_key())
+
+    backend.put(_credential("anthropic"))
+
+    assert backend.get("anthropic").secret() == "secret-token"
+    assert "secret-token" not in path.read_text(encoding="utf-8")
+    assert backend.describe() == "encrypted-file"
+
+
+def test_resolver_supports_encrypted_file_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cryptography.fernet import Fernet
+
+    from avo.credentials import EncryptedFileCredentialBackend, resolve_credential_backend
+
+    monkeypatch.setenv("AVO_CREDENTIAL_BACKEND", "encrypted-file")
+    key = Fernet.generate_key().decode()
+    monkeypatch.setenv("AVO_CREDENTIAL_ENCRYPTION_KEY", key)
+    backend = resolve_credential_backend(
+        {
+            "AVO_CREDENTIAL_BACKEND": "encrypted-file",
+            "AVO_CREDENTIAL_ENCRYPTION_KEY": key,
+            "AVO_AUTH_FILE": str(tmp_path / "auth.enc"),
+        }
+    )
+
+    assert isinstance(backend, EncryptedFileCredentialBackend)
+
+
 def test_resolver_rejects_unknown_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     from avo.credentials import resolve_credential_backend
 

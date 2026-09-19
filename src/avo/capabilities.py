@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import replace
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 from avo.agent_profiles import AgentCapability
@@ -94,9 +95,32 @@ def inherit_policy(
     )
 
 
+def inherit_runtime_security(
+    parent: AvoSecurityConfig | None,
+    child_capability: AgentCapability,
+) -> AvoSecurityConfig:
+    """Return a policy for a child runtime without widening its boundary.
+
+    A runtime created directly by a library caller may not have a resolved
+    security config. Delegated runtimes still receive the resolver defaults in
+    that case, so the absence of a parent config cannot become host execution.
+    """
+
+    if parent is not None:
+        return inherit_policy(parent, child_capability)
+
+    from avo.config_resolver import resolve_security_config
+
+    return resolve_security_config(
+        environ={},
+        user_root=Path("/__avo_no_user_config__"),
+    )
+
+
 __all__ = [
     "ToolCapability",
     "classify_tool",
     "filter_tools",
     "inherit_policy",
+    "inherit_runtime_security",
 ]

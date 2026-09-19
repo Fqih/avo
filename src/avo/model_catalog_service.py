@@ -19,6 +19,7 @@ class CatalogSource(StrEnum):
 
     LIVE = "live"
     CACHE = "cache"
+    STALE = "stale"
     STATIC = "static"
 
 
@@ -34,6 +35,8 @@ class ModelCatalogEntry(_CatalogModel):
     label: str = Field(min_length=1, max_length=256)
     source: CatalogSource
     capabilities: tuple[str, ...] = ()
+    auth_requirement: str | None = Field(default=None, max_length=64)
+    transport: str | None = Field(default=None, max_length=64)
     recommended: bool = False
     reason: str | None = Field(default=None, max_length=512)
 
@@ -131,7 +134,11 @@ class ModelCatalogCache:
         )
         warning = "cached model catalog is stale" if stale else None
         return result.model_copy(
-            update={"source": CatalogSource.CACHE, "stale": stale, "warning": warning}
+            update={
+                "source": CatalogSource.STALE if stale else CatalogSource.CACHE,
+                "stale": stale,
+                "warning": warning,
+            }
         )
 
     def save(self, result: ModelCatalogResult) -> None:
@@ -151,6 +158,8 @@ class ModelCatalogCache:
         payload["source"] = CatalogSource.LIVE.value
         payload["stale"] = False
         payload["warning"] = None
+        if result.fetched_at is None:
+            payload["fetched_at"] = datetime.now(UTC).isoformat()
         encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         fd, temp_name = tempfile.mkstemp(prefix=f".{provider}.", suffix=".tmp", dir=self.root)
         try:
@@ -172,6 +181,9 @@ def catalog_entries(
     *,
     source: CatalogSource,
     recommended: str | None = None,
+    capabilities: tuple[str, ...] = (),
+    auth_requirement: str | None = None,
+    transport: str | None = None,
 ) -> tuple[ModelCatalogEntry, ...]:
     """Build deterministic entries from normalized IDs."""
 
@@ -183,6 +195,9 @@ def catalog_entries(
             model_id=model_id,
             label=model_id,
             source=source,
+            capabilities=capabilities,
+            auth_requirement=auth_requirement,
+            transport=transport,
             recommended=model_id == recommended,
         )
         for model_id in normalized

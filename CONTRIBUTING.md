@@ -62,11 +62,49 @@ Avoid real API calls in the default test suite. Error messages should name the
 run, tool, provider operation, or database involved and explain what the user
 can do next.
 
+## Implementing a Custom Model Provider
+
+To contribute or register an external model provider, implement the `ModelProvider`
+or `StreamingModelProvider` protocol (`src/avo/providers/base.py`):
+
+```python
+from collections.abc import AsyncIterator
+from avo import ModelRequest, ModelResponse
+from avo.providers.base import ModelProvider
+from avo.providers.streaming import ModelChunk, StreamingModelProvider
+
+class CustomProvider(StreamingModelProvider):
+    name: str = "custom"
+    model: str = "custom-model"
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        # 1. Translate request.messages to vendor format
+        # 2. Invoke upstream API
+        # 3. Return ModelResponse with content, tool_calls, and token usage
+        ...
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
+        # Yield ModelChunk deltas for real-time text and tool streaming
+        ...
+```
+
+Requirements for new providers:
+1. Wrap network errors in `avo.exceptions.ProviderError`.
+2. Map token counts into `avo.models.TokenUsage`.
+3. Support function calling / tool definitions when upstream permits.
+4. Include mock-based offline unit tests in `tests/test_<provider>_provider.py`.
+
 ## Pull requests
 
 Describe the execution behavior before and after the change, the failure modes
 considered, and the checks run. If the change affects persistence or resume,
 include a close/reopen test and a failure-injection test at the relevant
 checkpoint boundary.
+
+## Maintenance & Review Policy
+
+- All code must pass `ruff check .`, `ruff format --check .`, `mypy src/avo`, and `pytest`.
+- Security-critical boundaries (sandbox, workspace containment, approval callbacks) require explicit review against `CLAUDE.md` and `docs/api-stability.md`.
+- Attribution trailers (`Co-Authored-By`, `Generated with`) are strictly prohibited per project identity guidelines.
 
 By participating, you agree to follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

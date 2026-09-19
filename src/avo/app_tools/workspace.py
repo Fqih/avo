@@ -178,7 +178,16 @@ class Workspace:
         except OSError as exc:
             raise WorkspacePathError(f"path could not be inspected: {exc}") from exc
 
-        return self.validate_path(requested, must_exist=False)
+        resolved = self.validate_path(requested, must_exist=False)
+        try:
+            rel = resolved.relative_to(self._root)
+            if rel.parts and rel.parts[0] == ".git":
+                raise WorkspacePathError(
+                    f"refusing to modify files inside .git directory: {candidate_str}"
+                )
+        except ValueError:
+            pass
+        return resolved
 
 
 def assert_workspace_target(
@@ -206,7 +215,9 @@ def assert_workspace_target(
             raise WorkspacePathError(f"path could not be inspected: {exc}") from exc
     resolved = candidate.resolve(strict=False)
     try:
-        resolved.relative_to(workspace.root)
+        rel = resolved.relative_to(workspace.root)
+        if rel.parts and rel.parts[0] == ".git":
+            raise WorkspacePathError(f"refusing to modify files inside .git directory: {target}")
     except ValueError as exc:
         raise WorkspacePathError(f"path escapes workspace root {workspace.root}: {target}") from exc
     return resolved

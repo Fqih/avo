@@ -81,19 +81,39 @@ class ComboRouterProvider(StreamingModelProvider):
         return list(self._tiers)
 
     def _select_candidate_tiers(self) -> list[tuple[ComboTier, ModelProvider]]:
-        """Return available tiers, prioritizing non-cooling-down tiers."""
+        """Return available tiers, ordered according to the profile strategy."""
         active = [
             (tier, prov)
             for tier, prov in self._tiers
             if not self._health[tier.name].is_cooling_down
         ]
-        if active:
-            return active
+        candidates = active if active else list(self._tiers)
+        if not active:
+            _LOG.warning(
+                "all combo tiers in cooldown for %r; attempting primary chain", self.profile.name
+            )
 
-        _LOG.warning(
-            "all combo tiers in cooldown for %r; attempting primary chain", self.profile.name
-        )
-        return list(self._tiers)
+        strategy = getattr(self.profile, "strategy", "priority")
+        if strategy == "latency":
+
+            def _latency_key(item: tuple[ComboTier, ModelProvider]) -> float:
+                h = self._health[item[0].name]
+                return h.last_latency_ms if h.last_latency_ms is not None else float("inf")
+
+            candidates = sorted(candidates, key=_latency_key)
+        elif strategy == "cost":
+
+            def _cost_key(item: tuple[ComboTier, ModelProvider]) -> int:
+                name = item[0].name.lower()
+                if "free" in name or "local" in name or "ollama" in name:
+                    return 0
+                if "cheap" in name or "budget" in name:
+                    return 1
+                return 2
+
+            candidates = sorted(candidates, key=_cost_key)
+
+        return candidates
 
     async def _record_success(self, name: str, start_time: float) -> None:
         latency = (time.monotonic() - start_time) * 1000.0
@@ -223,7 +243,6 @@ class ComboRouterProvider(StreamingModelProvider):
         err_str = "; ".join(errors)
         raise ProviderError(f"all combo tiers failed for {self.profile.name!r}: {err_str}")
 
-
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
         """Stream chunks from the highest-priority functional tier."""
         candidates = self._select_candidate_tiers()
@@ -271,7 +290,6 @@ class ComboRouterProvider(StreamingModelProvider):
 
         err_str = "; ".join(errors)
         raise ProviderError(f"all combo tiers failed for {self.profile.name!r}: {err_str}")
-
 
     async def aclose(self) -> None:
         """Close client sessions for all underlying providers."""

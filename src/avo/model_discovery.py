@@ -9,6 +9,7 @@ import os
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -239,11 +240,70 @@ class GeminiApiDiscovery(_BaseDiscovery):
 class GeminiCliDiscovery:
     """Discover account-scoped Gemini models through Antigravity ``agy``."""
 
-    async def list_models(self) -> tuple[str, ...]:
-        from avo.providers.gemini_cli import discover_antigravity_models
+    def __init__(self, *, environ: Mapping[str, str] | None = None) -> None:
+        self.environ = environ or {}
 
-        models = await asyncio.to_thread(discover_antigravity_models)
-        return tuple(item.model_id for item in models)
+    async def list_models(self) -> tuple[str, ...]:
+        from avo.providers.gemini_cli import (
+            discover_antigravity_models,
+            discover_cliproxyapi_models,
+        )
+
+        configured_proxy = (
+            self.environ.get("AVO_CLIPROXYAPI_BASE_URL", "").strip()
+            or self.environ.get("AVO_GEMINI_CLI_BASE_URL", "").strip()
+        )
+        api_key = (
+            self.environ.get("AVO_CLIPROXYAPI_API_KEY", "").strip()
+            or self.environ.get("AVO_GEMINI_CLI_API_KEY", "").strip()
+            or None
+        )
+        if configured_proxy:
+            models = await asyncio.to_thread(
+                discover_cliproxyapi_models,
+                base_url=configured_proxy,
+                api_key=api_key,
+            )
+            return tuple(item.model_id for item in models)
+
+        try:
+            models = await asyncio.to_thread(discover_antigravity_models)
+            return tuple(item.model_id for item in models)
+        except ProviderError as agy_error:
+            try:
+                models = await asyncio.to_thread(
+                    discover_cliproxyapi_models,
+                    api_key=api_key,
+                )
+            except ProviderError as proxy_error:
+                raise ProviderError(
+                    f"Antigravity and CLIProxyAPI model discovery failed: "
+                    f"{redact_text(str(agy_error))}; {redact_text(str(proxy_error))}"
+                ) from proxy_error
+            return tuple(item.model_id for item in models)
+
+
+@dataclass(frozen=True)
+class _CatalogMetadata:
+    capabilities: tuple[str, ...]
+    auth_requirement: str
+    transport: str
+
+
+def _catalog_metadata(provider: str) -> _CatalogMetadata:
+    """Return non-secret capability metadata for one provider family."""
+
+    provider_key = provider.strip().lower()
+    if provider_key == "ollama":
+        return _CatalogMetadata(("text", "tools"), "none", "ollama")
+    if provider_key == "ollama-cloud":
+        return _CatalogMetadata(("text", "tools"), "api-key", "ollama")
+    if provider_key in {"codex", "gemini-cli", "gemini_cli"}:
+        transport = "openai-compatible" if provider_key == "codex" else "antigravity"
+        return _CatalogMetadata(("text", "tools"), "oauth", transport)
+    if provider_key in {"anthropic", "anthropic-api", "claude"}:
+        return _CatalogMetadata(("text", "tools", "vision"), "api-key", "anthropic-messages")
+    return _CatalogMetadata(("text", "tools"), "api-key", "openai-compatible")
 
 
 def _cache_root(environ: Mapping[str, str]) -> os.PathLike[str]:
@@ -315,7 +375,7 @@ def _discovery_for(
             client=client,
         )
     if provider_key in {"gemini-cli", "gemini_cli"}:
-        return GeminiCliDiscovery()
+        return GeminiCliDiscovery(environ=environ)
     raise ProviderError(f"provider {provider_key!r} has no live model discovery adapter")
 
 
@@ -330,6 +390,7 @@ async def discover_provider_models(
     """Discover models with live, cache, then explicitly-labelled static fallback."""
 
     provider_key = provider.strip().lower()
+    metadata = _catalog_metadata(provider_key)
     catalog_cache = cache or ModelCatalogCache(Path(_cache_root(environ)))
     try:
         discovery = _discovery_for(provider_key, environ, client=client)
@@ -339,6 +400,9 @@ async def discover_provider_models(
             model_ids,
             source=CatalogSource.LIVE,
             recommended=model_ids[0] if model_ids else None,
+            capabilities=metadata.capabilities,
+            auth_requirement=metadata.auth_requirement,
+            transport=metadata.transport,
         )
         result = ModelCatalogResult(
             provider=provider_key,
@@ -359,6 +423,9 @@ async def discover_provider_models(
         tuple(static_models),
         source=CatalogSource.STATIC,
         recommended=next(iter(static_models), None),
+        capabilities=metadata.capabilities,
+        auth_requirement=metadata.auth_requirement,
+        transport=metadata.transport,
     )
     return ModelCatalogResult(
         provider=provider_key,

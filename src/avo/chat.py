@@ -28,7 +28,7 @@ from collections.abc import Callable, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TextIO, cast
+from typing import Any, TextIO
 
 try:
     from prompt_toolkit import PromptSession
@@ -159,6 +159,7 @@ from avo.chat_workspace_commands import (  # re-export
     _undo_workspace,
 )
 from avo.config import ConfigError, build_provider_from_env
+from avo.config_resolver import resolve_security_config
 from avo.exceptions import AvoError
 from avo.permissions import (
     PermissionPolicy,
@@ -228,10 +229,26 @@ def _prompt_toolkit_prompt(prompt_text: str, color_enabled: bool) -> Any:
     return prompt_text
 
 
+def _accept_slash_completion(buffer: Any) -> bool:
+    """Accept the selected slash command before submitting the prompt."""
+
+    if not buffer.text.startswith("/"):
+        return False
+    state = buffer.complete_state
+    if state is None or state.current_completion is None:
+        return False
+    buffer.apply_completion(state.current_completion)
+    return True
+
+
 def _find_prompt_float_container(prompt_session: Any) -> Any | None:
     """Find prompt-toolkit's input float without depending on its tree depth."""
 
-    from prompt_toolkit.layout.containers import DynamicContainer, FloatContainer
+    from prompt_toolkit.layout.containers import (
+        ConditionalContainer,
+        DynamicContainer,
+        FloatContainer,
+    )
 
     def find_float_container(container: Any, seen: set[int]) -> Any | None:
         marker = id(container)
@@ -240,6 +257,11 @@ def _find_prompt_float_container(prompt_session: Any) -> Any | None:
         seen.add(marker)
         if isinstance(container, DynamicContainer):
             return find_float_container(container.get_container(), seen)
+        if isinstance(container, ConditionalContainer):
+            selected = container.content if container.filter() else container.alternative_content
+            if selected is None:
+                return None
+            return find_float_container(selected, seen)
         if isinstance(container, FloatContainer):
             return container
         for child in getattr(container, "children", ()):
@@ -277,72 +299,14 @@ def _place_completion_menu_above(prompt_session: Any) -> None:
 
 
 def _install_command_palette(prompt_session: Any, commands: Sequence[tuple[str, str]]) -> None:
-    """Add a compact, dynamic slash-command palette above the editor.
+    """Keep prompt-toolkit's native completion menu as the sole palette.
 
-    Prompt-toolkit's completion popup is a cursor-relative float. That float
-    is not reliably painted by every terminal/PTY combination, especially
-    when the editor is anchored above a fixed toolbar. A real conditional
-    window is less glamorous internally, but it is deterministic: it occupies
-    only the rows it needs and is part of the editor layout itself.
+    The hook remains for compatibility with callers that used the old custom
+    palette installer. The native menu already provides filtering, selection,
+    descriptions, and highlight rendering without a second layout float.
     """
 
-    from prompt_toolkit.filters import Condition
-    from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
-    from prompt_toolkit.layout.controls import FormattedTextControl
-
-    float_container = _find_prompt_float_container(prompt_session)
-    if float_container is None or not isinstance(float_container.content, HSplit):
-        return
-    content = float_container.content
-
-    def palette_text() -> list[tuple[str, str]]:
-        buffer = prompt_session.default_buffer
-        query = buffer.text.lower()
-        if not query.startswith("/"):
-            return []
-        matches = [(name, description) for name, description in commands if name.startswith(query)]
-        if not matches:
-            return [("class:command-palette.dim", "  No matching command\n")]
-
-        selected = None
-        state = buffer.complete_state
-        if state is not None and state.current_completion is not None:
-            selected = state.current_completion.display
-
-        visible = matches[:8]
-        fragments: list[tuple[str, str]] = [
-            (
-                "class:command-palette.dim",
-                "  Commands · ↑/↓ choose · Enter select · type to filter\n",
-            )
-        ]
-        for name, description in visible:
-            style = (
-                "class:command-palette.selected"
-                if name == selected
-                else "class:command-palette.command"
-            )
-            fragments.append((style, f"  {name:<16}"))
-            fragments.append(("class:command-palette.description", f" {description}\n"))
-        if len(matches) > len(visible):
-            fragments.append(
-                (
-                    "class:command-palette.dim",
-                    f"  … {len(matches) - len(visible)} more\n",
-                )
-            )
-        return fragments
-
-    menu = Window(
-        FormattedTextControl(cast(Any, palette_text), focusable=False),
-        dont_extend_height=True,
-        style="class:command-palette",
-    )
-    palette = ConditionalContainer(
-        menu,
-        Condition(lambda: prompt_session.default_buffer.text.startswith("/")),
-    )
-    content.children.insert(0, palette)
+    return
 
 
 def build_chat_context(
@@ -376,6 +340,31 @@ def build_chat_context(
     resolved_policy = (
         permission_policy if permission_policy is not None else permission_policy_from_env(environ)
     )
+    security_config = resolve_security_config(
+        environ=environ,
+        workspace_root=workspace.root,
+    )
+    plugin_tools: list[Any] = []
+    if security_config.plugin_activation.value:
+        from avo.cli_plugins import active_plugin_site_packages
+        from avo.plugins import TOOL_GROUP, discover_from_paths
+        from avo.tools import Tool
+
+        try:
+            for entry in discover_from_paths(TOOL_GROUP, active_plugin_site_packages()):
+                produced = entry.factory()
+                candidates = produced if isinstance(produced, (list, tuple)) else (produced,)
+                for tool in candidates:
+                    if tool is not None and not isinstance(tool, Tool):
+                        raise AvoError(
+                            f"plugin {entry.name!r} returned an object that is not an Avo tool"
+                        )
+                    if tool is not None:
+                        plugin_tools.append(tool)
+        except Exception as exc:
+            if isinstance(exc, AvoError):
+                raise
+            raise AvoError(f"failed to activate plugin tools: {exc}") from exc
     resolved_approval_callback = approval_callback
     if resolved_approval_callback is None:
         resolved_approval_callback = build_approval_callback(resolved_policy)
@@ -393,12 +382,14 @@ def build_chat_context(
             workspace_map_tool(),
             lint_tool(),
             test_runner_tool(),
-            run_terminal_tool(),
+            run_terminal_tool(security_config=security_config),
             git_status_tool(),
             git_diff_tool(),
             git_commit_tool(),
+            *plugin_tools,
         ],
         approval_callback=resolved_approval_callback,
+        security_config=security_config,
     )
 
     skills_root = workspace_root / ".avo" / "skills"
@@ -655,13 +646,15 @@ async def _run_repl(
 
             pt_bindings = KeyBindings()
 
+            @pt_bindings.add("enter")
+            def _accept_command_completion(event: Any) -> None:
+                buffer = event.current_buffer
+                _accept_slash_completion(buffer)
+                buffer.validate_and_handle()
+
             @pt_bindings.add("/")
             def _start_slash_completion(event: Any) -> None:
                 buffer = event.current_buffer
-                # Reserve rows only while the slash menu is active. Keeping
-                # this at zero during ordinary chat preserves the one-line
-                # bottom editor instead of lifting it permanently.
-                pt_session.reserve_space_for_menu = 8
                 buffer.insert_text("/")
                 buffer.start_completion(select_first=True)
 
@@ -679,11 +672,6 @@ async def _run_repl(
                     "completion-menu.completion.current": "bg:#008b8b #ffffff bold",
                     "completion-menu.meta.completion": "bg:#2a2a2a #a0a0a0",
                     "completion-menu.meta.completion.current": "bg:#006868 #ffffff bold",
-                    "command-palette": "noreverse",
-                    "command-palette.dim": "noreverse #7f8c9a",
-                    "command-palette.command": "noreverse #36cfc9",
-                    "command-palette.selected": "noreverse #ffffff bold",
-                    "command-palette.description": "noreverse #8f9baa",
                     "scrollbar.background": "bg:#222222",
                     "scrollbar.button": "bg:#555555",
                 }
@@ -864,6 +852,7 @@ __all__ = [
     "SLASH_COMMANDS",
     "_FIRST_RUN_MESSAGE",
     "ChatContext",
+    "_accept_slash_completion",
     "_alternate_screen",
     "_clear_screen",
     "_compact_session_history",

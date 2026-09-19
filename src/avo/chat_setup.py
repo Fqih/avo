@@ -64,7 +64,7 @@ _PROVIDER_CATALOG: dict[str, dict[str, str | bool]] = {
         "needs_api_key": False,
     },
     "claude-account": {
-        "label": "Claude account",
+        "label": "Claude Code",
         "default_model": "claude-sonnet-4-6",
         "needs_api_key": False,
     },
@@ -84,7 +84,7 @@ _PROVIDER_DESCRIPTIONS: dict[str, str] = {
     "router": "Multi-Provider Fallback Router (Auto failover: Ollama -> OpenRouter)",
     "codex": "ChatGPT/Codex account (free or paid quota; browser login)",
     "gemini-cli": "Google account (free or paid quota; browser login)",
-    "claude-account": "Claude account (free or paid access; browser login)",
+    "claude-account": "Claude Code (requires eligible plan or Anthropic API key)",
     "ollama-cloud": "Remote Ollama models (API key/device key; cloud quota)",
 }
 
@@ -384,7 +384,7 @@ def interactive_first_run_setup(
                         f"\nOpening the official {provider_label} login in your browser...\n"
                     )
                     stdout.flush()
-                    vendor_login(store_key)
+                    vendor_login("claude-code" if provider_key == "claude-account" else store_key)
                     stored = get_credential(store_key)
                 if stored is None:
                     stdout.write(
@@ -393,7 +393,7 @@ def interactive_first_run_setup(
                     )
 
             if provider_key == "claude-account":
-                env["AVO_PROVIDER"] = "anthropic"
+                env["AVO_PROVIDER"] = "claude-code"
 
         if spec["needs_api_key"]:
             from avo.oauth.store import Credential, get_credential, store_credential

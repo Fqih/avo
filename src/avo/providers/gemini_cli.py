@@ -531,9 +531,9 @@ class GeminiCliProvider:
 
         if status >= 400:
             detail = redact_text(str(getattr(response, "text", "")))
-            raise ProviderError(
+            raise ProviderError.from_status(
+                status,
                 f"Gemini request failed with status {status}: {detail}",
-                retryable=status == 429 or status >= 500,
             )
 
         text = str(getattr(response, "text", ""))

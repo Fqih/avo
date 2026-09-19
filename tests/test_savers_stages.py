@@ -13,6 +13,7 @@ from avo.savers.stages import (
     JsonMinifyStage,
     PreTrimmerStage,
     SaverStage,
+    StructuralCollapseStage,
 )
 
 Messages = list[dict[str, Any]]
@@ -36,6 +37,7 @@ def _sample() -> Messages:
 
 ALL_STAGES: list[SaverStage] = [
     JsonMinifyStage(),
+    StructuralCollapseStage(),
     DedupeToolResultsStage(),
     ElideVerboseOutputStage(),
     PreTrimmerStage(),
@@ -249,3 +251,29 @@ def test_pre_trimmer_skips_small_and_non_str_contents() -> None:
     assert out[0]["content"] == "small"
     assert out[1]["content"] == 1234567890
     assert len(str(out[2]["content"])) < len(big)
+
+
+def test_structural_collapse_collapses_decorative_rules_and_blanks() -> None:
+    stage = StructuralCollapseStage()
+    verbose_output = (
+        "header line\n"
+        "====================================================\n"
+        "\n\n\n\n\n"
+        "content line with trailing spaces   \n"
+        "----------------------------------------------------\n"
+        "footer line"
+    )
+    messages: Messages = [_tool(verbose_output)]
+    out = stage.apply(messages)
+    result = str(out[0]["content"])
+    assert len(result) < len(verbose_output)
+    assert "===" in result
+    assert "============" not in result  # collapsed to max 10
+    assert "\n\n\n" not in result  # multiple blanks collapsed
+
+
+def test_structural_collapse_preserves_short_content() -> None:
+    stage = StructuralCollapseStage()
+    short = "ok"
+    messages: Messages = [_tool(short)]
+    assert stage.apply(messages)[0]["content"] == short

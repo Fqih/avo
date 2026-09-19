@@ -439,9 +439,9 @@ async def stream_sse_chunks(
         status = int(response.status_code)
         if status >= 400:
             detail = redact_text(str(getattr(response, "text", "")))
-            raise ProviderError(
+            raise ProviderError.from_status(
+                status,
                 f"{transport_name} stream failed with status {status}: {detail}",
-                retryable=status == 429 or status >= 500,
             )
         async for line in iter_sse_lines(response.aiter_bytes()):
             for chunk in parse_line(line):
@@ -500,9 +500,9 @@ async def stream_anthropic_chunks(
         status = int(response.status_code)
         if status >= 400:
             detail = redact_text(str(getattr(response, "text", "")))
-            raise ProviderError(
+            raise ProviderError.from_status(
+                status,
                 f"{transport_name} stream failed with status {status}: {detail}",
-                retryable=status == 429 or status >= 500,
             )
         async for event_type, event_payload in iter_anthropic_sse_events(response.aiter_bytes()):
             chunk = parse_anthropic_stream_event(event_type, event_payload)

@@ -5,8 +5,32 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from avo.cli_setup import load_global_avo_config, remember_last_provider, setup_global_avo
 from avo.permissions import PermissionMode, permission_policy_from_env
+
+
+def test_global_config_paths_resolve_at_call_time(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A test/process-specific config directory must beat import-time constants."""
+
+    import avo.cli_setup as cli_setup
+
+    legacy_path = tmp_path / "legacy-import-time-path"
+    resolved_path = tmp_path / "resolved-call-time-path"
+    monkeypatch.setattr(cli_setup, "GLOBAL_AVO_DIR", legacy_path)
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(resolved_path))
+
+    cli_setup.remember_last_provider({"AVO_PROVIDER": "codex", "AVO_MODEL": "gpt-test"})
+
+    assert (resolved_path / "config.json").is_file()
+    assert not (legacy_path / "config.json").exists()
+    assert cli_setup.load_global_avo_config() == {
+        "AVO_PROVIDER": "codex",
+        "AVO_MODEL": "gpt-test",
+    }
 
 
 def test_setup_uses_canonical_default_permission_mode(tmp_path: Path) -> None:

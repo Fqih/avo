@@ -301,3 +301,20 @@ def test_cli_login_status(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert cli_main(["login", "--status"]) == 0
     assert "authenticated" in capsys.readouterr().out.lower()
+
+
+def test_cli_keyboard_interrupt_exits_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import avo.cli as cli
+
+    def interrupted_run(coro: object) -> None:
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.asyncio, "run", interrupted_run)
+
+    assert cli.main(["login", "claude"]) == 130
+    assert "Interrupted" in capsys.readouterr().err

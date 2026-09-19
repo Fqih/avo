@@ -726,11 +726,11 @@ def test_setup_claude_account_opens_official_vendor_login(
     )
 
     assert env == {
-        "AVO_PROVIDER": "anthropic",
+        "AVO_PROVIDER": "claude-code",
         "AVO_MODEL": "claude-sonnet-4-6",
         "AVO_ALLOW_SUBSCRIPTION": "1",
     }
-    assert calls == ["claude"]
+    assert calls == ["claude-code"]
 
 
 def test_setup_ollama_cloud_is_separate_from_local() -> None:

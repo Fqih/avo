@@ -462,6 +462,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"unrecognized arguments: {' '.join(rest)}")
     try:
         return asyncio.run(_execute(args, rest=rest, argv=effective_argv))
+    except KeyboardInterrupt:
+        print("avo: Interrupted", file=sys.stderr)
+        return 130
     except (AvoError, OSError) as exc:
         print(f"avo: {exc}", file=sys.stderr)
         return 2

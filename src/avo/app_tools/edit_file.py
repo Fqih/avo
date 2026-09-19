@@ -18,6 +18,7 @@ Behaviour:
 
 from __future__ import annotations
 
+import difflib
 import os
 from typing import Any
 
@@ -100,10 +101,22 @@ async def _edit_file(arguments: EditFileArguments) -> dict[str, Any]:
         os.write(fd, encoded)
     finally:
         os.close(fd)
+    diff_lines = list(
+        difflib.unified_diff(
+            original_text.splitlines(keepends=True),
+            updated_text.splitlines(keepends=True),
+            fromfile=f"a/{arguments.path}",
+            tofile=f"b/{arguments.path}",
+            n=3,
+        )
+    )
+    diff = "".join(diff_lines)
+
     return {
         "path": str(resolved),
         "size": len(encoded),
         "matches_replaced": original_text.count(arguments.old_string),
+        "diff": diff,
     }
 
 

@@ -198,6 +198,7 @@ def test_provider_models_catalog_has_all_providers() -> None:
         "ollama-cloud",
         "minimax",
         "anthropic",
+        "claude-code",
         "openai",
         "groq",
         "cerebras",
@@ -330,6 +331,31 @@ def test_openai_falls_back_to_codex_oauth(
         }
     )
     assert isinstance(provider, CodexProvider)
+
+
+def test_claude_code_route_uses_anthropic_oauth_adapter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+) -> None:
+    from avo.oauth.store import Credential, store_credential
+    from avo.providers.anthropic import AnthropicProvider
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    store_credential(
+        Credential(
+            provider="claude",
+            kind="oauth",
+            access_token="test-token",
+            subscription=True,
+        )
+    )
+    provider = build_provider_from_env(
+        {
+            "AVO_PROVIDER": "claude-code",
+            "AVO_MODEL": "claude-sonnet-4-6",
+            "AVO_ALLOW_SUBSCRIPTION": "1",
+        }
+    )
+    assert isinstance(provider, AnthropicProvider)
 
 
 def test_gemini_falls_back_to_gemini_cli_oauth(

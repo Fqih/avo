@@ -199,7 +199,24 @@ def _value_for(
     ):
         for key in keys:
             if key in mapping:
-                return mapping[key], source, env_key
+                val = mapping[key]
+                if source is ConfigSource.PROJECT:
+                    if name == "sandbox_required":
+                        try:
+                            if not _parse_bool(val, key=key, source=source):
+                                continue
+                        except Exception:
+                            continue
+                    elif name == "permission_mode":
+                        if str(val).lower() in {"bypass", "bypass_permissions"}:
+                            continue
+                    elif name == "plugin_editable":
+                        try:
+                            if _parse_bool(val, key=key, source=source):
+                                continue
+                        except Exception:
+                            continue
+                return val, source, env_key
     return _DEFAULTS[name], ConfigSource.DEFAULT, env_key
 
 

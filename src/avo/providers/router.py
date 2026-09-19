@@ -217,6 +217,13 @@ class FallbackRouterProvider(BaseRouterProvider):
                 self._record_failure(name, exc)
                 errors.append(f"[{name}] {exc!s}")
                 _LOG.warning("provider %r failed (%s); checking next route", name, exc)
+                if isinstance(exc, ProviderError) and not exc.retryable:
+                    raise ProviderError(
+                        f"route {name!r} failed without a retry path: {exc}",
+                        retryable=False,
+                        kind=exc.kind,
+                        status_code=exc.status_code,
+                    ) from exc
                 if self._on_fallback is not None and i + 1 < len(candidates):
                     next_name = candidates[i + 1][0]
                     self._on_fallback(name, next_name, exc)
@@ -249,6 +256,13 @@ class FallbackRouterProvider(BaseRouterProvider):
                 self._record_failure(name, exc)
                 errors.append(f"[{name}] {exc!s}")
                 _LOG.warning("streaming from provider %r failed (%s)", name, exc)
+                if isinstance(exc, ProviderError) and not exc.retryable:
+                    raise ProviderError(
+                        f"route {name!r} failed without a retry path: {exc}",
+                        retryable=False,
+                        kind=exc.kind,
+                        status_code=exc.status_code,
+                    ) from exc
                 if yielded_any:
                     raise ProviderError(
                         f"streaming error on {name} after partial output: {exc!s}"
