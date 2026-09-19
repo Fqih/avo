@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Autonomous Loop & Self-Paced Runner (`avo.loop`)**:
+  - Added schedule parsing for intervals (`30s`, `5m`, `2h`, `1d`) and 5-part cron syntax.
+  - Added `LoopRunner` with budget limit enforcement, failure backoff, metrics aggregation, and pause/resume lifecycle.
+  - Integrated `/loop CADENCE PROMPT`, `/unloop`, and `/loop-status` REPL slash commands.
+- **Code Intelligence & AST Tools (`avo.code_intel`)**:
+  - Native Python `ast` symbol extractor (`extract_symbols`), declaration finder (`find_symbol_definitions`), and reference tracker (`find_symbol_references`).
+  - Added workspace-contained FunctionTools: `outline_symbols`, `find_definitions`, and `find_references`.
+- **Multi-Agent Shared Blackboard Memory (`avo.blackboard`)**:
+  - Shared typed key-value scratchpad backed by SQLite with optimistic versioning and namespace isolation.
+  - Added agent FunctionTools: `blackboard_set`, `blackboard_get`, and `blackboard_list`.
+- **Web Cockpit Full-Duplex (`avo.web_approval`, `avo.web_dag`)**:
+  - Added `WebApprovalBridge` for human-in-the-loop tool approval with `GET /api/approvals/pending` and `POST /api/approvals/{id}/decision`.
+  - Added DAG trace visualizer with `GET /api/runs/{id}/dag` and Mermaid graph rendering.
+
 ## [0.7.3] - 2026-09-20
 
 ### Added

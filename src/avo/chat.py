@@ -195,6 +195,8 @@ class ChatContext:
     stream_enabled: bool = False
     agent_profiles: AgentProfileRegistry | None = None
     provider_factory: Callable[[], Any] | None = None
+    active_loop_runner: Any | None = None
+    active_loop_task: asyncio.Task[None] | None = None
 
 
 def _position_prompt_at_bottom(out: TextIO, *, terminal_rows: int | None = None) -> None:

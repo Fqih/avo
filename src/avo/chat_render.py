@@ -433,6 +433,9 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/jobs", "list background tasks"),
     ("/job ID", "show one background task"),
     ("/cancel ID", "cancel a running background task"),
+    ("/loop CADENCE PROMPT", "start an autonomous loop (e.g. /loop 5m run tests)"),
+    ("/unloop", "stop the active autonomous loop"),
+    ("/loop-status", "show active autonomous loop status and metrics"),
     ("/quit (or /exit, Ctrl+D)", "leave the chat"),
 )
 

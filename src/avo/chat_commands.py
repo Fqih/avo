@@ -11,6 +11,7 @@ Re-exported from :mod:`avo.chat` for backward compatibility.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from pathlib import Path
@@ -780,6 +781,81 @@ def _show_combo_status(
     out.flush()
 
 
+def _start_loop(ctx: ChatContext, args: list[str], out: TextIO, err: TextIO) -> None:
+    """Start a recurring background loop prompt."""
+    if len(args) < 3:
+        err.write("usage: /loop <CADENCE> <PROMPT> (e.g. /loop 5m run tests)\n")
+        err.flush()
+        return
+
+    cadence = args[1]
+    prompt = " ".join(args[2:])
+
+    from avo.loop.runner import LoopRunner, LoopState
+    from avo.loop.schedule import parse_schedule
+
+    if ctx.active_loop_runner is not None and ctx.active_loop_runner.state in (
+        LoopState.RUNNING,
+        LoopState.IDLE,
+        LoopState.PAUSED,
+    ):
+        err.write("A loop is already active. Run /unloop first.\n")
+        err.flush()
+        return
+
+    try:
+        from avo.budget import resolve_budget_config
+
+        schedule = parse_schedule(cadence)
+        budget = resolve_budget_config()
+        runner = LoopRunner(ctx.runtime, schedule=schedule, prompt=prompt, budget_config=budget)
+        ctx.active_loop_runner = runner
+        ctx.active_loop_task = asyncio.create_task(runner.run_forever(), name="avo-autonomous-loop")
+        out.write(f"✓ Started autonomous loop every {cadence}: {prompt!r}\n")
+        out.flush()
+    except Exception as exc:
+        err.write(f"Failed to start loop: {exc}\n")
+        err.flush()
+
+
+def _stop_loop(ctx: ChatContext, out: TextIO, err: TextIO) -> None:
+    """Stop the active background loop."""
+    if ctx.active_loop_runner is None:
+        err.write("No active loop running.\n")
+        err.flush()
+        return
+
+    ctx.active_loop_runner.stop()
+    if ctx.active_loop_task and not ctx.active_loop_task.done():
+        ctx.active_loop_task.cancel()
+    ctx.active_loop_runner = None
+    ctx.active_loop_task = None
+    out.write("✓ Stopped autonomous loop.\n")
+    out.flush()
+
+
+def _show_loop_status(ctx: ChatContext, out: TextIO) -> None:
+    """Display metrics and status of the current loop."""
+    runner = ctx.active_loop_runner
+    if runner is None:
+        out.write("No autonomous loop currently registered.\n")
+        out.flush()
+        return
+
+    out.write(f"Autonomous Loop: {runner.state.value.upper()}\n")
+    out.write(f"Prompt: {runner.prompt!r}\n")
+    out.write(f"Completed ticks: {len(runner.ticks)}\n")
+    out.write(f"Total tokens used: {runner.cumulative_usage.total_tokens}\n")
+    if runner.ticks:
+        last = runner.ticks[-1]
+        out.write(f"Last tick #{last.tick_number} [{last.status}] ({last.duration_ms:.1f}ms)\n")
+        if last.output:
+            out.write(f"  Output: {last.output[:200]}...\n")
+        if last.error:
+            out.write(f"  Error: {last.error}\n")
+    out.flush()
+
+
 async def _run_slash(
     ctx: ChatContext,
     args: list[str],
@@ -1143,6 +1219,18 @@ async def _run_slash(
             )
             return False
         out.write(f"Cancellation requested for job {args[1]}.\n")
+        return False
+
+    if cmd == "/loop":
+        _start_loop(ctx, args, out, err)
+        return False
+
+    if cmd == "/unloop":
+        _stop_loop(ctx, out, err)
+        return False
+
+    if cmd in ("/loop-status", "/loop_status"):
+        _show_loop_status(ctx, out)
         return False
 
     err.write(f"unknown command: {cmd}; try /help to list slash commands\n")

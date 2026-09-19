@@ -36,6 +36,7 @@ from avo.config_resolver import resolve_security_config
 from avo.permissions import permission_policy_from_env
 from avo.persona import PersonaManager
 from avo.web_api import ApiServerMixin, WebApiMixin, _mask_secret  # re-export
+from avo.web_approval import WebApprovalBridge
 from avo.web_http import _LOG, WebHttpMixin, WebSecurityConfig  # re-export
 from avo.web_pages import WebPageMixin, _get_dashboard_html  # re-export
 from avo.web_playground import PlaygroundServerMixin, WebPlaygroundMixin
@@ -132,6 +133,7 @@ class AvoWebServer(
         self._config_lock = threading.Lock()
         self.active_provider: str = os.environ.get("AVO_PROVIDER", "")
         self.active_model: str = os.environ.get("AVO_MODEL", "")
+        self.approval_bridge = WebApprovalBridge()
 
 
 def run_web_dashboard(

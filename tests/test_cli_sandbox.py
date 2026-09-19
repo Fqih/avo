@@ -114,7 +114,7 @@ def test_run_creates_container_with_expected_kwargs(
     assert kwargs["network_mode"] == "none"
     assert kwargs["mem_limit"] == "512m"
     assert kwargs["image"] == "python:3.12-slim"
-    assert kwargs["auto_remove"] is True
+    assert kwargs["security_opt"] == ["no-new-privileges:true"]
     assert kwargs["read_only"] is True
     assert kwargs["cap_drop"] == ["ALL"]
     assert kwargs["pids_limit"] == 128

@@ -158,8 +158,8 @@ def test_prompt_toolkit_prompt_parses_ansi_colors() -> None:
         _prompt_toolkit_prompt("\033[1;36m" + chr(0x276F) + "\033[0m ", True)
     )
 
-    assert "\033" not in "".join(text for _style, text in rendered)
-    assert chr(0x276F) in "".join(text for _style, text in rendered)
+    assert "\033" not in "".join(item[1] for item in rendered)
+    assert chr(0x276F) in "".join(item[1] for item in rendered)
 
 
 @pytest.mark.asyncio
@@ -738,9 +738,11 @@ async def test_chat_file_tools_work_inside_workspace(
 
     with bind_workspace(ctx.workspace):
         result = await write_file_tool().invoke({"path": "via_chat.txt", "content": "written"})
+        assert isinstance(result, dict)
         assert result["size"] == 7
 
         read_result = await read_file_tool().invoke({"path": "via_chat.txt"})
+        assert isinstance(read_result, dict)
         assert read_result["content"] == "written"
 
     assert (chat_env["workspace"] / "via_chat.txt").read_text(encoding="utf-8") == "written"
@@ -2115,3 +2117,58 @@ async def test_run_repl_records_history(
     assert history_file.exists()
     assert draft_file.exists()
     assert "initial thought" in draft_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_repl_loop_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+    ctx.runtime.provider = _ScriptedProvider([ModelResponse(content="loop tick ok")])
+
+    # 1. /loop usage error with missing args
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/loop"], stdout, stderr, env)
+    assert res is False
+    assert "usage: /loop" in stderr.getvalue()
+
+    # 2. Start loop
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/loop", "10s", "check", "system"], stdout, stderr, env)
+    assert res is False
+    assert "Started autonomous loop" in stdout.getvalue()
+    assert ctx.active_loop_runner is not None
+
+    # 3. /loop while already active
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/loop", "5s", "another"], stdout, stderr, env)
+    assert res is False
+    assert "already active" in stderr.getvalue()
+
+    # 4. /loop-status
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/loop-status"], stdout, stderr, env)
+    assert res is False
+    assert "Autonomous Loop:" in stdout.getvalue()
+
+    # 5. /unloop
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/unloop"], stdout, stderr, env)
+    assert res is False
+    assert "Stopped autonomous loop" in stdout.getvalue()
+    assert ctx.active_loop_runner is None

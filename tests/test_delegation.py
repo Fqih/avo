@@ -230,7 +230,7 @@ async def test_coordinator_pipeline_executes_sequentially_and_passes_output() ->
             super().__init__(responses)
 
         async def generate(self, request: ModelRequest) -> ModelResponse:
-            received_prompts.append(str(request.messages[0]["content"]))
+            received_prompts.append(str(request.messages[-1]["content"]))
             return await super().generate(request)
 
     responses_list = [
