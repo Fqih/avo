@@ -30,6 +30,7 @@ from avo.app_tools import (
 from avo.app_tools.test_runner import run_tests
 from avo.app_tools.workspace import Workspace
 from avo.app_tools.worktree import GitWorktreeManager
+from avo.cli_run import build_cli_progress_hooks
 from avo.config import build_provider_from_env
 from avo.config_resolver import resolve_security_config
 from avo.permissions import PermissionMode, PermissionPolicy, build_approval_callback
@@ -130,12 +131,16 @@ async def run_cli_fix(
         git_commit_tool(),
     ]
 
+    color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
+    progress_hooks = build_cli_progress_hooks(out, color=color_enabled)
+
     runtime = AgentRuntime(
         provider=resolved_provider,
         event_store=store,
         tools=tools,
         policy=LoopPolicy(max_steps=max_steps, max_total_tokens=token_budget),
         approval_callback=approval_cb,
+        hooks=progress_hooks,
     )
 
     repair_prompt = (

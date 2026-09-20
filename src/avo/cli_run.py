@@ -8,7 +8,7 @@ import secrets
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from avo.app_tools import (
     batch_replace_tool,
@@ -31,6 +31,7 @@ from avo.app_tools.workspace import Workspace
 from avo.app_tools.worktree import GitWorktreeManager
 from avo.config import build_provider_from_env
 from avo.config_resolver import resolve_security_config
+from avo.hooks import HookContext, HookDecision, HookEvent, HookRegistry
 from avo.models import RunResult
 from avo.permissions import PermissionMode, PermissionPolicy, build_approval_callback
 from avo.policies import LoopPolicy
@@ -40,6 +41,62 @@ from avo.storage.sqlite import SQLiteEventStore
 from avo.tools import Tool
 
 _LOG = logging.getLogger(__name__)
+
+
+def build_cli_progress_hooks(out: TextIO, *, color: bool = True) -> HookRegistry:
+    """Register observational progress hooks to display live tool activity."""
+    hooks = HookRegistry()
+
+    def _format_args(arguments: Mapping[str, Any] | None) -> str:
+        if not arguments:
+            return ""
+        parts = []
+        for k in ("path", "command", "target", "pattern", "query", "message"):
+            if k in arguments:
+                val = str(arguments[k])
+                if len(val) > 40:
+                    val = val[:37] + "..."
+                parts.append(f"{k}={val!r}")
+        if not parts:
+            for k, v in list(arguments.items())[:2]:
+                val = str(v)
+                if len(val) > 30:
+                    val = val[:27] + "..."
+                parts.append(f"{k}={val!r}")
+        return ", ".join(parts)
+
+    def on_pre_tool(ctx: HookContext) -> HookDecision:
+        if ctx.tool_call:
+            name = ctx.tool_call.name
+            args_str = _format_args(ctx.tool_call.arguments)
+            if color:
+                badge = f"\033[90m⚙️  tool:\033[0m \033[1;36m{name}\033[0m"
+                out.write(f"\n{badge} \033[90m({args_str})\033[0m\n")
+            else:
+                out.write(f"\n⚙️  tool: {name} ({args_str})\n")
+            out.flush()
+        return HookDecision.allow()
+
+    def on_post_tool(ctx: HookContext) -> HookDecision:
+        if ctx.tool_call and ctx.tool_result:
+            name = ctx.tool_call.name
+            if ctx.tool_result.success:
+                if color:
+                    out.write(f"\033[32m✓ {name} completed\033[0m\n\n")
+                else:
+                    out.write(f"✓ {name} completed\n\n")
+            else:
+                err_text = str(ctx.tool_result.error or "failed")[:100]
+                if color:
+                    out.write(f"\033[31m✗ {name} failed:\033[0m {err_text}\n\n")
+                else:
+                    out.write(f"✗ {name} failed: {err_text}\n\n")
+            out.flush()
+        return HookDecision.allow()
+
+    hooks.register(HookEvent.PRE_TOOL_USE, on_pre_tool)
+    hooks.register(HookEvent.POST_TOOL_USE, on_post_tool)
+    return hooks
 
 
 async def run_cli_task(
@@ -114,12 +171,16 @@ async def run_cli_task(
             out.write(token)
             out.flush()
 
+    color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
+    progress_hooks = build_cli_progress_hooks(out, color=color_enabled) if not json_output else None
+
     runtime = AgentRuntime(
         provider=resolved_provider,
         event_store=store,
         tools=tools,
         policy=LoopPolicy(max_steps=max_steps, max_total_tokens=token_budget),
         approval_callback=approval_cb,
+        hooks=progress_hooks,
     )
 
     if not json_output:

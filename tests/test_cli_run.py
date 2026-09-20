@@ -140,3 +140,36 @@ def test_main_maps_positional_prompt_to_run_command(
     code = main(["my task prompt", "-d", str(tmp_path / "avo.db")])
     assert code == 0
     assert called_tasks == ["my task prompt"]
+
+
+@pytest.mark.asyncio
+async def test_build_cli_progress_hooks_renders_badges() -> None:
+    import io
+
+    from avo.cli_run import build_cli_progress_hooks
+    from avo.hooks import HookContext, HookEvent
+    from avo.models import ToolCall, ToolResult
+
+    out = io.StringIO()
+    hooks = build_cli_progress_hooks(out, color=False)
+
+    call = ToolCall(name="read_file", arguments={"path": "src/avo/cli.py"})
+    res = ToolResult(
+        tool_call_id="call-1",
+        tool_name="read_file",
+        success=True,
+        output="content",
+    )
+
+    # Fire pre-tool hook
+    ctx_pre = HookContext(event=HookEvent.PRE_TOOL_USE, run_id="run-1", tool_call=call)
+    await hooks.fire(ctx_pre)
+    assert "tool: read_file" in out.getvalue()
+    assert "path='src/avo/cli.py'" in out.getvalue()
+
+    # Fire post-tool hook
+    ctx_post = HookContext(
+        event=HookEvent.POST_TOOL_USE, run_id="run-1", tool_call=call, tool_result=res
+    )
+    await hooks.fire(ctx_post)
+    assert "read_file completed" in out.getvalue()
