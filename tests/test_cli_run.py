@@ -70,6 +70,44 @@ async def test_run_cli_task_with_worktree_isolation(tmp_path: Path) -> None:
     assert result.output == "Worktree task done."
 
 
+@pytest.mark.asyncio
+async def test_run_cli_task_with_worktree_auto_merge(tmp_path: Path) -> None:
+    repo = tmp_path / "git_repo_merge"
+    repo.mkdir()
+    subprocess.run(  # noqa: ASYNC221
+        ["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(  # noqa: ASYNC221
+        ["git", "config", "user.name", "Test User"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(  # noqa: ASYNC221
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README.md").write_text("# Initial", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)  # noqa: ASYNC221
+    subprocess.run(  # noqa: ASYNC221
+        ["git", "commit", "-m", "initial commit"], cwd=repo, check=True, capture_output=True
+    )
+
+    fake_provider = FakeProvider([ModelResponse(content="Auto merge task done.")])
+    db_path = repo / "avo.db"
+
+    result = await run_cli_task(
+        task="Modify code with auto merge",
+        workspace_root=repo,
+        database_path=db_path,
+        provider=fake_provider,
+        use_worktree=True,
+        auto_merge=True,
+    )
+
+    assert result.status is RunState.COMPLETED
+    assert result.output == "Auto merge task done."
+
+
 def test_main_maps_positional_prompt_to_run_command(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -85,6 +123,7 @@ def test_main_maps_positional_prompt_to_run_command(
     called_tasks: list[str] = []
 
     async def mock_run_cli_task(task: str, **_kwargs: object) -> RunResult:
+        del _kwargs
         called_tasks.append(task)
         return RunResult(
             run_id="run-mock",
