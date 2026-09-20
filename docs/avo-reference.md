@@ -1,6 +1,6 @@
 # Avo API Reference
 
-**Package:** `avo` **Version:** `0.7.3` (`src/avo/__init__.py: __version__ = "0.7.3"`)
+**Package:** `avo` **Version:** `0.7.4` (`src/avo/__init__.py: __version__ = "0.7.4"`)
 **Python:** `>=3.11` **Core dependencies:** `pydantic>=2.8,<3`, `prompt-toolkit>=3.0.43`
 **Stable ABI target:** `0.2.0` (`_STABLE_ABI` in `src/avo/__init__.py`)
 

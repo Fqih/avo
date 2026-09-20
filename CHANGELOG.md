@@ -5,9 +5,25 @@ All notable changes to avo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.4] - 2026-09-20
 
 ### Added
+
+- **Zero-Python Standalone Executable & Builders (`scripts/build_standalone.py`)**:
+  - Added PyInstaller single-file packaging for Linux (`x86_64`, `aarch64`), macOS (`x86_64`, `aarch64`), and Windows (`x86_64`).
+  - Added one-line standalone installers (`install.sh`, `install.ps1`) that download pre-built binaries directly without requiring Python or uv.
+  - Added GitHub Actions standalone release workflow (`.github/workflows/standalone.yml`).
+- **Git Worktree Isolation (`avo.app_tools.worktree`)**:
+  - Added `GitWorktreeManager` for isolating speculative agent code modifications into `.avo/worktrees/<run_id>`.
+  - Added automatic `.gitignore` protection for `.avo/worktrees` and clean merge/cleanup semantics.
+- **Durable Webhook Approval (`avo.web_approval`)**:
+  - Added `DurableApprovalStore` backed by SQLite `pending_approvals` table.
+  - Added REST webhook endpoints `GET /api/approvals`, `GET /api/approvals/{id}`, and `POST /api/approvals/{id}/decision` surviving process restarts.
+- **Direct Static Site Deployment**:
+  - Redesigned `site/` as a modern standalone developer site.
+  - Removed `.github/workflows/docs.yml` and configured `netlify.toml` for direct static publishing.
+
+## [0.7.3] - 2026-09-19
 
 - **Autonomous Loop & Self-Paced Runner (`avo.loop`)**:
   - Added schedule parsing for intervals (`30s`, `5m`, `2h`, `1d`) and 5-part cron syntax.
