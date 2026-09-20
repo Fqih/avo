@@ -446,23 +446,24 @@ class SandboxExecutor:
         except SandboxError:
             raise
         except Exception as exc:  # pragma: no cover - docker errors vary
-            from .rootless_sandbox import (
-                RootlessSandboxExecutor,
-                is_rootless_sandbox_supported,
-            )
+            if can_fallback:
+                from .rootless_sandbox import (
+                    RootlessSandboxExecutor,
+                    is_rootless_sandbox_supported,
+                )
 
-            if is_rootless_sandbox_supported():
-                rootless = RootlessSandboxExecutor(
-                    network_mode=self.network_mode,
-                    timeout_seconds=self.timeout_seconds,
-                    mem_limit=self.mem_limit,
-                )
-                return await rootless.run(
-                    command,
-                    workspace_dir=workspace_dir,
-                    env=env,
-                    timeout_seconds=timeout_seconds,
-                )
+                if is_rootless_sandbox_supported():
+                    rootless = RootlessSandboxExecutor(
+                        network_mode=self.network_mode,
+                        timeout_seconds=self.timeout_seconds,
+                        mem_limit=self.mem_limit,
+                    )
+                    return await rootless.run(
+                        command,
+                        workspace_dir=workspace_dir,
+                        env=env,
+                        timeout_seconds=timeout_seconds,
+                    )
             raise SandboxError(f"failed to create sandbox container: {exc}") from exc
 
         try:
@@ -529,7 +530,7 @@ class SandboxExecutor:
                 read_only=True,
                 cap_drop=["ALL"],
                 security_opt=["no-new-privileges:true"],
-                tmpfs={"/tmp": "size=64m,mode=1777"},
+                tmpfs={"/tmp": "size=64m,mode=1777"},  # nosec B108
                 working_dir=_IN_CONTAINER_WORKDIR,
                 detach=True,
             ),

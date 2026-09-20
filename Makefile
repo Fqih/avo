@@ -32,6 +32,14 @@ test:
 test-app-tools:
 	$(PYTHON) -m pytest tests/test_workspace.py tests/test_approval.py tests/test_file_tools.py -v
 
+security-check:
+	bandit -r src/avo -c pyproject.toml --severity-level medium
+
+coverage:
+	$(PYTHON) -m pytest --cov=avo --cov-report=term-missing
+
+ci: lint format-check typecheck security-check test
+
 benchmark:
 	$(PYTHON) benchmark/run_benchmark.py
 
@@ -45,4 +53,4 @@ clean:
 	find . -type d -name .mypy_cache -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .ruff_cache -exec rm -rf {} + 2>/dev/null || true
 
-all-gates: lint format-check typecheck test
+all-gates: ci

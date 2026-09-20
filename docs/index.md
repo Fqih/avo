@@ -32,9 +32,9 @@ avo doctor
 
 </div>
 
-!!! warning "Alpha status"
+!!! warning "Alpha / Pre-Beta status"
 
-    0.1 is an **alpha foundation**. Suitable for evaluation, deterministic
+    v0.7.3+ is an **alpha foundation / pre-beta candidate**. Suitable for evaluation, deterministic
     tests, and local prototypes; **not production-ready**.
 
 ## Start here

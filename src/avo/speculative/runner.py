@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import secrets
+import shlex
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,7 @@ class WorkspaceSnapshot:
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root).resolve()
+        self._snapshots: dict[str, str | None] = {}
 
     def capture(self, name: str | None = None) -> str:
         """Create a stash snapshot of the current workspace state."""
@@ -41,6 +43,7 @@ class WorkspaceSnapshot:
             text=True,
         ).stdout.strip()
 
+        stash_sha: str | None = None
         if status:
             subprocess.run(
                 ["git", "stash", "push", "--include-untracked", "-m", tag],
@@ -48,18 +51,28 @@ class WorkspaceSnapshot:
                 check=True,
                 capture_output=True,
             )
+            res = subprocess.run(
+                ["git", "rev-parse", "-q", "--verify", "refs/stash"],
+                cwd=self.root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            stash_sha = res.stdout.strip()
             subprocess.run(
                 ["git", "stash", "apply"],
                 cwd=self.root,
                 check=True,
                 capture_output=True,
             )
+
+        self._snapshots[tag] = stash_sha
         return tag
 
     def restore(self, tag: str) -> bool:
-        """Roll back working directory to clean state of the snapshot."""
+        """Roll back working directory to the exact state at capture time."""
         try:
-            # Discard all dirty changes and untracked files
+            # 1. Discard all dirty changes and untracked files introduced by speculative run
             subprocess.run(
                 ["git", "reset", "--hard", "HEAD"],
                 cwd=self.root,
@@ -72,27 +85,46 @@ class WorkspaceSnapshot:
                 check=True,
                 capture_output=True,
             )
-            # Find and drop the stash entry matching tag
-            res = subprocess.run(
-                ["git", "stash", "list"],
-                cwd=self.root,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            for line in res.stdout.splitlines():
-                if tag in line:
-                    stash_id = line.split(":", 1)[0].strip()
-                    subprocess.run(
-                        ["git", "stash", "drop", stash_id],
-                        cwd=self.root,
-                        check=False,
-                        capture_output=True,
-                    )
-                    break
+
+            # 2. Re-apply the initial uncommitted state captured in stash
+            stash_sha = self._snapshots.get(tag)
+            if stash_sha:
+                apply_res = subprocess.run(
+                    ["git", "stash", "apply", stash_sha],
+                    cwd=self.root,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if apply_res.returncode != 0:
+                    return False
+
             return True
         except subprocess.CalledProcessError:
             return False
+
+    def discard(self, tag: str) -> None:
+        """Discard a snapshot stash when no longer needed (e.g. on success)."""
+        stash_sha = self._snapshots.pop(tag, None)
+        if not stash_sha:
+            return
+        res = subprocess.run(
+            ["git", "stash", "list"],
+            cwd=self.root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        for line in res.stdout.splitlines():
+            if tag in line:
+                stash_id = line.split(":", 1)[0].strip()
+                subprocess.run(
+                    ["git", "stash", "drop", stash_id],
+                    cwd=self.root,
+                    check=False,
+                    capture_output=True,
+                )
+                break
 
 
 class SpeculativeRunner:
@@ -102,7 +134,7 @@ class SpeculativeRunner:
         self,
         runtime: AgentRuntime,
         workspace_root: Path,
-        test_command: str = "pytest -q",
+        test_command: str | Sequence[str] = "pytest -q",
         max_attempts: int = 2,
     ) -> None:
         self.runtime = runtime
@@ -114,10 +146,14 @@ class SpeculativeRunner:
     def _run_tests(self) -> tuple[bool, str]:
         """Execute test command in workspace. Return (passed, output)."""
         try:
+            cmd = (
+                shlex.split(self.test_command)
+                if isinstance(self.test_command, str)
+                else list(self.test_command)
+            )
             res = subprocess.run(
-                self.test_command,
+                cmd,
                 cwd=self.workspace_root,
-                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=60.0,

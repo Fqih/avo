@@ -81,4 +81,31 @@ async def test_speculative_runner_auto_rolls_back_on_test_failure(tmp_path: Path
     assert result.rolled_back is True
     # Verify file was rolled back to clean state
     assert "assert True" in (tmp_path / "test_sample.py").read_text(encoding="utf-8")
-    assert "assert True" in (tmp_path / "test_sample.py").read_text(encoding="utf-8")
+
+
+def test_workspace_snapshot_preserves_dirty_user_changes_on_rollback(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+
+    # 1. User has uncommitted dirty changes and untracked file BEFORE capture
+    (tmp_path / "README.md").write_text("user wip edit", encoding="utf-8")
+    (tmp_path / "user_notes.txt").write_text("my notes", encoding="utf-8")
+
+    snapshot = WorkspaceSnapshot(tmp_path)
+    tag = snapshot.capture("wip-save")
+
+    # Working tree still has user wip edit and notes
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == "user wip edit"
+    assert (tmp_path / "user_notes.txt").read_text(encoding="utf-8") == "my notes"
+
+    # 2. Speculative task ruins the code and creates trash files
+    (tmp_path / "README.md").write_text("corrupted by agent", encoding="utf-8")
+    (tmp_path / "agent_trash.tmp").write_text("junk", encoding="utf-8")
+
+    # 3. Rollback
+    restored = snapshot.restore(tag)
+    assert restored is True
+
+    # 4. User's initial uncommitted changes MUST be preserved, agent trash deleted
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == "user wip edit"
+    assert (tmp_path / "user_notes.txt").read_text(encoding="utf-8") == "my notes"
+    assert not (tmp_path / "agent_trash.tmp").exists()

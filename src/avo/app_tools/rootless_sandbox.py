@@ -4,22 +4,49 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import shutil
+import subprocess
 import time
 from collections.abc import Mapping
 from pathlib import Path
 
 from avo.exceptions import ToolExecutionError
 
-from .sandbox import SandboxResult
+from .sandbox import SandboxResult, build_safe_environment
 
 SandboxError = ToolExecutionError
 
 
 def is_rootless_sandbox_supported() -> bool:
-    """Check if rootless bwrap isolation is available on the host."""
-    return bool(shutil.which("bwrap"))
+    """Check if rootless bwrap isolation is available and functional on the host."""
+    bwrap_path = shutil.which("bwrap")
+    if not bwrap_path:
+        return False
+
+    try:
+        # Probe capability with a minimal command checking namespace creation
+        res = subprocess.run(
+            [
+                bwrap_path,
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--unshare-pid",
+                "--unshare-net",
+                "--",
+                "true",
+            ],
+            capture_output=True,
+            timeout=2.0,
+            check=False,
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
 
 
 class RootlessSandboxExecutor:
@@ -46,47 +73,53 @@ class RootlessSandboxExecutor:
     ) -> SandboxResult:
         """Run command in a rootless bwrap sandbox."""
         bwrap_path = shutil.which("bwrap")
-        if not bwrap_path:
-            raise SandboxError("Bubblewrap (bwrap) is not installed on this host.")
+        if not bwrap_path or not is_rootless_sandbox_supported():
+            raise SandboxError("Bubblewrap (bwrap) is not available or supported on this host.")
 
         effective_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
         ws_resolved = str(Path(workspace_dir).resolve())  # noqa: ASYNC240
 
-        args: list[str] = [
-            bwrap_path,
-            "--ro-bind",
-            "/",
-            "/",
-            "--tmpfs",
-            "/tmp",
-            "--proc",
-            "/proc",
-            "--dev",
-            "/dev",
-            "--bind",
-            ws_resolved,
-            ws_resolved,
-            "--chdir",
-            ws_resolved,
-            "--die-with-parent",
-            "--unshare-pid",
-            "--unshare-ipc",
-            "--unshare-uts",
-        ]
+        args: list[str] = [bwrap_path]
+
+        # Bind-mount minimal standard system directories instead of full root /
+        for sys_dir in ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc"):
+            if Path(sys_dir).exists():  # noqa: ASYNC240
+                args.extend(["--ro-bind", sys_dir, sys_dir])
+
+        args.extend(
+            [
+                "--tmpfs",
+                "/tmp",  # nosec B108
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--bind",
+                ws_resolved,
+                ws_resolved,
+                "--chdir",
+                ws_resolved,
+                "--die-with-parent",
+                "--unshare-pid",
+                "--unshare-ipc",
+                "--unshare-uts",
+            ]
+        )
 
         if self.network_mode == "none":
             args.append("--unshare-net")
 
         args.extend(["--", "sh", "-c", command])
 
-        merged_env = {**os.environ, **(env or {})}
+        # Filter environment to prevent token / secret leakage
+        safe_env = build_safe_environment(env, workspace_root=Path(workspace_dir))
         start_time = time.monotonic()
 
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=merged_env,
+            env=safe_env,
         )
 
         try:

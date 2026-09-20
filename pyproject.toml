@@ -209,6 +209,7 @@ select = [
 skips = [
   "B101",  # assert_used (invariants, not validation)
   "B105",  # hardcoded_password_string (error tag, not credential)
+  "B108",  # hardcoded_tmp_directory (container/bwrap in-sandbox tmpfs mount target)
   "B112",  # try_except_continue (intentional in retry loops)
   "B311",  # random for non-crypto jitter
   "B404",  # subprocess import

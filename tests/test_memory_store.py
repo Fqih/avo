@@ -78,3 +78,23 @@ async def test_memory_function_tools(tmp_path: Path) -> None:
     recall_res: Any = await rec_tool.invoke({"query": "framework endpoints", "limit": 2})
     assert recall_res["count"] == 1
     assert "FastAPI" in recall_res["results"][0]["content"]
+
+
+def test_fact_store_malformed_lines_handling(tmp_path: Path) -> None:
+    store_file = tmp_path / "memory.jsonl"
+    line1 = (
+        '{"id":"valid1","content":"Valid fact 1","category":"user",'
+        '"source":"user","tags":[],"session_id":"s1","created_at":"2026-09-20T00:00:00Z"}'
+    )
+    line2 = "NOT VALID JSON!!! CORRUPTED LINE"
+    line3 = (
+        '{"id":"valid2","content":"Valid fact 2","category":"project",'
+        '"source":"model","tags":[],"session_id":"s2","created_at":"2026-09-20T00:00:00Z"}'
+    )
+    store_file.write_text(f"{line1}\n{line2}\n{line3}\n", encoding="utf-8")
+
+    store = FactStore(path=store_file)
+    facts = store.list_all()
+    assert len(facts) == 2
+    assert facts[0].id == "valid1"
+    assert facts[1].id == "valid2"

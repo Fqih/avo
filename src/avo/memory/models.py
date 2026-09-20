@@ -18,5 +18,6 @@ class FactRecord(BaseModel):
         description="Category: user | project | feedback | reference",
     )
     tags: list[str] = Field(default_factory=list)
+    source: str = Field(default="user", description="Source: user | model | agent")
     session_id: str = Field(default="global")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

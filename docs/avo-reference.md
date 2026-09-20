@@ -1,7 +1,7 @@
 # Avo API Reference
 
 **Package:** `avo` **Version:** `0.7.3` (`src/avo/__init__.py: __version__ = "0.7.3"`)
-**Python:** `>=3.11` **Core dependency:** `pydantic>=2.8,<3` (only one)
+**Python:** `>=3.11` **Core dependencies:** `pydantic>=2.8,<3`, `prompt-toolkit>=3.0.43`
 **Stable ABI target:** `0.2.0` (`_STABLE_ABI` in `src/avo/__init__.py`)
 
 This document is the complete, verbatim API reference for the `avo`
@@ -2100,8 +2100,9 @@ Settings of record (`pyproject.toml`):
   `live: opt-in tests that hit real HTTP endpoints; require --run-live`.
 - **coverage** — `branch = true`, `fail_under = 90`.
 - **bandit** — skips documented in `[tool.bandit]` (B101 asserts are
-  invariants, B105 `token_budget_exceeded` is an error tag, B311 jitter
-  only, B404/B603/B607 non-shell subprocess, B310/B608 MCP servers);
+  invariants, B105 `token_budget_exceeded` is an error tag, B108 in-sandbox
+  tmpfs mount targets, B311 jitter only, B404/B603/B607 non-shell subprocess,
+  B310/B608 MCP servers);
   `exclude_dirs = ["src/avo/mcp_servers", "tests"]`.
 - **Build** — hatchling, wheel `reproducible = true`; CI pins
   `SOURCE_DATE_EPOCH` (falls back to `git log -1 --pretty=%ct`) so
