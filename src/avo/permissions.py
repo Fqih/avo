@@ -43,14 +43,14 @@ _READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "read_file",
         "git_diff",
         "git_status",
-        "lint",
-        "test_runner",
         "grep",
         "glob",
         "symbols",
         "workspace_map",
     }
 )
+_EXECUTION_TOOLS: frozenset[str] = frozenset({"run_shell", "run_terminal", "test_runner", "lint"})
+_NETWORK_TOOLS: frozenset[str] = frozenset({"web_fetch", "web_search", "http_fetch"})
 _MUTATING_TOOLS: frozenset[str] = frozenset(
     {"write_file", "edit_file", "batch_replace", "git_commit"}
 )
@@ -142,7 +142,7 @@ def should_require_approval(
         return False
     if tool_name in require_approval:
         return True
-    if tool_name in _SHELL_TOOLS:
+    if tool_name in _SHELL_TOOLS or tool_name in _EXECUTION_TOOLS or tool_name in _NETWORK_TOOLS:
         return True  # shell always asks in non-bypass modes
     if mode is PermissionMode.ACCEPT_EDITS:
         return tool_name not in _READ_ONLY_TOOLS and tool_name not in _MUTATING_TOOLS
@@ -154,6 +154,21 @@ def should_require_approval(
         return True
     # DEFAULT: every tool asks.
     return True
+
+
+def build_deny_by_default_callback() -> ApprovalCallback:
+    """Return the safe callback used by runtimes without an app policy.
+
+    Read-only tools are safe to inspect. Mutating, executable, network, and
+    unknown tools are denied until the caller supplies an explicit policy.
+    """
+
+    def callback(call: ToolCall) -> bool:
+        from avo.capabilities import ToolCapability, classify_tool
+
+        return classify_tool(call.name) is ToolCapability.READ
+
+    return callback
 
 
 # ---------------------------------------------------------------------------
@@ -240,20 +255,34 @@ def build_approval_callback(
     return callback
 
 
+def parse_permission_mode(value: object, *, source: str) -> PermissionMode:
+    """Parse one permission mode and include its origin in failures."""
+
+    if not isinstance(value, str) or not value.strip():
+        allowed = ", ".join(item.value for item in PermissionMode)
+        raise ValueError(
+            f"AVO_PERMISSION_MODE from {source} must be one of {allowed}; got {value!r}"
+        )
+    raw = value.strip().lower()
+    if raw == "bypass":
+        raw = PermissionMode.BYPASS_PERMISSIONS.value
+    try:
+        return PermissionMode(raw)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in PermissionMode)
+        raise ValueError(
+            f"AVO_PERMISSION_MODE from {source} must be one of {allowed}; got {value!r}"
+        ) from exc
+
+
 def permission_policy_from_env(environ: dict[str, str] | None = None) -> PermissionPolicy:
     """Build a :class:`PermissionPolicy` from the AVO_PERMISSION_MODE env var."""
 
     env = environ if environ is not None else dict(os.environ)
-    raw = env.get("AVO_PERMISSION_MODE", "").strip().lower()
+    raw = env.get("AVO_PERMISSION_MODE", "").strip()
     if not raw:
         return PermissionPolicy()
-    if raw == "bypass":
-        raw = PermissionMode.BYPASS_PERMISSIONS.value
-    try:
-        mode = PermissionMode(raw)
-    except ValueError as exc:
-        allowed = ", ".join(item.value for item in PermissionMode)
-        raise ValueError(f"AVO_PERMISSION_MODE must be one of {allowed}; got {raw!r}") from exc
+    mode = parse_permission_mode(raw, source="environment")
     extra_raw = env.get("AVO_TOOLS_REQUIRE_APPROVAL", "").strip()
     require_approval = tuple(item.strip() for item in extra_raw.split(",") if item.strip())
     return PermissionPolicy(mode=mode, require_approval=require_approval)
@@ -265,9 +294,11 @@ __all__ = [
     "PermissionPolicy",
     "active_run_id",
     "build_approval_callback",
+    "build_deny_by_default_callback",
     "clear_active_run",
     "is_plan_submitted",
     "mark_plan_submitted",
+    "parse_permission_mode",
     "permission_policy_from_env",
     "set_active_run",
     "should_require_approval",

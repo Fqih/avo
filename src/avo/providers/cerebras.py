@@ -168,9 +168,9 @@ class CerebrasProvider:
         status = int(response.status_code)
         if status >= 400:
             detail = redact_text(str(getattr(response, "text", "")))
-            raise ProviderError(
+            raise ProviderError.from_status(
+                status,
                 f"Cerebras request failed with status {status}: {detail}",
-                retryable=status == 429 or status >= 500,
             )
 
         try:

@@ -17,7 +17,7 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -32,6 +32,52 @@ GLOBAL_SKILLS_DIR = GLOBAL_AVO_DIR / "skills"
 GLOBAL_PLUGINS_DIR = GLOBAL_AVO_DIR / "plugins"
 GLOBAL_MCP_FILE = GLOBAL_AVO_DIR / "mcp.json"
 GLOBAL_HISTORY_FILE = GLOBAL_AVO_DIR / "history"
+
+_GLOBAL_PATH_NAMES = frozenset(
+    {
+        "config.json",
+        "instructions.md",
+        "personas",
+        "skills",
+        "plugins",
+        "mcp.json",
+        "history",
+    }
+)
+
+
+def global_avo_dir(
+    environ: Mapping[str, str] | None = None,
+    *,
+    home: Path | None = None,
+) -> Path:
+    """Resolve the global config directory at call time.
+
+    ``Path.home()`` and ``AVO_CONFIG_DIR`` are intentionally evaluated for
+    every call.  Import-time path constants made tests and embedded callers
+    write to the developer's real ``~/.avo`` directory after changing their
+    environment.
+    """
+
+    env = os.environ if environ is None else environ
+    configured = env.get("AVO_CONFIG_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ((home if home is not None else Path.home()) / ".avo").expanduser().resolve()
+
+
+def global_avo_path(
+    name: str,
+    environ: Mapping[str, str] | None = None,
+    *,
+    home: Path | None = None,
+) -> Path:
+    """Return a supported path below the call-time global config directory."""
+
+    if name not in _GLOBAL_PATH_NAMES:
+        raise ValueError(f"Unsupported global Avo path: {name!r}")
+    return global_avo_dir(environ, home=home) / name
+
 
 _DEFAULT_CONFIG = {
     "provider": "codex",
@@ -48,6 +94,17 @@ Add your global preferences, coding conventions, or operating guidelines here.
 """
 
 _DEFAULT_MCP: dict[str, dict[str, object]] = {"mcpServers": {}}
+
+_SECURITY_CONFIG_ENV_KEYS = {
+    "require_approval": "AVO_TOOLS_REQUIRE_APPROVAL",
+    "sandbox_required": "AVO_SANDBOX_REQUIRED",
+    "sandbox_network": "AVO_SANDBOX_NETWORK",
+    "sandbox_timeout_seconds": "AVO_SANDBOX_TIMEOUT_SECONDS",
+    "plugin_editable": "AVO_PLUGIN_EDITABLE",
+    "plugin_activation": "AVO_PLUGIN_ACTIVATION",
+    "web_allowed_origin": "AVO_WEB_ALLOWED_ORIGIN",
+    "web_cors_enabled": "AVO_WEB_CORS_ENABLED",
+}
 
 
 class SetupCliError(AvoError):
@@ -66,7 +123,7 @@ class SetupReport:
 def load_global_avo_config(base_dir: Path | None = None) -> dict[str, str]:
     """Read ~/.avo/config.json and return standard AVO_* environment variables."""
 
-    target = (base_dir or GLOBAL_AVO_DIR) / "config.json"
+    target = (base_dir / "config.json") if base_dir is not None else global_avo_path("config.json")
     if not target.is_file():
         return {}
 
@@ -88,6 +145,14 @@ def load_global_avo_config(base_dir: Path | None = None) -> dict[str, str]:
         if permission_mode == "bypass":
             permission_mode = "bypass_permissions"
         env_mapping["AVO_PERMISSION_MODE"] = permission_mode
+    for config_key, env_key in _SECURITY_CONFIG_ENV_KEYS.items():
+        value = data.get(config_key)
+        if isinstance(value, bool):
+            env_mapping[env_key] = "1" if value else "0"
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            env_mapping[env_key] = str(value)
+        elif isinstance(value, str) and value.strip():
+            env_mapping[env_key] = value.strip()
     if "stream" in data:
         env_mapping["AVO_CHAT_STREAM"] = "1" if bool(data["stream"]) else "0"
     if data.get("allow_subscription") is True:
@@ -100,6 +165,47 @@ def load_global_avo_config(base_dir: Path | None = None) -> dict[str, str]:
     return env_mapping
 
 
+def remember_last_provider(
+    environ: Mapping[str, str],
+    base_dir: Path | None = None,
+) -> Path | None:
+    """Persist the last provider/model choice without copying any secrets.
+
+    The first-run wizard historically exported values to the shell rc file,
+    which only affected a future shell and made the next ``avo`` invocation
+    appear unconfigured.  Global config stores only routing preferences; API
+    keys and OAuth tokens remain in the credential store.
+    """
+
+    provider = environ.get("AVO_PROVIDER", "").strip()
+    model = environ.get("AVO_MODEL", "").strip()
+    if not provider or not model:
+        return None
+
+    if base_dir is not None:
+        target_dir = base_dir.expanduser().resolve()
+    else:
+        # Login callers pass only the runtime provider/model mapping.  Keep
+        # the process-level config override in that case instead of silently
+        # falling back to an import-time ~/.avo path.
+        path_environ = environ if "AVO_CONFIG_DIR" in environ else os.environ
+        target_dir = global_avo_dir(path_environ)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    config_path = target_dir / "config.json"
+    try:
+        current = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        current = {}
+    if not isinstance(current, dict):
+        current = {}
+
+    current["provider"] = provider
+    current["model"] = model
+    current["allow_subscription"] = environ.get("AVO_ALLOW_SUBSCRIPTION") == "1"
+    config_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    return config_path
+
+
 def setup_global_avo(
     target_dir: Path | None = None,
     *,
@@ -108,7 +214,7 @@ def setup_global_avo(
 ) -> SetupReport:
     """Ensure ~/.avo/ structure exists and is populated with defaults."""
 
-    base = (target_dir or GLOBAL_AVO_DIR).expanduser().resolve()
+    base = target_dir.expanduser().resolve() if target_dir is not None else global_avo_dir()
     base.mkdir(parents=True, exist_ok=True)
 
     created: list[Path] = []
@@ -234,7 +340,7 @@ def main(argv: Sequence[str] | None = None, stdout: TextIO | None = None) -> int
     )
 
     args = parser.parse_args(argv)
-    target = args.dir if args.dir is not None else GLOBAL_AVO_DIR
+    target = args.dir if args.dir is not None else global_avo_dir()
     color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
 
     try:

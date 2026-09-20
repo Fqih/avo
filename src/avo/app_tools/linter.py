@@ -7,6 +7,7 @@ Prefers ``ruff check`` and falls back to ``py_compile`` for syntax verification.
 
 from __future__ import annotations
 
+import os
 import py_compile
 import shutil
 import subprocess
@@ -16,10 +17,11 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from avo import FunctionTool as PublicFunctionTool
+from avo.app_tools.sandbox import build_safe_environment
 
 from .edit_file import EditFileError
 from .file_tools import _workspace_stack
-from .workspace import Workspace
+from .workspace import Workspace, WorkspacePathError
 
 
 class LintArguments(BaseModel):
@@ -45,14 +47,19 @@ def _current_workspace() -> Workspace:
 
 def run_linter(workspace_root: Path, rel_path: str | None = None) -> dict[str, Any]:
     """Execute code quality checks against workspace files."""
-    target = workspace_root if not rel_path else workspace_root / rel_path
-    if not target.exists():
+    workspace = Workspace(workspace_root)
+    try:
+        target = workspace.root if not rel_path else workspace.validate_path(rel_path)
+    except WorkspacePathError as exc:
+        message = str(exc)
+        if "does not exist" in message:
+            message = f"Path not found: {rel_path}"
         return {
             "ok": False,
             "tool": "none",
             "target": str(rel_path or "."),
             "issue_count": 1,
-            "issues": [f"Path not found: {target}"],
+            "issues": [message],
         }
 
     # Prefer ruff if available
@@ -65,6 +72,7 @@ def run_linter(workspace_root: Path, rel_path: str | None = None) -> dict[str, A
                 text=True,
                 timeout=15,
                 check=False,
+                env=build_safe_environment(os.environ, workspace_root=workspace.root),
             )
             if proc.returncode == 0:
                 return {

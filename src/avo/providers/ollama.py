@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from typing import Any, cast
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
@@ -32,6 +33,7 @@ except ModuleNotFoundError:  # pragma: no cover - httpx is optional at import ti
 
 
 _DEFAULT_BASE_URL = "http://localhost:11434"
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 class OllamaConfig(BaseModel):
@@ -93,7 +95,14 @@ class OllamaProvider:
         if client is not None:
             self._client: _AsyncHTTPClient | None = client
         elif httpx is not None:
-            self._client = httpx.AsyncClient(timeout=request_timeout_seconds)  # type: ignore[assignment]
+            # Local Ollama must not accidentally go through a corporate or
+            # shell-configured HTTP proxy. Some proxies return a misleading
+            # 200 with an empty body for POST /api/chat.
+            trust_env = not _is_local_base_url(config.base_url)
+            self._client = httpx.AsyncClient(  # type: ignore[assignment]
+                timeout=request_timeout_seconds,
+                trust_env=trust_env,
+            )
         else:  # pragma: no cover - only when httpx is not installed
             self._client = None
 
@@ -108,7 +117,7 @@ class OllamaProvider:
 
         payload = self._build_payload(request)
         raw = await self._post(payload)
-        return self._parse_response(raw)
+        return self._parse_response(raw, allowed_tool_names={tool.name for tool in request.tools})
 
     def _build_payload(self, request: ModelRequest) -> dict[str, Any]:
         messages = [_ollama_message(message) for message in request.messages]
@@ -138,37 +147,60 @@ class OllamaProvider:
         transport_errors: tuple[type[BaseException], ...] = (
             (httpx.HTTPError,) if httpx is not None else ()
         )
-        try:
-            response = await self._client.post(
-                self._config.endpoint,
-                headers=self._config.headers(),
-                json=payload,
-                timeout=self._request_timeout_seconds,
-            )
-        except transport_errors as exc:
-            raise ProviderError(
-                f"Ollama transport failure: {redact_text(str(exc))}",
-                retryable=True,
-            ) from exc
+        for attempt in range(2):
+            try:
+                response = await self._client.post(
+                    self._config.endpoint,
+                    headers=self._config.headers(),
+                    json=payload,
+                    timeout=self._request_timeout_seconds,
+                )
+            except transport_errors as exc:
+                raise ProviderError(
+                    f"Ollama transport failure: {redact_text(str(exc))}",
+                    retryable=True,
+                ) from exc
 
-        status = int(response.status_code)
-        if status >= 400:
-            detail = redact_text(str(getattr(response, "text", "")))
-            raise ProviderError(
-                f"Ollama request failed with status {status}: {detail}",
-                retryable=status == 429 or status >= 500,
-            )
+            status = int(response.status_code)
+            if status >= 400:
+                detail = redact_text(str(getattr(response, "text", "")))
+                raise ProviderError.from_status(
+                    status,
+                    f"Ollama request failed with status {status}: {detail}",
+                )
 
-        try:
-            return response.json()
-        except (json.JSONDecodeError, ValueError, TypeError) as exc:
-            raise ProviderError(
-                f"Ollama returned an unparsable response body: {redact_text(str(exc))}",
-                retryable=False,
-            ) from exc
+            try:
+                return response.json()
+            except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                body = str(getattr(response, "text", "")).strip()
+                if not body and attempt == 0:
+                    continue
+                if not body:
+                    raw_headers = getattr(response, "headers", {})
+                    content_type = str(
+                        raw_headers.get("content-type", "unknown")
+                        if hasattr(raw_headers, "get")
+                        else "unknown"
+                    )
+                    raise ProviderError(
+                        "Ollama returned an empty response body after retry "
+                        f"(status={status}, content-type={content_type}, "
+                        f"endpoint={self._config.endpoint})",
+                        retryable=True,
+                    ) from exc
+                raise ProviderError(
+                    f"Ollama returned an unparsable response body: {redact_text(str(exc))}",
+                    retryable=False,
+                ) from exc
+
+        raise ProviderError("Ollama returned no response body after retry", retryable=True)
 
     @staticmethod
-    def _parse_response(payload: object) -> ModelResponse:
+    def _parse_response(
+        payload: object,
+        *,
+        allowed_tool_names: set[str] | None = None,
+    ) -> ModelResponse:
         try:
             if not isinstance(payload, dict):
                 raise TypeError("expected an object")
@@ -185,6 +217,9 @@ class OllamaProvider:
             content = message.get("content")
             if not isinstance(content, str):
                 raise ValueError("message content must be a string")
+            legacy_tool_call = _parse_legacy_json_tool_call(content, allowed_tool_names or set())
+            if legacy_tool_call is not None:
+                return ModelResponse(tool_call=legacy_tool_call, usage=usage)
             return ModelResponse(content=content, usage=usage)
         except ProviderError:
             raise
@@ -229,6 +264,12 @@ class OllamaProvider:
 
         if self._owns_client and self._client is not None:
             await self._client.aclose()
+
+
+def _is_local_base_url(base_url: str) -> bool:
+    """Return whether an Ollama base URL points at the local machine."""
+
+    return (urlparse(base_url).hostname or "").lower() in _LOCAL_HOSTS
 
 
 def _ollama_message(message: dict[str, Any]) -> dict[str, Any]:
@@ -293,6 +334,26 @@ def _coerce_arguments(raw: object) -> dict[str, Any]:
             raise ValueError("tool call arguments must decode to an object")
         return decoded
     raise ValueError("tool call arguments must be a string or object")
+
+
+def _parse_legacy_json_tool_call(content: str, allowed_names: set[str]) -> ToolCall | None:
+    """Recover strict JSON tool calls emitted as plain text by small Ollama models."""
+
+    if not allowed_names:
+        return None
+    try:
+        decoded = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(decoded, dict) or set(decoded) != {"name", "arguments"}:
+        return None
+    name = decoded.get("name")
+    arguments = decoded.get("arguments")
+    if not isinstance(name, str) or not name or name not in allowed_names:
+        return None
+    if not isinstance(arguments, dict):
+        return None
+    return ToolCall(name=name, arguments=arguments)
 
 
 __all__ = ["OllamaConfig", "OllamaProvider"]

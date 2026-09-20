@@ -1,8 +1,8 @@
 # Install Avo
 
-The fastest way to use Avo is the user-global installer. It creates an
-isolated `uv` tool environment, so the `avo` command is available to your user
-without changing the system Python or requiring `sudo`/Administrator access.
+The fastest way to use Avo is the user-global installer. It installs a self-contained
+standalone binary directly on your system, so the `avo` command is available immediately
+**without requiring Python, `uv`, `pip`, or `sudo`/Administrator access**.
 
 ## Choose your platform
 
@@ -18,12 +18,12 @@ without changing the system Python or requiring `sudo`/Administrator access.
     irm https://avo.faqihhakim.tech/install.ps1 | iex
     ```
 
-The installer will:
+The standalone installer will:
 
-1. Find or install `uv` for your user.
-2. Ensure Python 3.13 is available through `uv`.
-3. Install the `avo[all]` runtime bundle.
-4. Add the `uv` tool directory to your user PATH.
+1. Detect your operating system and CPU architecture.
+2. Download the pre-built, self-contained standalone binary from GitHub Releases.
+3. Place `avo` in your user binary directory (`~/.local/bin` on POSIX or `%LOCALAPPDATA%\avo\bin` on Windows).
+4. Add the directory to your user `PATH` if not already present.
 
 Restart your terminal if `avo` is not found immediately afterward.
 
@@ -52,8 +52,8 @@ The setup wizard configures provider credentials, permission defaults, and the
 workspace database path. Secrets are stored in the user credential store with
 restricted file permissions; never commit that file.
 
-If your global provider is Codex or Gemini subscription OAuth, enable that
-credential source explicitly:
+If you use a Codex, Claude, or Gemini vendor-account OAuth credential, enable
+that credential source explicitly:
 
 ```bash
 avo setup --allow-subscription
@@ -74,13 +74,15 @@ PowerShell:
 .\install.ps1 -DryRun
 ```
 
-Install a smaller package or choose another supported Python version:
+Install via Python package (uv tool) instead of standalone binary:
 
 ```bash
-AVO_PACKAGE='avo[providers]' AVO_PYTHON_VERSION=3.12 bash install.sh
+bash install.sh --from-source
+# Or customize package spec and python version:
+bash install.sh --from-source --package 'avo[providers]' --python 3.12
 ```
 
-The same values can be passed as `--package` and `--python` to `install.sh`.
+The same options are available on Windows PowerShell via `-FromSource`.
 
 ## Contributor installation
 

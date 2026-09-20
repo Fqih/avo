@@ -57,6 +57,17 @@ def test_cli_lists_and_inspects_sqlite_runs(
     assert "Stop reason: completed" in inspected
     assert "model_responded" in inspected
 
+    assert main(["--database", str(path), "replay", run_id]) == 0
+    replayed = capsys.readouterr().out
+    assert "Replay verified" in replayed
+    assert run_id in replayed
+
+    assert main(["--database", str(path), "replay", run_id, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["verified"] is True
+
+    assert main(["--database", str(path), "runs", "replay", run_id]) == 0
+    assert "Replay verified" in capsys.readouterr().out
+
 
 def test_cli_invalid_run_returns_nonzero(
     tmp_path: Path,
@@ -225,8 +236,85 @@ def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
     assert out == f"avo {__version__}"
 
 
+def test_cli_without_command_starts_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_repl(**kwargs: object) -> int:
+        calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr("avo.cli.run_repl", fake_run_repl)
+
+    assert main([]) == 0
+    assert len(calls) == 1
+    assert calls[0]["force_new_session"] is False
+    assert calls[0]["resume_latest"] is False
+
+
+def test_cli_resume_command_starts_explicit_resume_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_repl(**kwargs: object) -> int:
+        calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr("avo.cli.run_repl", fake_run_repl)
+
+    assert main(["resume"]) == 0
+    assert calls[0]["resume_latest"] is True
+    assert calls[0]["session_id"] is None
+
+    calls.clear()
+    assert main(["resume", "session-123"]) == 0
+    assert calls[0]["resume_latest"] is False
+    assert calls[0]["session_id"] == "session-123"
+
+
+def test_cli_help_explains_default_chat_and_core_commands(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "avo                 Start chat" in output
+    assert "avo setup" in output
+    assert "avo login" in output
+    assert "avo models" in output
+    assert "avo doctor" in output
+
+
+def test_cli_chat_help_lists_session_options(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["chat", "--help"])
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "--workspace-root" in output
+    assert "--session" in output
+    assert "--new-session" in output
+
+
 def test_cli_login_status(capsys: pytest.CaptureFixture[str]) -> None:
     from avo.cli import main as cli_main
 
     assert cli_main(["login", "--status"]) == 0
     assert "authenticated" in capsys.readouterr().out.lower()
+
+
+def test_cli_keyboard_interrupt_exits_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import avo.cli as cli
+
+    def interrupted_run(coro: object) -> None:
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.asyncio, "run", interrupted_run)
+
+    assert cli.main(["login", "claude"]) == 130
+    assert "Interrupted" in capsys.readouterr().err

@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import subprocess
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
@@ -46,9 +47,41 @@ _FIRST_RUN_MESSAGE = (
 
 
 def _read_environ() -> dict[str, str]:
-    """Snapshot ``os.environ`` so the chat does not see mid-session mutations."""
+    """Snapshot ``os.environ`` and merge global ~/.avo/config.json defaults."""
 
-    return dict(os.environ)
+    env = dict(os.environ)
+    try:
+        from avo.cli_setup import load_global_avo_config
+
+        for k, v in load_global_avo_config().items():
+            env.setdefault(k, v)
+    except Exception:
+        pass
+
+    # A successful vendor login is an explicit provider choice. Reuse it on
+    # the next `avo` invocation, including the same shell where setup wrote
+    # only a future-shell rc block. Subscription inference still requires the
+    # opt-in flag, so enable it only when the matching stored credential exists.
+    if not env.get("AVO_PROVIDER"):
+        _resolve_provider_label(env)
+    subscription_keys = {
+        "codex": "codex",
+        "anthropic": "claude",
+        "claude-code": "claude",
+        "gemini-cli": "gemini",
+        "gemini_cli": "gemini",
+    }
+    provider = env.get("AVO_PROVIDER", "").strip().lower()
+    credential_key = subscription_keys.get(provider)
+    if credential_key and "AVO_ALLOW_SUBSCRIPTION" not in env:
+        try:
+            from avo.oauth.store import get_credential
+
+            if get_credential(credential_key) is not None:
+                env["AVO_ALLOW_SUBSCRIPTION"] = "1"
+        except Exception:
+            pass
+    return env
 
 
 def _resolve_provider_label(environ: dict[str, str]) -> tuple[str, str]:
@@ -60,7 +93,7 @@ def _resolve_provider_label(environ: dict[str, str]) -> tuple[str, str]:
             from avo.oauth.store import get_credential
 
             for candidate, candidate_provider, def_model in (
-                ("claude", "anthropic", "claude-sonnet-4-5"),
+                ("claude", "claude-code", "claude-sonnet-4-6"),
                 ("codex", "codex", "gpt-5.6-sol"),
                 ("gemini", "gemini_cli", "gemini-2.5-pro"),
                 ("openrouter", "openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
@@ -122,6 +155,103 @@ def _format_workspace_path(path: Path) -> str:
     except Exception:
         pass
     return str(path)
+
+
+def _format_duration(seconds: float) -> str:
+    """Render a turn duration as whole seconds for the compact chat footer."""
+
+    return f"{max(0, round(seconds))}s"
+
+
+def render_thought_duration(seconds: float, *, color: bool = False) -> str:
+    """Render the private-thinking duration without exposing reasoning text."""
+
+    dim = "\033[90m" if color else ""
+    reset = "\033[0m" if color else ""
+    return f"  {dim}Thought for {_format_duration(seconds)}{reset}\n"
+
+
+def render_cooked_footer(
+    seconds: float,
+    completed_at: datetime,
+    *,
+    color: bool = False,
+) -> str:
+    """Render the concise completion metadata shown below an answer."""
+
+    dim = "\033[90m" if color else ""
+    reset = "\033[0m" if color else ""
+    clock = completed_at.strftime("%I:%M %p").lstrip("0")
+    return f"  {dim}* Cooked for {_format_duration(seconds)} · done {clock}{reset}\n"
+
+
+def render_unified_diff(diff: str, *, color: bool = True) -> str:
+    """Format unified diff text with terminal colors."""
+    if not color or not diff:
+        return diff
+
+    green = "\033[32m"
+    red = "\033[31m"
+    cyan = "\033[36m"
+    bold = "\033[1m"
+    reset = "\033[0m"
+
+    out_lines: list[str] = []
+    for line in diff.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            out_lines.append(f"{bold}{line}{reset}")
+        elif line.startswith("+"):
+            out_lines.append(f"{green}{line}{reset}")
+        elif line.startswith("-"):
+            out_lines.append(f"{red}{line}{reset}")
+        elif line.startswith("@@"):
+            out_lines.append(f"{cyan}{line}{reset}")
+        else:
+            out_lines.append(line)
+    return "\n".join(out_lines) + "\n"
+
+
+def render_chat_toolbar(
+    provider_name: str,
+    model_name: str,
+    workspace_root: Path,
+    *,
+    running_jobs: int = 0,
+    color: bool = False,
+) -> str:
+    """Render the compact status bar pinned below the interactive prompt."""
+
+    jobs = f" · jobs: {running_jobs}" if running_jobs else ""
+    path = _format_workspace_path(workspace_root)
+    saver_preset = os.environ.get("AVO_SAVER", "").strip()
+    if not saver_preset:
+        try:
+            from avo.savers.config_store import read_saver_setting
+
+            saved = read_saver_setting()
+            if saved:
+                saver_preset = saved
+        except Exception:
+            pass
+
+    if not color:
+        saver_text = f" · saver: {saver_preset}" if saver_preset else ""
+        return f"provider: {provider_name} · model: {model_name} · path: {path}{saver_text}{jobs}"
+
+    dim = "\033[90m"
+    cyan = "\033[36m"
+    green = "\033[32m"
+    yellow = "\033[33m"
+    white = "\033[97m"
+    reset = "\033[0m"
+    saver_colored = f" {dim}· saver:{reset} {cyan}{saver_preset}{reset}" if saver_preset else ""
+    return (
+        f"{dim}provider:{reset} {cyan}{provider_name}{reset}"
+        f" {dim}· model:{reset} {white}{model_name}{reset}"
+        f" {dim}· path:{reset} {green}{path}{reset}"
+        f"{saver_colored}"
+        f"{yellow}{jobs}{reset}"
+    )
 
 
 def _resolve_user_identity(provider_name: str) -> str:
@@ -220,7 +350,7 @@ def _print_header(
     *,
     resumed_from: str | None = None,
 ) -> None:
-    """Render the AVO banner with mascot logo, version, identity, model, and cwd."""
+    """Render the AVO banner with mascot, version, identity, and session."""
 
     color_enabled = hasattr(out, "isatty") and out.isatty() and not os.environ.get("NO_COLOR")
     bold_cyan = "\033[1;36m" if color_enabled else ""
@@ -229,14 +359,12 @@ def _print_header(
 
     mascot = _render_mascot(color=color_enabled)
     identity = _resolve_user_identity(ctx.provider_name)
-    workspace_disp = _format_workspace_path(workspace_root)
-    provider_model = f"provider: {ctx.provider_name} · model: {ctx.model_name}"
 
     right_col = [
         f"{bold_cyan}Avo CLI {AVO_VERSION}{rst}",
         f"{dim}{identity}{rst}",
-        f"{dim}{provider_model}{rst}",
-        f"{dim}workspace: {workspace_disp}{rst}",
+        "",
+        "",
     ]
     if resumed_from:
         right_col.append(f"{dim}resumed session: {resumed_from}{rst}")
@@ -286,12 +414,34 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/resume [ID]", "resume a chat session (no arg = picker) or a recorded run"),
     ("/session", "show the current session id and turn count"),
     ("/new", "close the current session and start a fresh thread"),
+    ("/setup [wizard|global]", "inspect ~/.avo global setup or run configuration wizard"),
+    (
+        "/agent [persona|instructions|clear]",
+        "manage persona, instructions, or a named agent profile",
+    ),
+    ("/agents [list]", "list named agent profiles available in this workspace"),
+    ("/delegate @agent TASK", "run one or more isolated agents in parallel"),
+    (
+        "/list [sessions|models|skills|plugins|tools|jobs|agents]",
+        "browse catalog of sessions, models, tools, or plugins",
+    ),
+    ("/plugin [list|show|install|remove]", "manage third-party plugins in ~/.avo/plugins"),
     ("/inspect RUN_ID", "render the trace for one recorded run"),
+    ("/replay RUN_ID", "verify a recorded run without invoking tools or providers"),
     ("/skills", "list skills available in the current workspace"),
     ("/skill NAME", "load a skill body as the next turn"),
     ("/jobs", "list background tasks"),
     ("/job ID", "show one background task"),
     ("/cancel ID", "cancel a running background task"),
+    ("/loop CADENCE PROMPT", "start an autonomous loop (e.g. /loop 5m run tests)"),
+    ("/unloop", "stop the active autonomous loop"),
+    ("/loop-status", "show active autonomous loop status and metrics"),
+    ("/mcp [list|reload|connect]", "manage external Model Context Protocol (MCP) servers"),
+    ("/remember FACT", "save a persistent fact, preference, or project decision"),
+    ("/memories [QUERY]", "search or list stored long-term facts"),
+    ("/forget ID", "delete a remembered fact by its ID"),
+    ("/fork [NAME]", "create a speculative safety checkpoint of the workspace"),
+    ("/rollback [TAG]", "revert workspace files to a previously saved checkpoint"),
     ("/quit (or /exit, Ctrl+D)", "leave the chat"),
 )
 

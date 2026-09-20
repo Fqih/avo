@@ -9,6 +9,7 @@ in separate modules.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import subprocess
 from pathlib import Path
@@ -17,7 +18,18 @@ import pytest
 
 from avo import ModelResponse, StopReason, ToolCall
 from avo.app_tools.file_tools import bind_workspace, read_file_tool, write_file_tool
-from avo.chat import build_chat_context, run_repl
+from avo.capabilities import ToolCapability, classify_tool
+from avo.chat import (
+    _alternate_screen,
+    _find_prompt_float_container,
+    _highlight_prompt_input,
+    _install_command_palette,
+    _place_completion_menu_above,
+    _position_prompt_at_bottom,
+    _prompt_toolkit_prompt,
+    build_chat_context,
+    run_repl,
+)
 from avo.config import ConfigError
 from avo.exceptions import AvoError
 from avo.providers.base import ModelProvider
@@ -34,8 +46,10 @@ class _ScriptedProvider(ModelProvider):
     def __init__(self, script: list[ModelResponse]) -> None:
         self.script = list(script)
         self.calls: list[str] = []
+        self.requests = []
 
     async def generate(self, request):  # type: ignore[override]
+        self.requests.append(request)
         self.calls.append(request.messages[-1].get("content", ""))  # type: ignore[union-attr]
         if not self.script:
             from avo.exceptions import FakeProviderExhaustedError
@@ -61,6 +75,187 @@ def _environ_with_ollama(model: str = "fake-test-model") -> dict[str, str]:
         "AVO_MODEL": model,
         "AVO_OLLAMA_BASE_URL": "http://example.invalid",
     }
+
+
+def test_prompt_position_targets_rows_above_toolbar() -> None:
+    out = io.StringIO()
+
+    _position_prompt_at_bottom(out, terminal_rows=40)
+
+    assert out.getvalue() == "\033[38;1H"
+
+
+def test_alternate_screen_restores_terminal_buffer() -> None:
+    out = io.StringIO()
+
+    with _alternate_screen(out, enabled=True):
+        out.write("inside Avo")
+
+    assert out.getvalue() == "\033[?1049h\033[2J\033[Hinside Avo\033[?1049l"
+
+
+def test_alternate_screen_restores_after_exception() -> None:
+    out = io.StringIO()
+
+    with pytest.raises(RuntimeError), _alternate_screen(out, enabled=True):
+        raise RuntimeError("leave the app")
+
+    assert out.getvalue().endswith("\033[?1049l")
+
+
+@pytest.mark.asyncio
+async def test_interactive_repl_uses_alternate_screen(
+    chat_env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _TTYBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    async def fake_repl_body(**kwargs: object) -> int:
+        cast_stdout = kwargs["stdout"]
+        assert isinstance(cast_stdout, _TTYBuffer)
+        cast_stdout.write("body")
+        return 7
+
+    monkeypatch.setattr("avo.chat._run_repl", fake_repl_body)
+    stdin = _TTYBuffer()
+    stdout = _TTYBuffer()
+    monkeypatch.setattr("sys.stdin", stdin)
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        environ=_environ_with_ollama(),
+    )
+
+    assert code == 7
+    assert stdout.getvalue() == "\033[?1049h\033[2J\033[Hbody\033[?1049l"
+
+
+def test_prompt_input_window_uses_compact_highlight() -> None:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.layout.controls import BufferControl
+
+    session = PromptSession(reserve_space_for_menu=0)
+    _highlight_prompt_input(session)
+
+    input_windows = [
+        window
+        for window in session.layout.find_all_windows()
+        if isinstance(window.content, BufferControl)
+        and window.content.buffer is session.default_buffer
+    ]
+    assert input_windows
+    assert all(window.style == "class:avo-input" for window in input_windows)
+
+
+def test_prompt_toolkit_prompt_parses_ansi_colors() -> None:
+    from prompt_toolkit.formatted_text import to_formatted_text
+
+    rendered = to_formatted_text(
+        _prompt_toolkit_prompt("\033[1;36m" + chr(0x276F) + "\033[0m ", True)
+    )
+
+    assert "\033" not in "".join(item[1] for item in rendered)
+    assert chr(0x276F) in "".join(item[1] for item in rendered)
+
+
+@pytest.mark.asyncio
+async def test_enter_accepts_selected_slash_command() -> None:
+    from prompt_toolkit.buffer import Buffer
+
+    from avo import chat as chat_module
+    from avo.chat import SlashCompleter
+
+    buffer = Buffer(completer=SlashCompleter((("/resume", "resume a session"),)))
+    buffer.insert_text("/res")
+    buffer.start_completion(select_first=True)
+    await asyncio.sleep(0)
+
+    assert chat_module._accept_slash_completion(buffer) is True
+    assert buffer.text == "/resume"
+
+
+def test_completion_menu_is_positioned_above_the_input() -> None:
+    from prompt_toolkit import PromptSession
+
+    session = PromptSession(reserve_space_for_menu=0)
+    _place_completion_menu_above(session)
+
+    float_container = _find_prompt_float_container(session)
+    assert float_container is not None
+    completion_float = float_container.floats[0]
+    assert completion_float.bottom == 1
+    assert completion_float.xcursor is False
+    assert completion_float.ycursor is False
+
+
+@pytest.mark.asyncio
+async def test_command_palette_is_a_bottom_anchored_float() -> None:
+    """The native palette stays above the editor without a custom duplicate."""
+
+    from prompt_toolkit import PromptSession
+
+    session = PromptSession(reserve_space_for_menu=0)
+    _place_completion_menu_above(session)
+    float_container = _find_prompt_float_container(session)
+    assert float_container is not None
+    native_float_count = len(float_container.floats)
+
+    _install_command_palette(session, (("/help", "show help"),))
+
+    float_container = _find_prompt_float_container(session)
+    assert float_container is not None
+    assert len(float_container.floats) == native_float_count
+    completion_float = float_container.floats[0]
+    assert type(completion_float.content).__name__ == "CompletionsMenu"
+    assert completion_float.bottom == 1
+    assert completion_float.top is None
+    assert completion_float.ycursor is False
+
+
+def test_model_picker_options_keep_model_identity_separate_from_display() -> None:
+    from avo.chat_turn import _model_picker_options
+
+    options = _model_picker_options(
+        ("gpt-5.6-sol", "gpt-5.6-luna"),
+        current="gpt-5.6-luna",
+        recommended="gpt-5.6-sol",
+    )
+
+    assert options == (
+        ("1. gpt-5.6-sol (recommended)", "gpt-5.6-sol"),
+        ("2. gpt-5.6-luna (current)", "gpt-5.6-luna"),
+    )
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, asyncio.CancelledError])
+@pytest.mark.asyncio
+async def test_repl_handles_interrupt_during_turn_without_traceback(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt: type[BaseException],
+) -> None:
+    async def interrupt_turn(*args: object, **kwargs: object) -> None:
+        raise interrupt
+
+    monkeypatch.setattr("avo.chat._run_turn", interrupt_turn)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=io.StringIO("hello\n/quit\n"),
+        stdout=stdout,
+        stderr=stderr,
+        environ=_environ_with_ollama(),
+    )
+
+    assert code == 0
+    assert "interrupted" in stdout.getvalue()
+    assert "Traceback" not in stdout.getvalue() + stderr.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +336,84 @@ def test_build_chat_context_constructs_runtime_with_tools(
         "git_status",
         "git_diff",
         "git_commit",
+        "run_terminal",
+        "remember",
+        "recall_memory",
     }
+
+
+def test_build_chat_context_passes_resolved_security_to_terminal_tool(
+    chat_env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from avo import chat as chat_module
+
+    captured: dict[str, object] = {}
+    original = chat_module.run_terminal_tool
+
+    def capture_terminal_tool(**kwargs: object):
+        captured.update(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(chat_module, "run_terminal_tool", capture_terminal_tool)
+    build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=_environ_with_ollama(),
+    )
+
+    config = captured["security_config"]
+    assert config.sandbox_required.value is True  # type: ignore[union-attr]
+
+
+def test_build_chat_context_marks_execution_tools_with_canonical_capabilities(
+    chat_env: dict[str, Path],
+) -> None:
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=_environ_with_ollama(),
+    )
+
+    capabilities = {
+        tool.metadata.name: tool.metadata.capability
+        for tool in ctx.runtime.tools._tools.values()  # type: ignore[attr-defined]
+    }
+    assert capabilities["lint"] is ToolCapability.EXECUTE
+    assert capabilities["test_runner"] is ToolCapability.EXECUTE
+    assert capabilities["run_terminal"] is ToolCapability.EXECUTE
+    assert classify_tool("web_fetch") is ToolCapability.NETWORK
+
+
+@pytest.mark.asyncio
+async def test_build_chat_context_denies_terminal_without_approval(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=_environ_with_ollama(),
+    )
+    ctx.runtime.provider = _ScriptedProvider(
+        [
+            ModelResponse(
+                tool_call=ToolCall(
+                    name="run_terminal",
+                    arguments={"command": "printf should-not-run"},
+                )
+            )
+        ]
+    )
+
+    try:
+        with bind_workspace(ctx.workspace):
+            result = await ctx.runtime.run("run the command")
+        assert result.stop_reason is StopReason.POLICY_DENIED
+    finally:
+        await ctx.store.close()
+        ctx.session.close()
 
 
 @pytest.mark.asyncio
@@ -234,6 +506,33 @@ async def test_repl_runs_one_turn_per_non_empty_line(
             await _run_turn(ctx, line, stdout, stderr)
 
     assert scripted.calls == ["hello", "world"]
+    assert scripted.requests[0].messages[0]["role"] == "system"
+    assert "You are Avo" in scripted.requests[0].messages[0]["content"]
+    assert scripted.requests[0].messages[-1] == {"role": "user", "content": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_repl_attaches_workspace_files_to_the_user_message(
+    chat_env: dict[str, Path],
+) -> None:
+    attachment = chat_env["workspace"] / "snippet.py"
+    attachment.write_text("print('attached')\n", encoding="utf-8")
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=_environ_with_ollama(),
+    )
+    scripted = _ScriptedProvider([ModelResponse(content="reviewed")])
+    ctx.runtime.provider = scripted
+
+    from avo.chat import _run_turn
+
+    await _run_turn(ctx, "review @snippet.py", io.StringIO(), io.StringIO())
+
+    content = scripted.requests[0].messages[-1]["content"]
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "review"}
+    assert "--- snippet.py ---" in content[1]["text"]
 
 
 @pytest.mark.asyncio
@@ -441,9 +740,11 @@ async def test_chat_file_tools_work_inside_workspace(
 
     with bind_workspace(ctx.workspace):
         result = await write_file_tool().invoke({"path": "via_chat.txt", "content": "written"})
+        assert isinstance(result, dict)
         assert result["size"] == 7
 
         read_result = await read_file_tool().invoke({"path": "via_chat.txt"})
+        assert isinstance(read_result, dict)
         assert read_result["content"] == "written"
 
     assert (chat_env["workspace"] / "via_chat.txt").read_text(encoding="utf-8") == "written"
@@ -1818,3 +2119,246 @@ async def test_run_repl_records_history(
     assert history_file.exists()
     assert draft_file.exists()
     assert "initial thought" in draft_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_repl_loop_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+    ctx.runtime.provider = _ScriptedProvider([ModelResponse(content="loop tick ok")])
+
+    # 1. /loop usage error with missing args
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/loop"], stdout, stderr, env)
+    assert res is False
+    assert "usage: /loop" in stderr.getvalue()
+
+    # 2. Start loop
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/loop", "10s", "check", "system"], stdout, stderr, env)
+    assert res is False
+    assert "Started autonomous loop" in stdout.getvalue()
+    assert ctx.active_loop_runner is not None
+
+    # 3. /loop while already active
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/loop", "5s", "another"], stdout, stderr, env)
+    assert res is False
+    assert "already active" in stderr.getvalue()
+
+    # 4. /loop-status
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/loop-status"], stdout, stderr, env)
+    assert res is False
+    assert "Autonomous Loop:" in stdout.getvalue()
+
+    # 5. /unloop
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/unloop"], stdout, stderr, env)
+    assert res is False
+    assert "Stopped autonomous loop" in stdout.getvalue()
+    assert ctx.active_loop_runner is None
+
+
+@pytest.mark.asyncio
+async def test_repl_mcp_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    import sys
+
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+
+    # 1. /mcp with no config
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/mcp", "list"], stdout, stderr, env)
+    assert res is False
+    assert "No MCP servers configured" in stdout.getvalue()
+
+    # 2. Write an mcp.json in workspace
+    fixture_path = Path(__file__).parent / "fixtures" / "fake_mcp_server.py"
+    mcp_config = {
+        "mcpServers": {
+            "test_server": {
+                "command": sys.executable,
+                "args": [str(fixture_path)],
+            }
+        }
+    }
+    (chat_env["workspace"] / ".avo").mkdir(parents=True, exist_ok=True)
+    (chat_env["workspace"] / ".avo" / "mcp.json").write_text(
+        json.dumps(mcp_config), encoding="utf-8"
+    )
+
+    # 3. /mcp list shows configured
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/mcp", "list"], stdout, stderr, env)
+    assert res is False
+    assert "test_server [configured]" in stdout.getvalue()
+
+    # 4. /mcp connect discovers tools
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/mcp", "connect"], stdout, stderr, env)
+    assert res is False
+    assert "Connected to MCP servers" in stdout.getvalue()
+    assert "mcp__test_server__echo" in stdout.getvalue()
+    assert "mcp__test_server__echo" in ctx.runtime.tools._tools
+
+    if ctx.mcp_manager:
+        await ctx.mcp_manager.close()
+
+
+@pytest.mark.asyncio
+async def test_repl_memory_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+
+    # 1. /remember
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(
+        ctx,
+        ["/remember", "Always", "use", "ruff", "for", "linting"],
+        stdout,
+        stderr,
+        env,
+    )
+    assert res is False
+    assert "✓ Remembered" in stdout.getvalue()
+    assert "Always use ruff for linting" in stdout.getvalue()
+
+    # Extract fact ID
+    out_text = stdout.getvalue()
+    fact_id = out_text.split("[")[1].split("]")[0]
+
+    # 2. /memories list
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/memories"], stdout, stderr, env)
+    assert res is False
+    assert "Stored Memories" in stdout.getvalue()
+    assert fact_id in stdout.getvalue()
+
+    # 3. /memories search
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/memories", "ruff", "linting"], stdout, stderr, env)
+    assert res is False
+    assert "Search memories for" in stdout.getvalue()
+    assert fact_id in stdout.getvalue()
+
+    # 4. /forget
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/forget", fact_id], stdout, stderr, env)
+    assert res is False
+    assert f"✓ Forgot memory {fact_id}" in stdout.getvalue()
+
+    # 5. /forget non-existent
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/forget", "missing-id"], stdout, stderr, env)
+    assert res is False
+    assert "not found" in stderr.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_repl_fork_and_rollback_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    # Initialize a git repo in chat_env["workspace"]
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=chat_env["workspace"], check=True, capture_output=True)  # noqa: ASYNC221
+    subprocess.run(  # noqa: ASYNC221
+        ["git", "config", "user.name", "TestUser"],
+        cwd=chat_env["workspace"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(  # noqa: ASYNC221
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=chat_env["workspace"],
+        check=True,
+        capture_output=True,
+    )
+    (chat_env["workspace"] / "file.txt").write_text("clean state\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=chat_env["workspace"], check=True, capture_output=True)  # noqa: ASYNC221
+    subprocess.run(  # noqa: ASYNC221
+        ["git", "commit", "-m", "initial"],
+        cwd=chat_env["workspace"],
+        check=True,
+        capture_output=True,
+    )
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+
+    # 1. /fork to create checkpoint
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/fork", "my-feature"], stdout, stderr, env)
+    assert res is False
+    assert "Created speculative workspace checkpoint" in stdout.getvalue()
+
+    # Make breaking change and add untracked file
+    (chat_env["workspace"] / "file.txt").write_text("corrupted content\n", encoding="utf-8")
+    (chat_env["workspace"] / "trash.tmp").write_text("junk", encoding="utf-8")
+
+    # 2. /rollback to revert
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/rollback", "my-feature"], stdout, stderr, env)
+    assert res is False
+    assert "Successfully rolled back workspace" in stdout.getvalue()
+    assert (chat_env["workspace"] / "file.txt").read_text(encoding="utf-8") == "clean state\n"
+    assert not (chat_env["workspace"] / "trash.tmp").exists()

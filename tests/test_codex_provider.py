@@ -150,6 +150,37 @@ async def test_maps_system_and_tool_items() -> None:
 
 
 @pytest.mark.asyncio
+async def test_maps_image_content_to_responses_input_parts() -> None:
+    client = FakeClient(COMPLETED_TEXT)
+    p = CodexProvider(CodexConfig(model="m"), token_provider=_token, client=client)
+    await p.generate(
+        _req(
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "describe"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "AAAA",
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+    )
+    item = client.requests[0]["body"]["input"][0]
+    assert item["content"] == [
+        {"type": "input_text", "text": "describe"},
+        {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_empty_output_raises() -> None:
     p = CodexProvider(
         CodexConfig(model="m"),
@@ -178,7 +209,7 @@ def test_from_avo_env_missing_credential_raises(store_dir: None) -> None:
         CodexConfig.from_avo_env({"AVO_ALLOW_SUBSCRIPTION": "0"}, fallback_model="gpt-5.6-sol")
 
     with pytest.raises(AuthError, match="No stored credential"):
-        CodexConfig.from_avo_env({}, fallback_model="gpt-5.6-sol")
+        CodexConfig.from_avo_env({"AVO_ALLOW_SUBSCRIPTION": "1"}, fallback_model="gpt-5.6-sol")
 
 
 def test_from_avo_env_with_valid_credential_succeeds(store_dir: None) -> None:
@@ -190,7 +221,7 @@ def test_from_avo_env_with_valid_credential_succeeds(store_dir: None) -> None:
             subscription=True,
         )
     )
-    config = CodexConfig.from_avo_env({}, fallback_model="gpt-5.6-sol")
+    config = CodexConfig.from_avo_env({"AVO_ALLOW_SUBSCRIPTION": "1"}, fallback_model="gpt-5.6-sol")
     assert config.model == "gpt-5.6-sol"
     assert config.endpoint == "https://chatgpt.com/backend-api/codex/responses"
 

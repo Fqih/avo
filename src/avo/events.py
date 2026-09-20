@@ -21,6 +21,7 @@ class EventType(StrEnum):
     MODEL_RESPONDED = "model_responded"
     MODEL_FAILED = "model_failed"
     ROUTE_FAILOVER = "route_failover"
+    SAVER_APPLIED = "saver_applied"
     TOOL_REQUESTED = "tool_requested"
     TOOL_APPROVAL_REQUESTED = "tool_approval_requested"
     TOOL_APPROVED = "tool_approved"

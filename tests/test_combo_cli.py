@@ -56,6 +56,7 @@ def test_combo_cli_show(
     captured = capsys.readouterr().out
     assert "Profile     : coder" in captured
     assert "Claude" in captured
+    assert "subscription" not in captured.lower()
 
 
 def test_combo_cli_show_json(
@@ -172,3 +173,38 @@ def test_parent_cli_delegates_to_combo(
     assert rc == 0
     captured = capsys.readouterr().out
     assert "default" in captured
+
+
+def test_combo_auth_logs_in_each_missing_vendor_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    combo_main(
+        [
+            "new",
+            "accounts",
+            "--tier",
+            "codex:gpt-5.6-sol",
+            "--tier",
+            "gemini-cli:gemini-2.5-pro",
+            "--tier",
+            "ollama:qwen2.5-coder",
+        ]
+    )
+    capsys.readouterr()
+
+    calls: list[list[str]] = []
+
+    def fake_login(argv: list[str]) -> int:
+        calls.append(argv)
+        return 0
+
+    monkeypatch.setattr("avo.auth.main_login", fake_login)
+
+    assert combo_main(["auth", "accounts"]) == 0
+    assert calls == [["codex"], ["gemini"]]
+    output = capsys.readouterr().out
+    assert "2 vendor login" in output
+    assert "ollama" in output.lower()

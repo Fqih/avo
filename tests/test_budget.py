@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from avo.budget import BudgetChecker, BudgetConfig, BudgetError
+from avo.budget import BudgetChecker, BudgetConfig, BudgetError, resolve_budget_config
 from avo.models import TokenUsage
 
 
@@ -131,3 +131,20 @@ def test_checker_with_default_config() -> None:
     decision = checker.check(TokenUsage(input_tokens=100, output_tokens=100))
     assert decision.allowed is True
     assert decision.spent_usd is None
+
+
+def test_resolve_budget_config_from_environ() -> None:
+    config = resolve_budget_config(
+        {
+            "AVO_BUDGET_HARD_LIMIT_USD": "5.00",
+            "AVO_BUDGET_WARNING_USD": "3.50",
+        }
+    )
+    assert config.hard_limit_usd == Decimal("5.00")
+    assert config.warning_usd == Decimal("3.50")
+
+
+def test_resolve_budget_config_empty_returns_defaults() -> None:
+    config = resolve_budget_config({})
+    assert config.hard_limit_usd is None
+    assert config.warning_usd is None

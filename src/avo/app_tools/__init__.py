@@ -21,10 +21,14 @@ from .glob_tool import glob_tool
 from .grep_tool import grep_tool
 from .linter import lint_tool
 from .symbols import symbols_tool
+from .terminal_tool import run_terminal_tool
 from .test_runner import test_runner_tool
 from .workspace_map import workspace_map_tool
+from .worktree import GitWorktreeError, GitWorktreeManager
 
 __all__ = [
+    "GitWorktreeError",
+    "GitWorktreeManager",
     "batch_replace_tool",
     "bind_workspace",
     "edit_file_tool",
@@ -35,6 +39,7 @@ __all__ = [
     "grep_tool",
     "lint_tool",
     "read_file_tool",
+    "run_terminal_tool",
     "symbols_tool",
     "test_runner_tool",
     "workspace_map_tool",

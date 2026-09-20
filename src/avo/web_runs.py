@@ -20,6 +20,7 @@ from avo.chat_session import SessionLifecycle
 from avo.events import AgentEvent
 from avo.storage.sqlite import SQLiteEventStore
 from avo.tracing import TraceInspector
+from avo.web_dag import build_run_dag
 from avo.web_http import _LOG, WebHttpMixin
 
 
@@ -64,6 +65,16 @@ class WebRunsMixin(WebHttpMixin):
 
             events = self.server.get_sync_recent_events(limit=limit, run_id=run_filter)
             self._send_json({"events": events, "count": len(events)})
+            return True
+
+        if path.startswith("/api/runs/") and path.endswith("/dag"):
+            run_id = path.split("/api/runs/", 1)[1].rsplit("/dag", 1)[0]
+            trace_data = self.server.get_sync_trace(run_id)
+            if trace_data is None:
+                self._send_json({"error": f"Run {run_id!r} not found"}, status=404)
+            else:
+                dag = build_run_dag(trace_data)
+                self._send_json(dag)
             return True
 
         if path.startswith("/api/runs/"):

@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+from collections.abc import Mapping
+from dataclasses import dataclass
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler
 from typing import TYPE_CHECKING, Any
@@ -22,6 +24,58 @@ if TYPE_CHECKING:
     from avo.web_ui import AvoWebServer
 
 _LOG = logging.getLogger("avo.web_ui")
+
+
+class WebSecurityError(Exception):
+    """Stable, non-secret error raised by the mutation authentication gate."""
+
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.message = message
+
+
+@dataclass(frozen=True)
+class WebSecurityConfig:
+    """Explicit policy for browser-originated dashboard mutations."""
+
+    allowed_origin: str | None = None
+    cors_enabled: bool = False
+    require_confirmation: bool = True
+
+    def __post_init__(self) -> None:
+        if self.allowed_origin == "*":
+            raise ValueError("wildcard origins are not allowed")
+        if self.cors_enabled and not self.allowed_origin:
+            raise ValueError("cors_enabled requires an explicit allowed_origin")
+
+
+def authenticate_mutation(
+    headers: Mapping[str, str],
+    *,
+    expected_token: str,
+    csrf_token: str,
+    allowed_origin: str | None,
+    confirmation: object | None = None,
+) -> None:
+    """Validate bearer/origin/CSRF/confirmation before mutation parsing."""
+
+    authorization = headers.get("Authorization", "")
+    if not authorization or not secrets.compare_digest(
+        authorization.encode(), f"Bearer {expected_token}".encode()
+    ):
+        raise WebSecurityError(401, "authentication_required", "Authentication required")
+    origin = headers.get("Origin", "")
+    if origin and (allowed_origin is None or origin != allowed_origin):
+        raise WebSecurityError(403, "origin_forbidden", "Forbidden origin")
+    if origin:
+        supplied_csrf = headers.get("X-CSRF-Token", "")
+        if not secrets.compare_digest(supplied_csrf.encode(), csrf_token.encode()):
+            raise WebSecurityError(403, "csrf_forbidden", "CSRF validation failed")
+    if confirmation is not None and confirmation is not True:
+        raise WebSecurityError(400, "confirmation_required", "Explicit confirmation is required")
+
 
 # The launch secret is delivered in a fragment, never in an HTTP URL/query or
 # unauthenticated response. Install before dashboard scripts make requests.
@@ -80,14 +134,18 @@ class WebHttpMixin(BaseHTTPRequestHandler):
         if port == 80:
             allowed_hosts.update({"127.0.0.1", "localhost", "[::1]"})
         origins = self.headers.get_all("Origin", [])
+        allowed_origins = {f"http://{host}"}
+        configured_origin = self.server.web_security.allowed_origin
+        if self.server.web_security.cors_enabled and configured_origin:
+            allowed_origins.add(configured_origin)
         if (
             len(self.headers.get_all("Host", [])) != 1
             or host not in allowed_hosts
             or len(origins) > 1
-            or (origins and origins[0] != f"http://{host}")
+            or (origins and origins[0] not in allowed_origins)
             or self.headers.get("Sec-Fetch-Site") == "cross-site"
         ):
-            self._send_json({"error": "Forbidden origin or host"}, status=403)
+            self._send_error("origin_forbidden", "Forbidden origin or host", status=403)
             return False
         return True
 
@@ -117,7 +175,7 @@ class WebHttpMixin(BaseHTTPRequestHandler):
                 )
             )
         if not valid:
-            self._send_json({"error": "Authentication required"}, status=401)
+            self._send_error("authentication_required", "Authentication required", status=401)
         return valid
 
     def _require_confirmation(self, data: Any) -> bool:
@@ -125,6 +183,11 @@ class WebHttpMixin(BaseHTTPRequestHandler):
             self._send_json({"error": "Explicit confirm: true is required"}, status=400)
             return False
         return True
+
+    def _send_error(self, code: str, message: str, *, status: int) -> None:
+        """Send a stable JSON error without request credentials or secrets."""
+
+        self._send_json({"error": {"code": code, "message": message}}, status=status)
 
     def _send_session(self) -> None:
         raw = json.dumps({"ok": True, "csrf_token": self.server.csrf_token}).encode()
@@ -169,7 +232,23 @@ class WebHttpMixin(BaseHTTPRequestHandler):
             return
         self.send_response(204)
         self.send_header("Allow", "GET, POST, OPTIONS")
+        if self.server.web_security.cors_enabled:
+            origin = self.headers.get("Origin", "")
+            if origin and origin == self.server.web_security.allowed_origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Credentials", "true")
+                self.send_header(
+                    "Access-Control-Allow-Headers",
+                    "Authorization, Content-Type, X-CSRF-Token",
+                )
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Vary", "Origin")
         self.end_headers()
 
 
-__all__ = ["WebHttpMixin"]
+__all__ = [
+    "WebHttpMixin",
+    "WebSecurityConfig",
+    "WebSecurityError",
+    "authenticate_mutation",
+]

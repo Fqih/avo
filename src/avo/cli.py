@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -14,12 +15,13 @@ from avo.config import resolve_database_path
 from avo.doctor import main as doctor_main
 from avo.exceptions import AvoError
 from avo.providers.fake import FakeProvider
+from avo.replay import replay_run
 from avo.runtime import AgentRuntime
 from avo.storage.sqlite import SQLiteEventStore
 from avo.tracing import TraceInspector
 
 
-def _tail_argv(command: str) -> list[str]:
+def _tail_argv(command: str, argv: Sequence[str] | None = None) -> list[str]:
     """Return argv after the leading ``avo <command>`` tokens.
 
     Used by the delegated plugin/mcp/skill subcommands. Falls back to
@@ -27,16 +29,32 @@ def _tail_argv(command: str) -> list[str]:
     invoked programmatically with ``argv=None``).
     """
 
-    argv = sys.argv[1:]
-    if argv and argv[0] == command:
-        argv = argv[1:]
-    return argv
+    effective_argv = list(sys.argv[1:] if argv is None else argv)
+    if command in effective_argv:
+        index = effective_argv.index(command)
+        return effective_argv[index + 1 :]
+    return []
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="avo",
         description="Inspect, resume, and chat with Avo SQLite runs.",
+        epilog=(
+            "Quick start:\n"
+            "  avo                 Start chat\n"
+            "  avo chat            Start chat explicitly\n"
+            "  avo resume         Resume the latest chat session\n"
+            "  avo setup           Configure a provider\n"
+            "  avo login codex     Open the official vendor login\n"
+            "  avo models ollama   Inspect local model recommendations\n"
+            "  avo saver list      Inspect token-saver presets\n"
+            "  avo replay RUN_ID   Verify a run's replay ledger without inference\n"
+            "  avo doctor          Diagnose configuration without inference\n"
+            "\n"
+            "Documentation: https://avo.faqihhakim.tech"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--version",
@@ -69,6 +87,21 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit JSON instead of a human-readable table.",
     )
+    runs_replay_parser = run_commands.add_parser(
+        "replay", help="Verify a run without invoking providers or tools."
+    )
+    runs_replay_parser.add_argument("run_id")
+    runs_replay_parser.add_argument(
+        "--json", action="store_true", help="Emit a machine-readable JSON report."
+    )
+
+    replay_parser = commands.add_parser(
+        "replay", help="Verify a persisted run without invoking providers or tools."
+    )
+    replay_parser.add_argument("run_id")
+    replay_parser.add_argument(
+        "--json", action="store_true", help="Emit a machine-readable JSON report."
+    )
 
     chat = commands.add_parser(
         "chat",
@@ -92,13 +125,36 @@ def _parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         metavar="SESSION_ID",
-        help="Resume an existing chat session by id (default: start a fresh thread; "
-        "without --session the REPL offers to resume the most recent thread).",
+        help="Resume an existing chat session by id (default: start a fresh thread).",
     )
     chat.add_argument(
         "--new-session",
         action="store_true",
         help="Always start a fresh chat session, ignoring any prior threads.",
+    )
+
+    resume_chat = commands.add_parser(
+        "resume",
+        help="Resume the latest chat session, or a specific session id.",
+    )
+    resume_chat.add_argument(
+        "session_id",
+        nargs="?",
+        metavar="SESSION_ID",
+        help="Chat session id to resume (default: latest eligible session).",
+    )
+    resume_chat.add_argument(
+        "--database",
+        "-d",
+        type=Path,
+        default=argparse.SUPPRESS,
+        help="SQLite database path (default: $AVO_DATABASE_PATH or avo.db).",
+    )
+    resume_chat.add_argument(
+        "--workspace-root",
+        type=Path,
+        default=None,
+        help="Workspace directory file tools are bound to (default: current working directory).",
     )
 
     commands.add_parser(
@@ -123,6 +179,12 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "init",
         help="Scaffold .avo/skills/ and AGENTS.md in the current directory.",
+    )
+
+    commands.add_parser(
+        "setup",
+        add_help=False,
+        help="Configure global ~/.avo directory and defaults (see `avo setup --help`).",
     )
 
     commands.add_parser(
@@ -166,26 +228,70 @@ def _parser() -> argparse.ArgumentParser:
         add_help=False,
         help="Manage combo routing profiles (see `avo combo --help`).",
     )
+    commands.add_parser(
+        "models",
+        add_help=False,
+        help="Discover and manage Ollama Local/Cloud models (see `avo models --help`).",
+    )
+    commands.add_parser(
+        "saver",
+        add_help=False,
+        help="Manage token-saver presets (see `avo saver --help`).",
+    )
 
     return parser
 
 
-async def _execute(args: argparse.Namespace, rest: list[str] | None = None) -> int:
+async def _execute(
+    args: argparse.Namespace,
+    rest: list[str] | None = None,
+    argv: Sequence[str] | None = None,
+) -> int:
     tail = rest if rest is not None else []
     if args.command == "ui":
         from avo.web_ui import main as web_ui_main
 
-        return web_ui_main(tail or _tail_argv("ui"))
+        return web_ui_main(tail or _tail_argv("ui", argv))
 
     if args.command == "login":
         from avo.auth import main_login
 
-        return main_login(tail or _tail_argv("login"))
+        # `main_login` is a synchronous compatibility entry point that owns
+        # its own asyncio.run call. The CLI dispatcher itself already runs
+        # inside asyncio.run. Keep it in a dedicated thread; asyncio.to_thread
+        # and cross-thread loop callbacks are not reliable when the worker
+        # itself creates and closes a nested event loop.
+        login_args = tail or _tail_argv("login", argv)
+        login_result: list[int] = []
+        failure: list[BaseException] = []
+
+        def run_login() -> None:
+            try:
+                login_result.append(int(main_login(login_args)))
+            except BaseException as exc:  # propagate CLI errors to the caller
+                failure.append(exc)
+
+        worker = threading.Thread(target=run_login, name="avo-login", daemon=True)
+        worker.start()
+        worker.join()
+        if failure:
+            raise failure[0]
+        return login_result[0] if login_result else 1
 
     if args.command == "combo":
         from avo.combo.cli import main as combo_main
 
-        return combo_main(tail or _tail_argv("combo"))
+        return combo_main(tail or _tail_argv("combo", argv))
+
+    if args.command == "models":
+        from avo.cli_models import async_main as models_main
+
+        return await models_main(tail or _tail_argv("models", argv))
+
+    if args.command == "saver":
+        from avo.savers.cli import main as saver_main
+
+        return saver_main(tail or _tail_argv("saver", argv))
 
     if args.command == "doctor":
         # ``doctor_main`` has already-consumed argv; pass an empty list
@@ -198,32 +304,37 @@ async def _execute(args: argparse.Namespace, rest: list[str] | None = None) -> i
         # off ``sys.argv`` minus the leading ``avo plugin`` tokens.
         from avo.cli_plugins import main as plugin_main
 
-        return plugin_main(_tail_argv("plugin"))
+        return plugin_main(tail or _tail_argv("plugin", argv))
 
     if args.command == "mcp":
         from avo.cli_mcp import main as mcp_main
 
-        return mcp_main(_tail_argv("mcp"))
+        return mcp_main(tail or _tail_argv("mcp", argv))
 
     if args.command == "skill":
         from avo.cli_skills import main as skill_main
 
-        return skill_main(_tail_argv("skill"))
+        return skill_main(tail or _tail_argv("skill", argv))
 
     if args.command == "init":
         from avo.cli_init import main as init_main
 
-        return init_main(_tail_argv("init"))
+        return init_main(tail or _tail_argv("init", argv))
+
+    if args.command == "setup":
+        from avo.cli_setup import main as setup_main
+
+        return setup_main(tail or _tail_argv("setup", argv))
 
     if args.command == "bench":
         from avo.bench import main as bench_main
 
-        return bench_main(_tail_argv("bench"))
+        return bench_main(tail or _tail_argv("bench", argv))
 
     if args.command == "sandbox":
         from avo.cli_sandbox import main as sandbox_main
 
-        return sandbox_main(_tail_argv("sandbox"))
+        return sandbox_main(tail or _tail_argv("sandbox", argv))
 
     if args.command == "cost":
         from avo.cost import main as cost_main
@@ -250,10 +361,28 @@ async def _execute(args: argparse.Namespace, rest: list[str] | None = None) -> i
             workspace_root=workspace_root,
             session_id=args.session,
             force_new_session=args.new_session,
+            resume_latest=False,
+        )
+
+    if args.command == "resume":
+        workspace_root = (args.workspace_root or Path.cwd()).resolve()
+        return await run_repl(
+            database_path=resolve_database_path(args.database),
+            workspace_root=workspace_root,
+            session_id=args.session_id,
+            resume_latest=args.session_id is None,
         )
 
     store = SQLiteEventStore(resolve_database_path(args.database))
     try:
+        if args.command == "replay" or (args.command == "runs" and args.runs_command == "replay"):
+            replay_report = await replay_run(store, args.run_id)
+            if args.json:
+                print(replay_report.to_json())
+            else:
+                print(replay_report.to_text())
+            return 0 if replay_report.verified else 1
+
         if args.runs_command == "list":
             runs = await store.list_runs()
             if not runs:
@@ -312,6 +441,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = _parser()
     effective_argv = list(sys.argv[1:] if argv is None else argv)
+    if not effective_argv:
+        effective_argv = ["chat"]
     args, rest = parser.parse_known_args(effective_argv)
     if rest and args.command not in {
         "login",
@@ -320,14 +451,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         "mcp",
         "skill",
         "init",
+        "setup",
         "bench",
         "sandbox",
         "cost",
         "combo",
+        "models",
+        "saver",
     }:
         parser.error(f"unrecognized arguments: {' '.join(rest)}")
     try:
-        return asyncio.run(_execute(args, rest=rest))
+        return asyncio.run(_execute(args, rest=rest, argv=effective_argv))
+    except KeyboardInterrupt:
+        print("avo: Interrupted", file=sys.stderr)
+        return 130
     except (AvoError, OSError) as exc:
         print(f"avo: {exc}", file=sys.stderr)
         return 2

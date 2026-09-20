@@ -165,9 +165,6 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs documentation
-/site
-
 # mypy
 .mypy_cache/
 .dmypy.json
@@ -231,8 +228,9 @@ project.md
 NEXT-UPDATE.md
 *.db
 
-# mkdocs build output
-/site/
+# Demo generator and video recordings
+demo/
+avo-development-analysis.html
 
 # Local Avo runtime cache
 .avo/

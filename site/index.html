@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Avo — Reliable Agent Infrastructure for Autonomous Engineering</title>
+  <meta name="description" content="Event-sourced, crash-safe runtime for AI agents. Features Git worktree isolation, durable webhook approvals, rootless sandboxing, and zero-Python standalone binaries.">
+  <link rel="canonical" href="https://avo.faqihhakim.tech/">
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="assets/modern.css">
+</head>
+<body>
+  <div class="avo-bg-mesh"></div>
+
+  <!-- Navigation -->
+  <header class="avo-nav">
+    <a href="/" class="avo-nav__brand">
+      <img src="assets/logo.png" alt="Avo Logo" class="avo-nav__logo">
+      <span>Avo</span>
+      <span class="avo-nav__badge">v0.7.4</span>
+    </a>
+    <ul class="avo-nav__links">
+      <li><a href="#features" class="avo-nav__link">Features</a></li>
+      <li><a href="#architecture" class="avo-nav__link">Architecture</a></li>
+      <li><a href="#comparison" class="avo-nav__link">Comparison</a></li>
+      <li><a href="#quickstart" class="avo-nav__link">Quickstart</a></li>
+      <li><a href="guides/install/" class="avo-nav__link">Install Guide</a></li>
+      <li><a href="cli/" class="avo-nav__link">CLI Docs</a></li>
+      <li><a href="avo-reference/" class="avo-nav__link">API Reference</a></li>
+    </ul>
+    <a href="https://github.com/Fqih/avo" target="_blank" rel="noopener" class="avo-nav__cta">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      GitHub
+    </a>
+  </header>
+
+  <main class="avo-container">
+    <!-- Hero Section -->
+    <section class="avo-hero-section">
+      <div class="avo-pill-badge">
+        <span class="dot"></span>
+        Zero-Python Standalone Executable Available • Single-File Binary
+      </div>
+      <h1 class="avo-hero__title">
+        Reliable Agent Runtime for <br>
+        <span class="avo-hero__gradient-text">Autonomous Engineering</span>
+      </h1>
+      <p class="avo-hero__subtitle">
+        Event-sourced state machines, SQLite checkpoint persistence, Git worktree isolation, durable webhook approvals, and rootless sandboxes. Run agents that survive crashes, enforce hard budgets, and never corrupt your workspace.
+      </p>
+      <div class="avo-hero__buttons">
+        <a href="#install" class="avo-btn avo-btn--primary">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          Get Standalone Binary
+        </a>
+        <a href="guides/quickstart/" class="avo-btn avo-btn--secondary">Explore Quickstart</a>
+        <a href="https://github.com/Fqih/avo" target="_blank" rel="noopener" class="avo-btn avo-btn--secondary">View Source (MIT)</a>
+      </div>
+
+      <!-- Interactive Installer Terminal -->
+      <div id="install" class="avo-terminal-card">
+        <div class="avo-terminal-card__header">
+          <div class="avo-terminal-dots">
+            <span class="avo-dot--red"></span>
+            <span class="avo-dot--yellow"></span>
+            <span class="avo-dot--green"></span>
+          </div>
+          <div class="avo-terminal-tabs">
+            <button class="avo-tab-btn active" onclick="switchTab('posix')">Linux / macOS</button>
+            <button class="avo-tab-btn" onclick="switchTab('win')">Windows PowerShell</button>
+            <button class="avo-tab-btn" onclick="switchTab('source')">Python (uv tool)</button>
+          </div>
+        </div>
+        <div class="avo-terminal-body">
+          <div id="pane-posix" class="avo-code-pane active">
+            <div class="avo-code-line">
+              <code>curl -fsSL https://avo.faqihhakim.tech/install.sh | bash</code>
+              <button class="avo-copy-btn" onclick="copySnippet('curl -fsSL https://avo.faqihhakim.tech/install.sh | bash', this)">Copy</button>
+            </div>
+            <div class="avo-terminal-output">
+              # Installs pre-built standalone binary directly to ~/.local/bin/avo<br>
+              # <span class="green">✓ Zero Python runtime or uv required</span>
+            </div>
+          </div>
+          <div id="pane-win" class="avo-code-pane">
+            <div class="avo-code-line">
+              <code>irm https://avo.faqihhakim.tech/install.ps1 | iex</code>
+              <button class="avo-copy-btn" onclick="copySnippet('irm https://avo.faqihhakim.tech/install.ps1 | iex', this)">Copy</button>
+            </div>
+            <div class="avo-terminal-output">
+              # Installs standalone avo.exe to %LOCALAPPDATA%\avo\bin<br>
+              # <span class="green">✓ Zero Python or admin rights required</span>
+            </div>
+          </div>
+          <div id="pane-source" class="avo-code-pane">
+            <div class="avo-code-line">
+              <code>uv tool install --python 3.13 avo[all]</code>
+              <button class="avo-copy-btn" onclick="copySnippet('uv tool install --python 3.13 avo[all]', this)">Copy</button>
+            </div>
+            <div class="avo-terminal-output">
+              # Installs user-global Python package with all provider & sandbox extras
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Architecture & Features Section -->
+    <section id="features" class="avo-section">
+      <div class="avo-section__header">
+        <div class="avo-section__eyebrow">Enterprise Reliability Primitives</div>
+        <h2 class="avo-section__title">Engineered to Keep Going Safely</h2>
+        <p class="avo-section__subtitle">
+          Most agent frameworks treat LLMs as simple while-loops. Avo builds on state-machine rigor, durable event sourcing, and container isolation.
+        </p>
+      </div>
+
+      <div class="avo-grid-3">
+        <!-- Card 1 -->
+        <div class="avo-card">
+          <div class="avo-card__icon">🌿</div>
+          <h3 class="avo-card__title">Git Worktree Isolation</h3>
+          <p class="avo-card__desc">
+            Never corrupt the user's working directory. Code modifications and test runs execute in ephemeral <code>.avo/worktrees/&lt;run_id&gt;</code> workspaces on isolated branches, with automated merge or clean discard.
+          </p>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="avo-card">
+          <div class="avo-card__icon">🛡️</div>
+          <h3 class="avo-card__title">Dual-Layer Sandbox</h3>
+          <p class="avo-card__desc">
+            Execute untrusted shell operations safely. Uses rootless Linux Bubblewrap (<code>bwrap</code>) with unshared namespaces, or ephemeral Docker containers with <code>network_mode="none"</code>.
+          </p>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="avo-card">
+          <div class="avo-card__icon">🔔</div>
+          <h3 class="avo-card__title">Durable Webhook Approval</h3>
+          <p class="avo-card__desc">
+            Pending human authorizations persist in SQLite (<code>pending_approvals</code>). When a dangerous tool requires approval, the agent pauses safely and resumes via REST webhook (<code>POST /api/approvals/{id}/decision</code>) across daemon restarts.
+          </p>
+        </div>
+
+        <!-- Card 4 -->
+        <div class="avo-card">
+          <div class="avo-card__icon">🔀</div>
+          <h3 class="avo-card__title">Combo Routing & Failover</h3>
+          <p class="avo-card__desc">
+            One conversation, multiple models. Automatically failover across Anthropic Claude, OpenAI, Gemini, and local Ollama when quotas or rate limits are hit—without losing conversation context.
+          </p>
+        </div>
+
+        <!-- Card 5 -->
+        <div class="avo-card">
+          <div class="avo-card__icon">📜</div>
+          <h3 class="avo-card__title">Event Sourcing & Replay</h3>
+          <p class="avo-card__desc">
+            Every state change appends to an immutable SQLite event log. Step checkpoints allow exact crash-safe resume, deterministic replay, and post-mortem auditability.
+          </p>
+        </div>
+
+        <!-- Card 6 -->
+        <div class="avo-card">
+          <div class="avo-card__icon">🧠</div>
+          <h3 class="avo-card__title">Epistemic Memory & Blackboard</h3>
+          <p class="avo-card__desc">
+            Multi-agent shared scratchpad backed by optimistic locking, plus BM25 keyword recall fact memory with automated secret redaction for API keys and tokens.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Comparison Section -->
+    <section id="comparison" class="avo-section">
+      <div class="avo-section__header">
+        <div class="avo-section__eyebrow">Framework Comparison</div>
+        <h2 class="avo-section__title">Why Developers Choose Avo</h2>
+        <p class="avo-section__subtitle">How Avo compares to traditional Python agent frameworks and raw CLI tools.</p>
+      </div>
+
+      <div class="avo-table-wrap">
+        <table class="avo-table">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th class="highlight-col">Avo</th>
+              <th>LangGraph</th>
+              <th>CrewAI</th>
+              <th>Claude Code</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Zero-Python Standalone Binary</strong></td>
+              <td class="highlight-col"><span class="avo-check">✓ Native Executable</span></td>
+              <td><span class="avo-cross">✗ Python required</span></td>
+              <td><span class="avo-cross">✗ Python required</span></td>
+              <td><span class="avo-cross">✗ Node.js required</span></td>
+            </tr>
+            <tr>
+              <td><strong>Git Worktree Workspace Isolation</strong></td>
+              <td class="highlight-col"><span class="avo-check">✓ Built-in (.avo/worktrees)</span></td>
+              <td><span class="avo-cross">✗ None</span></td>
+              <td><span class="avo-cross">✗ None</span></td>
+              <td><span class="avo-check">✓ Via hooks</span></td>
+            </tr>
+            <tr>
+              <td><strong>Crash-Safe Checkpoint Resume</strong></td>
+              <td class="highlight-col"><span class="avo-check">✓ SQLite Event Store</span></td>
+              <td><span class="avo-check">✓ Checkpointer</span></td>
+              <td><span class="avo-cross">✗ Memory only</span></td>
+              <td><span class="avo-check">✓ Local session</span></td>
+            </tr>
+            <tr>
+              <td><strong>Rootless Linux Sandbox (bwrap)</strong></td>
+              <td class="highlight-col"><span class="avo-check">✓ Native namespace isolation</span></td>
+              <td><span class="avo-cross">✗ None</span></td>
+              <td><span class="avo-cross">✗ Docker only</span></td>
+              <td><span class="avo-cross">✗ Host process</span></td>
+            </tr>
+            <tr>
+              <td><strong>Durable Webhook Approvals</strong></td>
+              <td class="highlight-col"><span class="avo-check">✓ Persistent DB + REST</span></td>
+              <td><span class="avo-check">✓ Interrupts</span></td>
+              <td><span class="avo-cross">✗ CLI input only</span></td>
+              <td><span class="avo-cross">✗ Terminal prompt</span></td>
+            </tr>
+            <tr>
+              <td><strong>Loop & Budget Circuit Breakers</strong></td>
+              <td class="highlight-col"><span class="avo-check">✓ ProgressDetector & TokenLedger</span></td>
+              <td><span class="avo-cross">✗ Max iterations only</span></td>
+              <td><span class="avo-cross">✗ Max iterations only</span></td>
+              <td><span class="avo-cross">✗ User interrupt</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Quickstart Code Section -->
+    <section id="quickstart" class="avo-section">
+      <div class="avo-section__header">
+        <div class="avo-section__eyebrow">Developer Quickstart</div>
+        <h2 class="avo-section__title">Simple to Embed, Powerful to Scale</h2>
+      </div>
+
+      <div class="avo-terminal-card" style="margin-bottom: 0;">
+        <div class="avo-terminal-card__header">
+          <div class="avo-terminal-dots">
+            <span class="avo-dot--red"></span>
+            <span class="avo-dot--yellow"></span>
+            <span class="avo-dot--green"></span>
+          </div>
+          <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-faint);">agent_example.py</span>
+        </div>
+        <div class="avo-terminal-body">
+          <pre style="margin: 0; color: #e2e8f0; font-size: 0.88rem; line-height: 1.6;"><code><span style="color: #f43f5e;">from</span> avo <span style="color: #f43f5e;">import</span> AgentRuntime, LoopPolicy, FunctionTool
+<span style="color: #f43f5e;">from</span> avo.app_tools <span style="color: #f43f5e;">import</span> GitWorktreeManager, read_file_tool, write_file_tool
+<span style="color: #f43f5e;">from</span> avo.config <span style="color: #f43f5e;">import</span> build_provider_from_env
+
+<span style="color: #64748b;"># 1. Initialize isolated git worktree for this run</span>
+manager = GitWorktreeManager(repo_root=<span style="color: #a7f3d0;">"."</span>)
+worktree_path = manager.create_worktree(run_id=<span style="color: #a7f3d0;">"task-audit-01"</span>)
+
+<span style="color: #64748b;"># 2. Build runtime with bounded step and token budget</span>
+runtime = AgentRuntime(
+    provider=build_provider_from_env(),
+    policy=LoopPolicy(max_steps=<span style="color: #38bdf8;">15</span>, token_budget=<span style="color: #38bdf8;">50_000</span>),
+    tools=[read_file_tool, write_file_tool],
+    database_path=<span style="color: #a7f3d0;">".avo/runs.db"</span>
+)
+
+<span style="color: #64748b;"># 3. Execute with deterministic event logging and step checkpoints</span>
+result = await runtime.run(
+    task=<span style="color: #a7f3d0;">"Audit dependencies and apply security fixes in isolated worktree."</span>
+)
+<span style="color: #38bdf8;">print</span>(f<span style="color: #a7f3d0;">"Run completed: {result.state} (StopReason: {result.stop_reason})"</span>)</code></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="avo-footer">
+    <div class="avo-container avo-footer__inner">
+      <div class="avo-footer__copy">
+        © 2026 Fqih. Built with reliability-first architecture. Released under the MIT License.
+      </div>
+      <ul class="avo-footer__links">
+        <li><a href="guides/install/" class="avo-footer__link">Installation</a></li>
+        <li><a href="cli/" class="avo-footer__link">CLI Documentation</a></li>
+        <li><a href="avo-reference/" class="avo-footer__link">API Reference</a></li>
+        <li><a href="changelog/" class="avo-footer__link">Changelog</a></li>
+        <li><a href="https://pypi.org/project/avo/" target="_blank" rel="noopener" class="avo-footer__link">PyPI (v0.7.4)</a></li>
+        <li><a href="https://github.com/Fqih/avo" target="_blank" rel="noopener" class="avo-footer__link">GitHub</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script>
+    function switchTab(tab) {
+      document.querySelectorAll('.avo-tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.avo-code-pane').forEach(p => p.classList.remove('active'));
+
+      if (tab === 'posix') {
+        document.querySelectorAll('.avo-tab-btn')[0].classList.add('active');
+        document.getElementById('pane-posix').classList.add('active');
+      } else if (tab === 'win') {
+        document.querySelectorAll('.avo-tab-btn')[1].classList.add('active');
+        document.getElementById('pane-win').classList.add('active');
+      } else if (tab === 'source') {
+        document.querySelectorAll('.avo-tab-btn')[2].classList.add('active');
+        document.getElementById('pane-source').classList.add('active');
+      }
+    }
+
+    function copySnippet(text, button) {
+      navigator.clipboard.writeText(text).then(() => {
+        const orig = button.textContent;
+        button.textContent = 'Copied!';
+        button.style.background = '#10b981';
+        button.style.color = '#041210';
+        setTimeout(() => {
+          button.textContent = orig;
+          button.style.background = '';
+          button.style.color = '';
+        }, 2000);
+      });
+    }
+  </script>
+</body>
+</html>

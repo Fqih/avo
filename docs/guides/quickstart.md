@@ -13,6 +13,11 @@ avo doctor
 `doctor` prints the provider, model, endpoint, and enabled integrations it
 resolved. It does not make a provider request.
 
+Every chat turn includes a compact Avo role briefing. It tells the model that
+it is operating inside the active workspace, answers greetings without tools,
+and must not invent paths outside that workspace. Custom personas and
+workspace instructions are appended after this core behavior.
+
 ## 2. Configure a provider
 
 Run the setup wizard in the project where you want to work:
@@ -22,9 +27,9 @@ cd path/to/your/project
 avo setup
 ```
 
-For a quick local experiment, use an API key provider. For subscription OAuth,
-see [Subscription OAuth](subscription-auth.md). Keep credentials outside Git
-and verify the result:
+For a quick local experiment, use Ollama Local. For an official vendor browser
+login, API key, or Ollama Cloud setup, see [provider login and quotas](subscription-auth.md).
+Keep credentials outside Git and verify the result:
 
 ```bash
 avo doctor
@@ -33,7 +38,7 @@ avo doctor
 ## 3. Start the REPL
 
 ```bash
-avo chat
+avo
 ```
 
 Useful commands inside the REPL:
@@ -45,6 +50,26 @@ Useful commands inside the REPL:
 | `/combo` | Inspect routing tiers and provider health |
 | `/diff` | Review uncommitted workspace changes |
 | `/exit` | Close the session |
+
+For a combo profile, authenticate all missing cloud vendors in one command:
+
+```bash
+avo combo auth coder
+```
+
+For Ollama Local, inspect the recommendation before downloading:
+
+```bash
+avo models ollama recommend
+```
+
+For long tool-heavy conversations, enable the deterministic internal token
+saver. It is opt-in and does not install an external RTK/Caveman command:
+
+```bash
+avo saver list
+avo saver use compact
+```
 
 ## 4. Understand what is persisted
 

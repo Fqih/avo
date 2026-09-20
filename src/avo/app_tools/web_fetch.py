@@ -13,19 +13,20 @@ Only ``http://`` and ``https://`` URLs are accepted. ``file://``,
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin
 
 from pydantic import BaseModel, Field, JsonValue
 
 from avo import FunctionTool as PublicFunctionTool
 from avo.exceptions import ToolExecutionError
+from avo.web_security import HostResolver, resolve_host, validate_public_url
 
 WebFetchError = ToolExecutionError
 
 _DEFAULT_MAX_BYTES = 16 * 1024  # 16 KiB — keeps model context manageable
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 
-_ALLOWED_SCHEMES = frozenset({"http", "https"})
+_MAX_REDIRECTS = 5
 
 
 class WebFetchArguments(BaseModel):
@@ -38,28 +39,39 @@ class WebFetchArguments(BaseModel):
 
 def _validate_url(url: str) -> str:
     """Return ``url`` if its scheme is allowed, else raise ``WebFetchError``."""
-
-    parsed = urlparse(url)
-    if parsed.scheme not in _ALLOWED_SCHEMES:
-        allowed = ", ".join(sorted(_ALLOWED_SCHEMES))
-        raise WebFetchError(f"web_fetch only supports {allowed} URLs; got {parsed.scheme!r}")
-    if not parsed.netloc:
-        raise WebFetchError(f"web_fetch URL is missing a host: {url}")
+    validate_public_url(url)
     return url
 
 
 async def _fetch_with_client(
     client: Any,
     arguments: WebFetchArguments,
+    *,
+    resolver: HostResolver = resolve_host,
 ) -> dict[str, JsonValue]:
-    _validate_url(arguments.url)
-    response = await client.get(
-        arguments.url,
-        timeout=arguments.timeout_seconds,
-        follow_redirects=True,
-    )
-    body_bytes = response.content[: arguments.max_bytes]
-    truncated = len(response.content) > arguments.max_bytes
+    current_url = validate_public_url(arguments.url, resolver=resolver).url
+    for redirect_count in range(_MAX_REDIRECTS + 1):
+        response = await client.get(
+            current_url,
+            timeout=arguments.timeout_seconds,
+            follow_redirects=False,
+        )
+        if int(response.status_code) in {301, 302, 303, 307, 308}:
+            location = response.headers.get("location", "")
+            if not location:
+                raise WebFetchError("web_fetch redirect response is missing a location")
+            if redirect_count >= _MAX_REDIRECTS:
+                raise WebFetchError("web_fetch redirect limit exceeded")
+            current_url = urljoin(current_url, location)
+            validate_public_url(current_url, resolver=resolver)
+            continue
+        break
+    else:  # pragma: no cover - loop always returns or raises
+        raise WebFetchError("web_fetch redirect limit exceeded")
+
+    content = bytes(response.content)
+    body_bytes = content[: arguments.max_bytes]
+    truncated = len(content) > arguments.max_bytes
     try:
         body_text = body_bytes.decode(response.encoding or "utf-8", errors="replace")
     except LookupError:
@@ -84,12 +96,12 @@ except ModuleNotFoundError:  # pragma: no cover - httpx required by providers ex
 
 
 async def _web_fetch(arguments: WebFetchArguments) -> dict[str, JsonValue]:
-    _validate_url(arguments.url)
+    validate_public_url(arguments.url)
     if _httpx is None:
         raise WebFetchError(
             "web_fetch requires the `httpx` package; install avo with the [providers] extra."
         )
-    async with _httpx.AsyncClient() as client:
+    async with _httpx.AsyncClient(trust_env=False) as client:
         return await _fetch_with_client(client, arguments)
 
 

@@ -133,7 +133,28 @@ class CodexProvider:
             if role == "system":
                 items.append({"role": "system", "content": message.get("content") or ""})
             elif role == "user":
-                items.append({"role": "user", "content": message.get("content") or ""})
+                content = message.get("content")
+                if isinstance(content, list):
+                    parts: list[dict[str, Any]] = []
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        if block.get("type") == "text":
+                            parts.append({"type": "input_text", "text": str(block.get("text", ""))})
+                        elif block.get("type") == "image":
+                            source = block.get("source")
+                            if isinstance(source, dict):
+                                media_type = str(source.get("media_type", "image/png"))
+                                data = str(source.get("data", ""))
+                                parts.append(
+                                    {
+                                        "type": "input_image",
+                                        "image_url": f"data:{media_type};base64,{data}",
+                                    }
+                                )
+                    items.append({"role": "user", "content": parts})
+                else:
+                    items.append({"role": "user", "content": content or ""})
             elif role == "assistant":
                 tool_calls = message.get("tool_calls")
                 if isinstance(tool_calls, list) and tool_calls:
@@ -215,9 +236,9 @@ class CodexProvider:
 
         if status >= 400:
             detail = redact_text(str(getattr(response, "text", "")))
-            raise ProviderError(
+            raise ProviderError.from_status(
+                status,
                 f"Codex request failed with status {status}: {detail}",
-                retryable=status == 429 or status >= 500,
             )
 
         text = str(getattr(response, "text", ""))

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "avo"
-version = "0.1.7"
+version = "0.7.4"
 description = "Reliable execution infrastructure for long-running AI agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -42,6 +42,7 @@ classifiers = [
 ]
 dependencies = [
   "pydantic>=2.8,<3",
+  "prompt-toolkit>=3.0.43",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +62,7 @@ dev = [
   "build>=1.2",
   "coverage[toml]>=7.6",
   "hatchling>=1.26",
+  "keyring>=25.0",
   "mypy>=1.11",
   "pip-audit>=2.7",
   "pytest>=8.3",
@@ -91,8 +93,21 @@ live-benchmark = [
 providers = [
   "httpx>=0.27",
 ]
+keyring = [
+  # Optional OS-backed credential storage. The secure 0600 JSON backend
+  # remains the dependency-free fallback.
+  "keyring>=25.0",
+]
+security = [
+  # Fernet-encrypted file credential backend for headless environments.
+  "cryptography>=43",
+]
 sandbox = [
   "docker>=7.0",
+]
+standalone = [
+  # PyInstaller for packaging single-file zero-Python standalone binaries.
+  "pyinstaller>=6.10",
 ]
 mcp = [
   # MCP servers are launched as subprocesses that speak JSON-RPC over stdio.
@@ -138,7 +153,7 @@ reproducible = true
 [tool.pytest.ini_options]
 # Skip the live integration tests by default so the offline suite stays
 # free of paid API traffic. Run them with `pytest --run-live tests/integration`.
-addopts = "--strict-config --strict-markers --ignore=tests/integration"
+addopts = "--strict-config --strict-markers --ignore=tests/integration -p no:langsmith_plugin"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
@@ -198,6 +213,7 @@ select = [
 skips = [
   "B101",  # assert_used (invariants, not validation)
   "B105",  # hardcoded_password_string (error tag, not credential)
+  "B108",  # hardcoded_tmp_directory (container/bwrap in-sandbox tmpfs mount target)
   "B112",  # try_except_continue (intentional in retry loops)
   "B311",  # random for non-crypto jitter
   "B404",  # subprocess import

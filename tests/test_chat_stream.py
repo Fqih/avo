@@ -9,6 +9,7 @@ honest retry notice instead of duplicating the answer.
 from __future__ import annotations
 
 import io
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -111,10 +112,10 @@ async def test_streaming_turn_prints_answer_exactly_once(
     )
 
     assert output.count("live streamed answer") == 1
-    assert "Avo> live streamed answer" in output
-    # Live tokens come first; the status line still renders.
-    assert output.index("Avo> live streamed answer") < output.index("Avo [")
-    assert "Avo [completed/completed]" in output
+    assert "• live streamed answer" in output
+    assert "Avo>" not in output
+    assert "Avo [" not in output
+    assert "run_id=" not in output
 
 
 @pytest.mark.asyncio
@@ -140,7 +141,10 @@ async def test_gate_off_disables_stream_callback(
 
     output = stdout.getvalue()
     assert output.count("live streamed answer") == 1
-    assert output.index("Avo [completed/completed]") < output.index("Avo> live streamed answer")
+    assert "• live streamed answer" in output
+    assert "Avo>" not in output
+    assert "Avo [" not in output
+    assert "run_id=" not in output
 
 
 @pytest.mark.asyncio
@@ -160,4 +164,25 @@ async def test_mid_stream_failure_shows_notice_and_single_final_answer(
     # already on screen and cannot be unprinted).
     assert output.count("live streamed answer") == 1
     assert output.index("stream interrupted") < output.index("live streamed answer")
-    assert "Avo [completed/completed]" in output
+    assert "Avo [" not in output
+    assert "run_id=" not in output
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_turn_uses_compact_thought_and_footer(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = ModelResponse(content="<think>private reasoning</think>plain answer")
+    output = await _run_one_turn(
+        chat_env,
+        monkeypatch,
+        FakeProvider([response]),
+        _environ(AVO_CHAT_STREAM="0"),
+    )
+
+    assert re.search(r"Thought for \d+s", output)
+    assert "• plain answer" in output
+    assert "💭 Thought process" not in output
+    assert re.search(r"\* Cooked for \d+s · done \d{1,2}:\d{2}", output)
+    assert "run_id=" not in output

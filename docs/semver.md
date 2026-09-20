@@ -1,8 +1,9 @@
 # Semantic Versioning Policy
 
 avo follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
-The public API surface is frozen at version **0.2.0**; any change to a
-documented surface requires a corresponding SemVer bump.
+The public API surface stabilizes during **0.7.x** towards a frozen contract
+at version **1.0.0**; any change to a documented surface requires a
+corresponding SemVer bump.
 
 ## Version grammar
 

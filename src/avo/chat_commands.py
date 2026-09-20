@@ -11,11 +11,13 @@ Re-exported from :mod:`avo.chat` for backward compatibility.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO
 
+from avo.agent_profiles import AgentProfileError
 from avo.background import render_job_detail, render_job_row
 from avo.chat_render import (
     _clear_screen,
@@ -25,8 +27,8 @@ from avo.chat_render import (
     _print_slash_help,
     _show_cost_breakdown,
 )
-from avo.chat_session import render_session_picker, resolve_session_id
-from avo.chat_turn import _resume_chat_session, _run_model_command, _run_turn
+from avo.chat_session import SessionInfo, render_session_picker, resolve_session_id
+from avo.chat_turn import _resume_chat_session, _run_agent_request, _run_model_command, _run_turn
 from avo.chat_workspace_commands import (
     _manage_branch,
     _manage_stash,
@@ -45,6 +47,7 @@ from avo.chat_workspace_commands import (
 )
 from avo.exceptions import AvoError
 from avo.permissions import PermissionMode, PermissionPolicy, build_approval_callback
+from avo.replay import replay_run
 from avo.tracing import TraceInspector
 
 if TYPE_CHECKING:
@@ -185,6 +188,223 @@ def _manage_draft(
     err.write(f"unknown draft subcommand {subcommand!r}; choose show, save, or clear\n")
 
 
+def _manage_agent_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Unified agent command for persona, workspace instructions, and active profile."""
+    if len(args) <= 1:
+        current_persona = ctx.persona.active_persona or "(default)"
+        skills = ctx.skills.names()
+        skills_str = ", ".join(skills[:5]) if skills else "(none)"
+        instr_len = len(ctx.persona.custom_instructions or "")
+
+        out.write("╭─ Agent Configuration ───────────────────────────────────╮\n")
+        out.write(f"│ Active Persona : {current_persona:<39} │\n")
+        out.write(f"│ Instructions   : {str(instr_len) + ' chars active':<39} │\n")
+        active_skills = f"{len(skills)} installed ({skills_str})"
+        out.write(f"│ Active Skills  : {active_skills:<39} │\n")
+        out.write("╰─────────────────────────────────────────────────────────╯\n")
+        out.write("Commands:\n")
+        out.write("  /agent persona [NAME]        switch or list personas\n")
+        out.write("  /agent instructions [TEXT]   view or set custom instructions\n")
+        out.write("  /agent clear                 reset persona and instructions to default\n")
+        out.flush()
+        return
+
+    sub = args[1].lower()
+    if sub == "add":
+        registry = getattr(ctx, "agent_profiles", None)
+        if registry is None:
+            err.write("agent profiles are not initialized for this chat context.\n")
+            return
+        if len(args) < 4:
+            err.write("usage: /agent add NAME DESCRIPTION\n")
+            return
+        try:
+            profile = registry.create(args[2], " ".join(args[3:]))
+        except (AgentProfileError, OSError) as exc:
+            err.write(f"agent creation failed: {exc}\n")
+            return
+        out.write(f"✓ Created @{profile.name}: {profile.description}\n")
+        out.flush()
+        return
+    if sub == "persona":
+        _manage_persona(ctx, args[2:], out, err)
+        return
+    if sub in ("instructions", "prompt"):
+        text_arg = " ".join(args[2:]) if len(args) > 2 else None
+        _manage_instructions(ctx, text_arg, out, err)
+        return
+    if sub in ("clear", "reset"):
+        ctx.persona.set_persona(None)
+        ctx.persona.set_custom_instructions(None)
+        out.write("✓ Reset agent persona and workspace instructions to defaults.\n")
+        out.flush()
+        return
+    _manage_persona(ctx, args[1:], out, err)
+
+
+def _manage_agents_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """List named agent profiles available to the current workspace."""
+
+    registry = getattr(ctx, "agent_profiles", None)
+    if registry is None:
+        err.write("agent profiles are not initialized for this chat context.\n")
+        return
+    if args and args[0].lower() not in {"list", "show"}:
+        err.write("usage: /agents [list]\n")
+        return
+    out.write("Available agents:\n")
+    for profile in registry.list():
+        capability = "read-only" if profile.capability == "read_only" else "workspace"
+        out.write(f"  @{profile.name:<12} {capability:<10} {profile.description}\n")
+    if registry.warnings:
+        out.write("Warnings:\n")
+        for warning in registry.warnings:
+            out.write(f"  {warning}\n")
+    out.write("Use: @agent task  or  @agent one | @agent two\n")
+    out.flush()
+
+
+async def _manage_list_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+    environ: dict[str, str],
+) -> None:
+    """Browse catalog of sessions, models, skills, plugins, tools, or jobs."""
+    if len(args) <= 1:
+        out.write("Usage: /list [sessions|models|skills|plugins|tools|jobs|agents]\n\n")
+        out.write("Available categories:\n")
+        out.write("  /list sessions   - list conversation sessions\n")
+        out.write("  /list models     - list available models for current provider\n")
+        out.write("  /list skills     - list installed workspace skills\n")
+        out.write("  /list plugins    - list installed CLI plugins\n")
+        out.write("  /list tools      - list registered runtime app tools\n")
+        out.write("  /list jobs       - list active background tasks\n")
+        out.write("  /list agents     - list named agent profiles\n")
+        out.flush()
+        return
+
+    cat = args[1].lower()
+    if cat in ("sessions", "session"):
+        infos = ctx.session.list_sessions()
+        out.write(render_session_picker(infos))
+        return
+    if cat in ("models", "model"):
+        await _run_model_command(ctx, ["/model"], out, err, environ)
+        return
+    if cat in ("skills", "skill"):
+        names = ctx.skills.names()
+        if not names:
+            out.write(f"No skills found under {ctx.skills.root}\n")
+        else:
+            out.write(f"Installed skills ({len(names)}):\n")
+            for name in names:
+                out.write(f"  • {name}\n")
+        out.flush()
+        return
+    if cat in ("plugins", "plugin"):
+        _manage_plugin_command(ctx, ["/plugin", "list"], out, err)
+        return
+    if cat in ("tools", "tool"):
+        tools = ctx.runtime.tools.metadata
+        out.write(f"Registered tools ({len(tools)}):\n")
+        for tool in tools:
+            first_desc = tool.description.splitlines()[0] if tool.description else ""
+            out.write(f"  • {tool.name:<20} {first_desc[:55]}\n")
+        out.flush()
+        return
+    if cat in ("jobs", "job"):
+        jobs = ctx.background.list_jobs()
+        if not jobs:
+            out.write("No background jobs.\n")
+        else:
+            for j in jobs:
+                out.write(render_job_row(j) + "\n")
+        out.flush()
+        return
+    if cat in ("agents", "agent"):
+        _manage_agents_command(ctx, ["list"], out, err)
+        return
+    err.write(f"unknown list category: {cat!r}; try /list to see options\n")
+
+
+def _manage_plugin_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Manage third-party plugins (~/.avo/plugins) from inside chat REPL."""
+    from avo.cli_plugins import PLUGIN_ROOT, _read_index
+
+    if len(args) <= 1 or args[1].lower() == "list":
+        index = _read_index()
+        if not index:
+            out.write(f"No plugins installed under {PLUGIN_ROOT}.\n")
+            out.write("Install one with: /plugin install <git-url-or-path>\n")
+            out.flush()
+            return
+        out.write(f"Installed plugins ({len(index)}):\n")
+        for name, entry in sorted(index.items()):
+            source = entry.get("source", "")
+            editable = " (editable)" if entry.get("editable") else ""
+            out.write(f"  • {name:<18} {source}{editable}\n")
+        out.flush()
+        return
+
+    sub = args[1].lower()
+    if sub == "show":
+        if len(args) < 3:
+            err.write("usage: /plugin show <NAME>\n")
+            return
+        from avo.cli_plugins import show as _show_plugin
+
+        plugin = _show_plugin(args[2])
+        out.write(f"name: {plugin.name}\nsource: {plugin.source}\npath: {plugin.path}\n")
+        return
+
+    if sub == "install":
+        if len(args) < 3:
+            err.write("usage: /plugin install <SOURCE>\n")
+            return
+        from avo.cli_plugins import install as _install_plugin
+
+        try:
+            plugin = _install_plugin(
+                args[2], name=args[3] if len(args) > 3 else None, editable=True
+            )
+            out.write(f"Installed plugin {plugin.name!r} from {plugin.source} → {plugin.path}\n")
+        except Exception as exc:
+            err.write(f"plugin install failed: {exc}\n")
+        return
+
+    if sub in ("remove", "uninstall", "rm"):
+        if len(args) < 3:
+            err.write("usage: /plugin remove <NAME>\n")
+            return
+        from avo.cli_plugins import remove as _remove_plugin
+
+        try:
+            _remove_plugin(args[2])
+            out.write(f"Removed plugin {args[2]!r}.\n")
+        except Exception as exc:
+            err.write(f"plugin remove failed: {exc}\n")
+        return
+
+    err.write(f"unknown plugin action: {sub!r}; try /plugin list\n")
+
+
 def _manage_setup_command(
     ctx: ChatContext,
     args: list[str],
@@ -234,7 +454,10 @@ def _manage_permissions(
         err.flush()
         return
 
-    new_policy = PermissionPolicy(mode=new_mode)
+    new_policy = PermissionPolicy(
+        mode=new_mode,
+        require_approval=ctx.permission_policy.require_approval,
+    )
     ctx.permission_policy = new_policy
     if new_mode is PermissionMode.BYPASS_PERMISSIONS:
         ctx.runtime._approval_callback = lambda call: True
@@ -558,6 +781,254 @@ def _show_combo_status(
     out.flush()
 
 
+def _start_loop(ctx: ChatContext, args: list[str], out: TextIO, err: TextIO) -> None:
+    """Start a recurring background loop prompt."""
+    if len(args) < 3:
+        err.write("usage: /loop <CADENCE> <PROMPT> (e.g. /loop 5m run tests)\n")
+        err.flush()
+        return
+
+    cadence = args[1]
+    prompt = " ".join(args[2:])
+
+    from avo.loop.runner import LoopRunner, LoopState
+    from avo.loop.schedule import parse_schedule
+
+    if ctx.active_loop_runner is not None and ctx.active_loop_runner.state in (
+        LoopState.RUNNING,
+        LoopState.IDLE,
+        LoopState.PAUSED,
+    ):
+        err.write("A loop is already active. Run /unloop first.\n")
+        err.flush()
+        return
+
+    try:
+        from avo.budget import resolve_budget_config
+
+        schedule = parse_schedule(cadence)
+        budget = resolve_budget_config()
+        runner = LoopRunner(ctx.runtime, schedule=schedule, prompt=prompt, budget_config=budget)
+        ctx.active_loop_runner = runner
+        ctx.active_loop_task = asyncio.create_task(runner.run_forever(), name="avo-autonomous-loop")
+        out.write(f"✓ Started autonomous loop every {cadence}: {prompt!r}\n")
+        out.flush()
+    except Exception as exc:
+        err.write(f"Failed to start loop: {exc}\n")
+        err.flush()
+
+
+def _stop_loop(ctx: ChatContext, out: TextIO, err: TextIO) -> None:
+    """Stop the active background loop."""
+    if ctx.active_loop_runner is None:
+        err.write("No active loop running.\n")
+        err.flush()
+        return
+
+    ctx.active_loop_runner.stop()
+    if ctx.active_loop_task and not ctx.active_loop_task.done():
+        ctx.active_loop_task.cancel()
+    ctx.active_loop_runner = None
+    ctx.active_loop_task = None
+    out.write("✓ Stopped autonomous loop.\n")
+    out.flush()
+
+
+def _show_loop_status(ctx: ChatContext, out: TextIO) -> None:
+    """Display metrics and status of the current loop."""
+    runner = ctx.active_loop_runner
+    if runner is None:
+        out.write("No autonomous loop currently registered.\n")
+        out.flush()
+        return
+
+    out.write(f"Autonomous Loop: {runner.state.value.upper()}\n")
+    out.write(f"Prompt: {runner.prompt!r}\n")
+    out.write(f"Completed ticks: {len(runner.ticks)}\n")
+    out.write(f"Total tokens used: {runner.cumulative_usage.total_tokens}\n")
+    if runner.ticks:
+        last = runner.ticks[-1]
+        out.write(f"Last tick #{last.tick_number} [{last.status}] ({last.duration_ms:.1f}ms)\n")
+        if last.output:
+            out.write(f"  Output: {last.output[:200]}...\n")
+        if last.error:
+            out.write(f"  Error: {last.error}\n")
+    out.flush()
+
+
+async def _manage_mcp_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Inspect or connect external Model Context Protocol (MCP) servers."""
+    sub = args[1].lower() if len(args) > 1 else "list"
+    manager = ctx.mcp_manager
+    if manager is None:
+        from avo.mcp_client import McpClientManager
+
+        for cand in (ctx.workspace.root / ".avo" / "mcp.json", ctx.workspace.root / "mcp.json"):
+            if cand.is_file():
+                try:
+                    manager = McpClientManager.from_file(cand)
+                    ctx.mcp_manager = manager
+                except Exception as exc:
+                    err.write(f"Failed to load MCP config: {exc}\n")
+                break
+
+    if manager is None or not manager.config:
+        out.write("No MCP servers configured (.avo/mcp.json or mcp.json).\n")
+        out.flush()
+        return
+
+    if sub == "list":
+        out.write(f"Configured MCP Servers ({len(manager.config)}):\n")
+        for name, cfg in manager.config.items():
+            status = (
+                "disabled"
+                if cfg.disabled
+                else ("connected" if name in manager._clients else "configured")
+            )
+            out.write(f"  • {name} [{status}]: {cfg.command} {' '.join(cfg.args)}\n")
+        out.flush()
+        return
+
+    if sub in ("connect", "reload"):
+        try:
+            tools = await manager.discover_tools()
+            for t in tools:
+                ctx.runtime.tools._tools[t.metadata.name] = t
+            out.write(f"✓ Connected to MCP servers. Discovered {len(tools)} tools:\n")
+            for t in tools:
+                out.write(f"  • {t.metadata.name}: {t.metadata.description}\n")
+            out.flush()
+        except Exception as exc:
+            err.write(f"Failed to connect MCP servers: {exc}\n")
+            err.flush()
+        return
+
+    err.write("usage: /mcp [list|reload|connect]\n")
+    err.flush()
+
+
+def _remember_fact(ctx: ChatContext, text: str, out: TextIO, err: TextIO) -> None:
+    """Store a persistent fact or preference."""
+    if not text.strip():
+        err.write("usage: /remember <FACT>\n")
+        err.flush()
+        return
+    store = ctx.fact_store
+    if store is None:
+        from avo.memory import FactStore
+
+        store = FactStore(path=ctx.workspace.root / ".avo" / "memory.jsonl")
+        ctx.fact_store = store
+
+    fact = store.remember(text.strip(), category="user")
+    out.write(f"✓ Remembered [{fact.id}]: {fact.content}\n")
+    out.flush()
+
+
+def _show_memories(ctx: ChatContext, query: str | None, out: TextIO) -> None:
+    """List or search persistent memories."""
+    store = ctx.fact_store
+    if store is None:
+        from avo.memory import FactStore
+
+        store = FactStore(path=ctx.workspace.root / ".avo" / "memory.jsonl")
+        ctx.fact_store = store
+
+    if query and query.strip():
+        results = store.recall(query.strip(), k=10)
+        out.write(f"Search memories for {query.strip()!r} ({len(results)} found):\n")
+        for f in results:
+            out.write(f"  • [{f.id}] ({f.category}) {f.content}\n")
+    else:
+        all_facts = store.list_all()
+        if not all_facts:
+            out.write(
+                "No stored memories found (.avo/memory.jsonl). Use /remember <FACT> to add one.\n"
+            )
+        else:
+            out.write(f"Stored Memories ({len(all_facts)}):\n")
+            for f in all_facts:
+                out.write(f"  • [{f.id}] ({f.category}) {f.content}\n")
+    out.flush()
+
+
+def _forget_fact(ctx: ChatContext, fact_id: str, out: TextIO, err: TextIO) -> None:
+    """Delete a memory by ID."""
+    if not fact_id.strip():
+        err.write("usage: /forget <FACT_ID>\n")
+        err.flush()
+        return
+    store = ctx.fact_store
+    if store is None:
+        from avo.memory import FactStore
+
+        store = FactStore(path=ctx.workspace.root / ".avo" / "memory.jsonl")
+        ctx.fact_store = store
+
+    if store.delete(fact_id.strip()):
+        out.write(f"✓ Forgot memory {fact_id.strip()}.\n")
+    else:
+        err.write(f"Memory {fact_id.strip()} not found.\n")
+    out.flush()
+    err.flush()
+
+
+def _manage_fork_command(
+    ctx: ChatContext,
+    name: str | None,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Create an isolated workspace checkpoint for speculative edits."""
+    from avo.speculative import WorkspaceSnapshot
+
+    try:
+        snapshot = WorkspaceSnapshot(ctx.workspace.root)
+        tag = snapshot.capture(name=name)
+        out.write(f"✓ Created speculative workspace checkpoint {tag!r}.\n")
+        out.write("Use /rollback to revert to this checkpoint if tasks fail.\n")
+        out.flush()
+    except Exception as exc:
+        err.write(f"Failed to create checkpoint: {exc}\n")
+        err.flush()
+
+
+def _manage_rollback_command(
+    ctx: ChatContext,
+    tag: str | None,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Revert workspace to a previous checkpoint."""
+    from avo.speculative import WorkspaceSnapshot
+
+    try:
+        snapshot = WorkspaceSnapshot(ctx.workspace.root)
+        target_tag = tag
+        if not target_tag:
+            available = snapshot.list_snapshots()
+            if not available:
+                err.write("No workspace snapshots available to rollback.\n")
+                err.flush()
+                return
+            target_tag = available[0].tag
+
+        if snapshot.restore(target_tag):
+            out.write(f"✓ Successfully rolled back workspace to checkpoint {target_tag!r}.\n")
+        else:
+            err.write(f"Could not rollback workspace with tag {target_tag!r}.\n")
+        out.flush()
+        err.flush()
+    except Exception as exc:
+        err.write(f"Failed to rollback checkpoint: {exc}\n")
+        err.flush()
+
+
 async def _run_slash(
     ctx: ChatContext,
     args: list[str],
@@ -717,7 +1188,7 @@ async def _run_slash(
         return False
 
     if cmd == "/model":
-        return await _run_model_command(ctx, args, out, err, environ)
+        return await _run_model_command(ctx, args, out, err, environ, in_stream=in_stream)
 
     if cmd == "/sessions":
         infos = ctx.session.list_sessions()
@@ -744,6 +1215,61 @@ async def _run_slash(
         _manage_setup_command(ctx, args, out, err, environ, in_stream=in_stream)
         return False
 
+    if cmd == "/agent":
+        _manage_agent_command(ctx, args, out, err)
+        return False
+
+    if cmd in ("/agents", "/agent-list"):
+        if (
+            cmd == "/agents"
+            and len(args) == 1
+            and in_stream is not None
+            and _can_use_session_picker(in_stream, out)
+        ):
+            registry = getattr(ctx, "agent_profiles", None)
+            if registry is not None:
+                selected = await _select_agent_tui(registry.list(), out, in_stream)
+                if selected is not None:
+                    profile = registry.get(selected)
+                    if profile is not None:
+                        out.write(
+                            f"Selected @{profile.name} ({profile.capability}): "
+                            f"{profile.description}\n"
+                        )
+                        out.flush()
+                return False
+        _manage_agents_command(ctx, args[1:], out, err)
+        return False
+
+    if cmd == "/delegate":
+        if len(args) < 2:
+            _manage_agents_command(ctx, ["list"], out, err)
+            err.write("usage: /delegate @agent TASK or /delegate @agent TASK | @agent TASK\n")
+            return False
+        text = " ".join(args[1:])
+        registry = getattr(ctx, "agent_profiles", None)
+        if registry is None:
+            err.write("agent profiles are not initialized for this chat context.\n")
+            return False
+        try:
+            request = registry.parse_prompt(text)
+        except AgentProfileError as exc:
+            err.write(f"agent delegation error: {exc}\n")
+            return False
+        if request is None:
+            err.write("usage: /delegate @agent TASK or /delegate @agent TASK | @agent TASK\n")
+            return False
+        await _run_agent_request(ctx, request, out, err, original_task=text)
+        return False
+
+    if cmd == "/list":
+        await _manage_list_command(ctx, args, out, err, environ)
+        return False
+
+    if cmd in ("/plugin", "/plugins"):
+        _manage_plugin_command(ctx, args, out, err)
+        return False
+
     if cmd == "/inspect":
         if len(args) != 2:
             err.write("usage: /inspect RUN_ID\n")
@@ -755,6 +1281,14 @@ async def _run_slash(
             return False
         out.write(trace.to_text())
         out.write("\n")
+        return False
+
+    if cmd == "/replay":
+        if len(args) != 2:
+            err.write("usage: /replay RUN_ID\n")
+            return False
+        report = await replay_run(ctx.store, args[1])
+        out.write(report.to_text() + "\n")
         return False
 
     if cmd == "/resume":
@@ -770,7 +1304,12 @@ async def _run_slash(
             if not infos:
                 err.write("no previous chat sessions to resume.\n")
                 return False
-            out.write(render_session_picker(infos))
+            if in_stream is not None:
+                selected = await _select_session(infos, out, in_stream)
+                if selected is not None:
+                    await _resume_chat_session(ctx, selected, out, err)
+            else:
+                out.write(render_session_picker(infos))
             return False
         if len(args) == 2:
             arg = args[1]
@@ -855,5 +1394,291 @@ async def _run_slash(
         out.write(f"Cancellation requested for job {args[1]}.\n")
         return False
 
+    if cmd == "/loop":
+        _start_loop(ctx, args, out, err)
+        return False
+
+    if cmd == "/unloop":
+        _stop_loop(ctx, out, err)
+        return False
+
+    if cmd in ("/loop-status", "/loop_status"):
+        _show_loop_status(ctx, out)
+        return False
+
+    if cmd == "/mcp":
+        await _manage_mcp_command(ctx, args, out, err)
+        return False
+
+    if cmd == "/remember":
+        text = " ".join(args[1:]) if len(args) > 1 else ""
+        _remember_fact(ctx, text, out, err)
+        return False
+
+    if cmd in ("/memories", "/memory"):
+        query = " ".join(args[1:]) if len(args) > 1 else None
+        _show_memories(ctx, query, out)
+        return False
+
+    if cmd == "/forget":
+        fid = args[1] if len(args) > 1 else ""
+        _forget_fact(ctx, fid, out, err)
+        return False
+
+    if cmd == "/fork":
+        fork_name = args[1] if len(args) > 1 else None
+        _manage_fork_command(ctx, fork_name, out, err)
+        return False
+
+    if cmd == "/rollback":
+        tag = args[1] if len(args) > 1 else None
+        _manage_rollback_command(ctx, tag, out, err)
+        return False
+
     err.write(f"unknown command: {cmd}; try /help to list slash commands\n")
     return False
+
+
+async def _select_session(
+    infos: tuple[SessionInfo, ...],
+    out: TextIO,
+    in_stream: TextIO,
+) -> str | None:
+    """Interactively search and select a chat session from the picker."""
+
+    if _can_use_session_picker(in_stream, out):
+        return await _select_session_tui(infos, in_stream, out)
+
+    filtered = infos
+    out.write(render_session_picker(filtered))
+    while True:
+        out.write("Select a session by number, ID, or search text (q to cancel): ")
+        out.flush()
+        query = in_stream.readline()
+        if not query:
+            return None
+        query = query.strip()
+        if not query or query.lower() in {"q", "quit", "cancel"}:
+            out.write("Resume cancelled.\n")
+            return None
+
+        if query.isdigit():
+            index = int(query)
+            if 1 <= index <= len(filtered):
+                return filtered[index - 1].session_id
+            out.write(f"Choose a number from 1 to {len(filtered)}.\n")
+            continue
+
+        exact = next((info for info in filtered if info.session_id == query), None)
+        if exact is not None:
+            return exact.session_id
+
+        matches = tuple(
+            info
+            for info in infos
+            if query.lower()
+            in " ".join(
+                (
+                    info.session_id,
+                    info.first_user_preview,
+                    info.last_user_preview,
+                )
+            ).lower()
+        )
+        if not matches:
+            out.write(f"No sessions match {query!r}. Try another search.\n")
+            continue
+        filtered = matches
+        out.write(render_session_picker(filtered))
+
+
+def _can_use_session_picker(in_stream: TextIO, out: TextIO) -> bool:
+    """Return whether the terminal supports the arrow-key picker."""
+
+    return bool(
+        hasattr(in_stream, "isatty")
+        and in_stream.isatty()
+        and hasattr(out, "isatty")
+        and out.isatty()
+    )
+
+
+async def _select_session_tui(
+    infos: tuple[SessionInfo, ...],
+    in_stream: TextIO,
+    out: TextIO,
+) -> str | None:
+    """Use prompt-toolkit completion as an arrow-key session selector."""
+
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.completion import Completer, Completion
+        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.styles import Style
+    except ImportError:
+        return _select_session_fallback(infos, out, in_stream)
+
+    options = tuple(
+        f"{index}. {info.first_user_preview[:48]}  ·  {info.turn_count} turns  ·  {info.session_id}"
+        for index, info in enumerate(infos, start=1)
+    )
+    by_option = dict(zip(options, infos, strict=True))
+
+    class SessionCompleter(Completer):
+        def get_completions(self, document: Any, complete_event: Any) -> Any:
+            query = document.text_before_cursor.lower()
+            for option in options:
+                if not query or query in option.lower():
+                    yield Completion(
+                        option,
+                        start_position=-len(document.text_before_cursor),
+                        display=option,
+                    )
+
+    bindings = KeyBindings()
+
+    @bindings.add("down")
+    def _start_or_next(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_next()
+
+    @bindings.add("up")
+    def _previous(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_previous()
+
+    @bindings.add("escape")
+    def _cancel(event: Any) -> None:
+        event.app.exit(exception=KeyboardInterrupt)
+
+    out.write("\n╭─ Resume session ─────────────────────────────────────────────╮\n")
+    out.write("│ ↑/↓ choose · Enter select · type to search · Esc cancel     │\n")
+    out.write("╰─────────────────────────────────────────────────────────────╯\n")
+    out.flush()
+    session: Any = PromptSession()
+    try:
+        selected = await session.prompt_async(
+            HTML("<ansicyan>&gt;</ansicyan> "),
+            completer=SessionCompleter(),
+            complete_while_typing=True,
+            key_bindings=bindings,
+            style=Style.from_dict(
+                {
+                    "completion-menu.completion": "bg:#20242b #d8dee9",
+                    "completion-menu.completion.current": "bg:#42b883 #101418 bold",
+                    "scrollbar.background": "bg:#20242b",
+                    "scrollbar.button": "bg:#42b883",
+                }
+            ),
+        )
+    except (EOFError, KeyboardInterrupt):
+        out.write("\nResume cancelled.\n")
+        return None
+    selected_info = by_option.get(selected.strip())
+    return selected_info.session_id if selected_info is not None else None
+
+
+async def _select_agent_tui(
+    profiles: tuple[Any, ...],
+    out: TextIO,
+    in_stream: TextIO,
+) -> str | None:
+    """Use a searchable prompt-toolkit picker for named agents."""
+
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.completion import Completer, Completion
+        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.styles import Style
+    except ImportError:
+        return None
+
+    options = tuple(f"@{profile.name} · {profile.description}" for profile in profiles)
+    by_option = dict(zip(options, profiles, strict=True))
+
+    class AgentCompleter(Completer):
+        def get_completions(self, document: Any, complete_event: Any) -> Any:
+            query = document.text_before_cursor.lower()
+            for option in options:
+                if not query or query in option.lower():
+                    yield Completion(
+                        option,
+                        start_position=-len(document.text_before_cursor),
+                        display=option,
+                    )
+
+    bindings = KeyBindings()
+
+    @bindings.add("down")
+    def _next(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_next()
+
+    @bindings.add("up")
+    def _previous(event: Any) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_previous()
+
+    @bindings.add("escape")
+    def _cancel(event: Any) -> None:
+        event.app.exit(exception=KeyboardInterrupt)
+
+    out.write("\n╭─ Select agent ────────────────────────────────────────────╮\n")
+    out.write("│ ↑/↓ choose · Enter select · type to search · Esc cancel  │\n")
+    out.write("╰───────────────────────────────────────────────────────────╯\n")
+    out.flush()
+    session: Any = PromptSession(
+        completer=AgentCompleter(),
+        complete_while_typing=True,
+        reserve_space_for_menu=min(8, max(1, len(options))),
+        erase_when_done=True,
+        key_bindings=bindings,
+        style=Style.from_dict(
+            {
+                "completion-menu.completion": "bg:#20242b #d8dee9",
+                "completion-menu.completion.current": "bg:#42b883 #101418 bold",
+                "scrollbar.background": "bg:#20242b",
+                "scrollbar.button": "bg:#42b883",
+            }
+        ),
+    )
+    session.default_buffer.start_completion(select_first=True)
+    try:
+        selected = await session.prompt_async(HTML("<ansicyan>&gt;</ansicyan> "))
+    except (EOFError, KeyboardInterrupt):
+        out.write("\nAgent selection cancelled.\n")
+        return None
+    profile = by_option.get(selected.strip())
+    return profile.name if profile is not None else None
+
+
+def _select_session_fallback(
+    infos: tuple[SessionInfo, ...],
+    out: TextIO,
+    in_stream: TextIO,
+) -> str | None:
+    """Provide a non-prompt-toolkit selector for terminal fallbacks."""
+
+    out.write(render_session_picker(infos))
+    query = in_stream.readline().strip()
+    if not query or query.lower() in {"q", "quit", "cancel"}:
+        out.write("Resume cancelled.\n")
+        return None
+    if query.isdigit() and 1 <= int(query) <= len(infos):
+        return infos[int(query) - 1].session_id
+    resolved = resolve_session_id(query, infos)
+    return resolved

@@ -11,11 +11,14 @@ import pytest
 
 from avo import __version__ as AVO_VERSION
 from avo.chat_render import (
+    _clear_screen,
     _format_workspace_path,
     _print_boot_banner,
     _print_header,
+    _read_environ,
     _render_mascot,
     _resolve_user_identity,
+    render_chat_toolbar,
 )
 from avo.chat_stream import LiveAnswerPrinter, TerminalSpinner
 from avo.oauth.store import Credential, store_credential
@@ -31,6 +34,37 @@ def test_format_workspace_path_home(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert _format_workspace_path(project) == "~/Project/Loopward"
 
 
+def test_clear_screen_resets_visible_viewport_without_shell_command() -> None:
+    out = io.StringIO()
+
+    _clear_screen(out)
+
+    assert out.getvalue() == "\033[2J\033[H"
+
+
+def test_read_environ_reuses_stored_subscription_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo import cli_setup
+    from avo.oauth import store
+
+    monkeypatch.delenv("AVO_PROVIDER", raising=False)
+    monkeypatch.delenv("AVO_MODEL", raising=False)
+    monkeypatch.delenv("AVO_ALLOW_SUBSCRIPTION", raising=False)
+    monkeypatch.setattr(
+        cli_setup,
+        "load_global_avo_config",
+        lambda: {"AVO_PROVIDER": "codex", "AVO_MODEL": "gpt-5.6-sol"},
+    )
+    monkeypatch.setattr(store, "get_credential", lambda provider: object())
+
+    env = _read_environ()
+
+    assert env["AVO_PROVIDER"] == "codex"
+    assert env["AVO_MODEL"] == "gpt-5.6-sol"
+    assert env["AVO_ALLOW_SUBSCRIPTION"] == "1"
+
+
 def test_format_workspace_path_outside_home(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -41,6 +75,24 @@ def test_format_workspace_path_outside_home(
 
     monkeypatch.setattr(Path, "home", lambda: fake_home)
     assert _format_workspace_path(other) == str(other)
+
+
+def test_render_chat_toolbar_contains_provider_model_and_workspace(
+    tmp_path: Path,
+) -> None:
+    text = render_chat_toolbar("ollama", "qwen2.5-coder:7b", tmp_path)
+
+    assert "provider: ollama" in text
+    assert "model: qwen2.5-coder:7b" in text
+    assert f"path: {tmp_path}" in text
+
+
+def test_render_chat_toolbar_colorizes_status_when_enabled(tmp_path: Path) -> None:
+    text = render_chat_toolbar("ollama", "qwen", tmp_path, color=True)
+
+    assert "\033[" in text
+    assert "ollama" in text
+    assert "qwen" in text
 
 
 def test_resolve_user_identity_from_stored_subscription(
@@ -83,8 +135,8 @@ def test_print_header_renders_mascot_and_metadata(tmp_path: Path) -> None:
     text = out.getvalue()
 
     assert f"Avo CLI {AVO_VERSION}" in text
-    assert "provider: gemini_cli · model: gemini-2.5-pro" in text
-    assert "workspace:" in text
+    assert "provider: gemini_cli · model: gemini-2.5-pro" not in text
+    assert "workspace:" not in text
     assert "session: test-session-123" in text
     assert "─" * 54 in text
 
@@ -125,7 +177,8 @@ async def test_live_answer_printer_calls_on_first_content() -> None:
     printer.feed("hello ")
     assert called == 1
     assert printer.answered is True
-    assert "Avo> hello " in out.getvalue()
+    assert "• hello " in out.getvalue()
+    assert "Avo>" not in out.getvalue()
 
     printer.feed("world")
     assert called == 1  # Only called once

@@ -8,7 +8,7 @@
 
 *Eliminate developer idle time, mitigate AI vendor lock-in, and slash enterprise token expenditures across your engineering organization.*
 
-[![Status: Production-Ready](https://img.shields.io/badge/status-production--ready-brightgreen.svg)](https://avo.faqihhakim.tech/)
+[![Status: Alpha](https://img.shields.io/badge/status-v0.7.3--alpha-orange.svg)](https://avo.faqihhakim.tech/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security: Sandboxed](https://img.shields.io/badge/security-sandboxed--ephemeral-indigo.svg)](https://avo.faqihhakim.tech/)
 [![Documentation](https://img.shields.io/badge/docs-avo.faqihhakim.tech-purple.svg)](https://avo.faqihhakim.tech/)
@@ -89,6 +89,7 @@ flowchart LR
 ## Core Business Pillars
 
 ### 📊 1. Measurable ROI & Financial Governance
+- **Deterministic Token Reduction:** Automatically minifies tool JSON payloads, deduplicates redundant outputs, and elides verbose lines, reducing token consumption by up to **26%+** on long tool-heavy sessions (see [benchmark results](benchmark/savers/RESULTS.md)).
 - **Semantic Token Deduction:** Automatically eliminates redundant system instructions and file context, slashing recurring API overhead by up to **48%**.
 - **Tiered Spending Caps:** Organizations leverage free or pre-paid enterprise quota first, spill over to fractional-cent pay-as-you-go providers second, and maintain a zero-cost local compute floor as the final safety net.
 - **Granular Cost Transparency:** View exact per-turn and aggregate expenditures categorized by provider tier directly within the operational ledger.

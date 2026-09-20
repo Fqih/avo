@@ -5,9 +5,144 @@ All notable changes to avo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.4] - 2026-09-20
 
-## [0.1.7] - 2026-09-17
+### Added
+
+- **Zero-Python Standalone Executable & Builders (`scripts/build_standalone.py`)**:
+  - Added PyInstaller single-file packaging for Linux (`x86_64`, `aarch64`), macOS (`x86_64`, `aarch64`), and Windows (`x86_64`).
+  - Added one-line standalone installers (`install.sh`, `install.ps1`) that download pre-built binaries directly without requiring Python or uv.
+  - Added GitHub Actions standalone release workflow (`.github/workflows/standalone.yml`).
+- **Git Worktree Isolation (`avo.app_tools.worktree`)**:
+  - Added `GitWorktreeManager` for isolating speculative agent code modifications into `.avo/worktrees/<run_id>`.
+  - Added automatic `.gitignore` protection for `.avo/worktrees` and clean merge/cleanup semantics.
+- **Durable Webhook Approval (`avo.web_approval`)**:
+  - Added `DurableApprovalStore` backed by SQLite `pending_approvals` table.
+  - Added REST webhook endpoints `GET /api/approvals`, `GET /api/approvals/{id}`, and `POST /api/approvals/{id}/decision` surviving process restarts.
+- **Direct Static Site Deployment**:
+  - Redesigned `site/` as a modern standalone developer site.
+  - Removed `.github/workflows/docs.yml` and configured `netlify.toml` for direct static publishing.
+
+## [0.7.3] - 2026-09-19
+
+- **Autonomous Loop & Self-Paced Runner (`avo.loop`)**:
+  - Added schedule parsing for intervals (`30s`, `5m`, `2h`, `1d`) and 5-part cron syntax.
+  - Added `LoopRunner` with budget limit enforcement, failure backoff, metrics aggregation, and pause/resume lifecycle.
+  - Integrated `/loop CADENCE PROMPT`, `/unloop`, and `/loop-status` REPL slash commands.
+- **Code Intelligence & AST Tools (`avo.code_intel`)**:
+  - Native Python `ast` symbol extractor (`extract_symbols`), declaration finder (`find_symbol_definitions`), and reference tracker (`find_symbol_references`).
+  - Added workspace-contained FunctionTools: `outline_symbols`, `find_definitions`, and `find_references`.
+  - Added `CodeSearchEngine` with BM25 keyword and docstring relevance scoring and `code_search_tool` (`code_search`).
+- **Dynamic MCP Client Hub (`avo.mcp_client`)**:
+  - Added `McpStdioClient` for communicating with external MCP servers over stdio with JSON-RPC 2.0 framing.
+  - Added `McpClientManager` reading `.avo/mcp.json` / `mcp.json` and discovering tools dynamically.
+  - Added auto-conversion of remote MCP tools into namespaced `FunctionTool` instances (`mcp__{server}__{tool}`).
+  - Added `/mcp [list|reload|connect]` REPL slash command.
+- **Multi-Agent Shared Blackboard Memory (`avo.blackboard`)**:
+  - Shared typed key-value scratchpad backed by SQLite with optimistic versioning and namespace isolation.
+  - Added agent FunctionTools: `blackboard_set`, `blackboard_get`, and `blackboard_list`.
+- **Web Cockpit Full-Duplex (`avo.web_approval`, `avo.web_dag`)**:
+  - Added `WebApprovalBridge` for human-in-the-loop tool approval with `GET /api/approvals/pending` and `POST /api/approvals/{id}/decision`.
+  - Added DAG trace visualizer with `GET /api/runs/{id}/dag` and Mermaid graph rendering.
+  - Integrated Mermaid.js visual execution DAG and sticky live approval banner in Web UI dashboard (`index.html`).
+- **Rootless Sandbox Fallback (`avo.app_tools.rootless_sandbox`)**:
+  - Added `RootlessSandboxExecutor` using Bubblewrap (`bwrap`) with unshared namespaces, read-only root, and ephemeral tmpfs.
+  - Added rootless isolation fallback in `SandboxExecutor` when Docker daemon is unavailable.
+- **Epistemic Memory & Fact Store (`avo.memory`)**:
+  - Added `FactStore` with BM25 keyword relevance recall across categories (`user`, `project`, `feedback`, `reference`).
+  - Added model FunctionTools: `remember` and `recall_memory`.
+  - Added REPL commands: `/remember <FACT>`, `/memories [QUERY]`, and `/forget <ID>`.
+- **Speculative Execution & Test-Driven Self-Correction (`avo.speculative`)**:
+  - Added `WorkspaceSnapshot` capturing and restoring workspace git state.
+  - Added `SpeculativeRunner` executing tasks with automated test suite verification and rollback on failure.
+  - Added model FunctionTools: `create_checkpoint` and `rollback_checkpoint`.
+  - Added REPL commands: `/fork [NAME]` and `/rollback [TAG]`.
+- **Standalone One-Line Installer (`scripts/install.sh`)**:
+  - Added curl-pipeable installer with automatic `uv`, `pipx`, and native Python 3.11+ venv detection.
+
+## [0.7.3] - 2026-09-20
+
+### Added
+
+- `avo` now starts chat by default, with a complete discoverable `avo --help`
+  command surface.
+- Account-aware vendor onboarding opens official Claude, Codex, and Gemini
+  browser login flows; `avo combo auth NAME` logs missing vendors sequentially.
+- Separate Ollama Local and Ollama Cloud paths, hardware-aware local model
+  recommendations, model listing, and explicit confirmation before downloads.
+- Documentation and the Netlify `site/` output now document the new onboarding
+  flow, quota semantics, model manager, and current Avo branding.
+- Added opt-in deterministic token savers with `avo saver list|show|use|off`,
+  persisted settings, provider wrapping, `SAVER_APPLIED` trace events, and
+  reproducible benchmark results.
+- Added live provider model catalogs with bounded cache/static fallback labels,
+  optional OS-keyring credentials, and read-only Ollama Cloud model/health/
+  usage inspection.
+- Added safe workspace file/image attachments via pasted or dragged paths,
+  `@clipboard`, size/containment validation, multimodal provider rendering,
+  and `avo doctor` attachment/catalog diagnostics.
+- Added Milestone 2 named workspace agents (`@coder`, `@explore`, `@reviewer`),
+  searchable agent selection, isolated bounded parallel delegation, and
+  read-only tool boundaries for delegated explorers.
+- Added deterministic event-ledger replay with request fingerprints, durable
+  tool-result validation, `avo runs replay RUN_ID --json`, and `/replay`.
+- Added canonical security configuration resolution with source-aware `avo
+  doctor` diagnostics across permission, sandbox, plugin, and web settings.
+- Added capability metadata and non-escalating child-agent policies, final
+  workspace containment checks, required-sandbox enforcement, and bounded
+  execution/network defaults.
+- Added plugin metadata previews, explicit operator confirmation, atomic index
+  publication, and local web mutation protection with bearer, origin, CSRF,
+  and confirmation gates.
+- Added Milestone Three migration guidance and API/CLI documentation for
+  resume versus replay, host versus sandbox execution, OAuth/API keys, and
+  permission protection versus encryption.
+- Added `StructuralCollapseStage` deterministic token saver stage to collapse
+  excessive blank lines, divider rules, and trailing whitespace in tool outputs.
+- Added dynamic combo routing strategies (`priority`, `latency`, `cost`) to
+  `ComboProfile` and `ComboRouterProvider` for latency-aware and cost-optimized
+  multi-tier execution.
+- Added unified diff calculation and payload emission to `edit_file` tool.
+- Added live token-saver preset indicator and unified diff color rendering to
+  chat REPL status bar.
+- Added sequential multi-agent pipeline orchestration (`@agent1 -> @agent2 -> @agent3`)
+  via `DelegationCoordinator.pipeline()` with intermediate output handoff downstream.
+- Added `resolve_budget_config()` in `avo.budget` for environment-driven session
+  and daily spend caps (`AVO_BUDGET_HARD_LIMIT_USD`, `AVO_BUDGET_WARNING_USD`).
+- Added official multi-stage `Dockerfile` with unprivileged `avo` operator user.
+- Updated `docs/api-stability.md` with complete package layout, Web Control-Plane
+  HTTP API specification, and full CLI subcommand surface.
+- Updated `CONTRIBUTING.md` with custom model provider SDK guide and review policies.
+- Fixed CI's optional keyring type-check dependency and native workflow
+  bootstrap so native wheels build from the checkout without requiring a
+  previously published `avo-native` package.
+
+### Fixed
+
+- Hardened ephemeral Docker container creation parameters: removed invalid `auto_remove`,
+  `stdout`, and `stderr` kwargs, added `security_opt=["no-new-privileges:true"]` and
+  writable tmpfs `/tmp`.
+- Restricted project-level configuration (`.avo/config.toml`) from disabling sandbox
+  enforcement (`sandbox_required = false`), forcing permission bypass, or enabling
+  editable plugins.
+- Hardened workspace git operations with `-c core.fsmonitor=false -c core.hooksPath=/dev/null`
+  to prevent hook and fsmonitor execution on the host.
+- Protected `.git` directory against modification from write tools (`write_file`,
+  `edit_file`, `batch_replace`).
+- Preserved operator `require_approval` tool lists across interactive `/permissions`
+  mode switches.
+- Fixed `CLAUDE.md` and `README.md` documentation pointers and aligned status badges
+  with project development status.
+
+## [0.7.2] - 2026-09-18
+
+### Fixed
+
+- Interactive `avo` sessions now use the terminal alternate screen buffer,
+  hiding previous shell commands while Avo is running and restoring the shell
+  view after `/quit`, EOF, or Ctrl+C without deleting scrollback.
+
+## [0.7.1] - 2026-09-18
 
 ### Added
 
@@ -445,8 +580,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ruff check` + `ruff format --check` clean.
 - Coverage gate: `fail_under = 90`.
 
-[Unreleased]: https://github.com/Fqih/avo/compare/v0.1.7...HEAD
-[0.1.7]: https://github.com/Fqih/avo/compare/v0.1.6...v0.1.7
+[Unreleased]: https://github.com/Fqih/avo/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/Fqih/avo/compare/v0.7.2...v0.7.3
+[0.7.2]: https://github.com/Fqih/avo/compare/v0.7.1...v0.7.2
+[0.7.1]: https://github.com/Fqih/avo/compare/v0.1.7...v0.7.1
 [0.1.6]: https://github.com/Fqih/avo/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Fqih/avo/compare/v0.1.4...v0.1.5
 [0.1.3]: https://github.com/Fqih/avo/compare/v0.1.2...v0.1.3

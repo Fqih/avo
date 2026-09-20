@@ -14,7 +14,9 @@ from avo.app_tools.file_tools import (
     read_file_tool,
     write_file_tool,
 )
+from avo.app_tools.terminal_tool import run_terminal_tool
 from avo.app_tools.workspace import Workspace
+from avo.config_resolver import resolve_security_config
 from avo.models import ToolCall
 
 
@@ -43,6 +45,7 @@ async def test_read_file_returns_content(workspace_tree: Workspace) -> None:
 async def test_read_file_nested(workspace_tree: Workspace) -> None:
     with bind_workspace(workspace_tree):
         result = await read_file_tool().invoke({"path": "sub/nested.txt"})
+    assert isinstance(result, dict)
     assert result["content"] == "nested content"
     assert result["size"] == len(b"nested content")
 
@@ -66,6 +69,7 @@ async def test_write_file_creates_new_file(workspace_tree: Workspace, tmp_path: 
     tool = write_file_tool()
     with bind_workspace(workspace_tree):
         result = await tool.invoke({"path": "new.txt", "content": "fresh"})
+    assert isinstance(result, dict)
     assert result["path"] == str((workspace_tree.root / "new.txt").resolve())
     assert result["size"] == 5
     assert (tmp_path / "new.txt").read_text(encoding="utf-8") == "fresh"
@@ -130,6 +134,24 @@ async def test_write_file_no_binding_raises() -> None:
         await tool.invoke({"path": "file.txt", "content": "x"})
 
 
+@pytest.mark.asyncio
+async def test_run_terminal_executes_in_active_workspace(workspace_tree: Workspace) -> None:
+    host_policy = resolve_security_config(
+        explicit={"sandbox_required": False},
+        environ={},
+        user_root=workspace_tree.root / ".avo-test-config",
+    )
+    with bind_workspace(workspace_tree):
+        result = await run_terminal_tool(security_config=host_policy).invoke(
+            {"command": "printf terminal-ok"}
+        )
+
+    assert isinstance(result, dict)
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "terminal-ok"
+    assert result["cwd"] == str(workspace_tree.root)
+
+
 def test_bind_workspace_restores_state() -> None:
     from avo.app_tools import file_tools as module
 
@@ -148,8 +170,12 @@ def test_tools_have_metadata() -> None:
     write_metadata = write_file_tool().metadata
     assert read_metadata.name == "read_file"
     assert write_metadata.name == "write_file"
-    assert "path" in read_metadata.input_schema["properties"]
-    assert "content" in write_metadata.input_schema["properties"]
+    props = read_metadata.input_schema["properties"]
+    assert isinstance(props, dict)
+    assert "path" in props
+    write_props = write_metadata.input_schema["properties"]
+    assert isinstance(write_props, dict)
+    assert "content" in write_props
 
 
 def test_arguments_validation_rejects_empty_path() -> None:
@@ -182,3 +208,12 @@ async def test_via_tool_registry_uses_bound_workspace(
         result = await registry.invoke(write_call, completed_tool_call_ids=set())
     assert result.success is True
     assert (tmp_path / "via.txt").read_text(encoding="utf-8") == "hi"
+
+
+@pytest.mark.asyncio
+async def test_write_file_rejects_git_directory(workspace_tree: Workspace, tmp_path: Path) -> None:
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir(parents=True, exist_ok=True)
+    tool = write_file_tool()
+    with bind_workspace(workspace_tree), pytest.raises(Exception, match=r"\.git"):
+        await tool.invoke({"path": ".git/hooks/pre-commit", "content": "malicious"})

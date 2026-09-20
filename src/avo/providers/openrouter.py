@@ -161,10 +161,7 @@ class OpenRouterProvider:
         status = int(response.status_code)
         if status >= 400:
             msg = redact_text(str(getattr(response, "text", "")))
-            raise ProviderError(
-                f"openrouter API error {status}: {msg}",
-                retryable=status == 429 or status >= 500,
-            )
+            raise ProviderError.from_status(status, f"openrouter API error {status}: {msg}")
 
         try:
             data: dict[str, Any] = response.json()

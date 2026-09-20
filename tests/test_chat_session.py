@@ -398,7 +398,11 @@ async def test_resume_session_id_loads_preamble_into_context(
         fresh_ctx, ["/resume", ctx.session_id], out, err, _environ_with_ollama()
     )
     assert should_exit is False
-    assert "Resumed session" in out.getvalue()
+    assert f"{chr(0x276F)} first message" in out.getvalue()
+    assert "• first reply" in out.getvalue()
+    assert "Resumed session" not in out.getvalue()
+    assert "Avo [" not in out.getvalue()
+    assert "Next user message" not in out.getvalue()
     assert fresh_ctx.pending_preamble is not None
     assert "first message" in fresh_ctx.pending_preamble
     assert fresh_ctx.session_id == ctx.session_id
@@ -472,6 +476,37 @@ async def test_resume_picker_prints_when_no_arg(
     assert should_exit is False
     assert "Previous sessions" in out.getvalue()
     assert ctx.session_id in out.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_resume_picker_selects_session_by_number(
+    chat_env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _make_ctx(chat_env, monkeypatch)
+    scripted = _ScriptedProvider([ModelResponse(content="r")])
+    ctx.runtime.provider = scripted
+    ctx.session.record_user_turn("previous-id", "previous question")
+    with bind_workspace(ctx.workspace):
+        await _run_turn(ctx, "something", io.StringIO(), io.StringIO())
+
+    out = io.StringIO()
+    err = io.StringIO()
+    should_exit = await _run_slash(
+        ctx,
+        ["/resume"],
+        out,
+        err,
+        _environ_with_ollama(),
+        in_stream=io.StringIO("previous\n1\n"),
+    )
+    assert should_exit is False
+    assert "Select a session by number" in out.getvalue()
+    assert "previous question" in out.getvalue()
+    assert f"{chr(0x276F)} previous question" in out.getvalue()
+    assert "Resumed session" not in out.getvalue()
+    assert "Avo [" not in out.getvalue()
+    assert "Next user message" not in out.getvalue()
+    assert ctx.pending_preamble is not None
 
 
 @pytest.mark.asyncio
@@ -653,10 +688,10 @@ async def test_run_repl_unknown_session_id_errors(
 
 
 @pytest.mark.asyncio
-async def test_run_repl_offers_resume_when_recent_session_exists(
+async def test_run_repl_starts_fresh_without_resume_prompt(
     chat_env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without --session the REPL prompts the user to resume the latest thread."""
+    """The default REPL starts a new thread without offering old sessions."""
 
     env = _environ_with_ollama()
     monkeypatch.setattr("os.environ", env)
@@ -665,7 +700,7 @@ async def test_run_repl_offers_resume_when_recent_session_exists(
     lifecycle.record_user_turn("prev-id", "previous question")
     lifecycle.close()
 
-    stdin = io.StringIO("y\n/quit\n")
+    stdin = io.StringIO("/quit\n")
     stdout = io.StringIO()
     stderr = io.StringIO()
     code = await run_repl(
@@ -678,5 +713,37 @@ async def test_run_repl_offers_resume_when_recent_session_exists(
     )
     assert code == 0
     rendered = stdout.getvalue()
-    assert "Resume session prev-id" in rendered
-    assert "resumed" in rendered.lower() and "prev-id" in rendered
+    assert "Resume session" not in rendered
+    assert "prev-id" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_run_repl_resume_latest_explicitly_resumes_recent_session(
+    chat_env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The explicit resume mode continues the most recent thread."""
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    lifecycle = SessionLifecycle.open(chat_env["db"])
+    lifecycle.record_user_turn("prev-id", "previous question")
+    lifecycle.close()
+
+    stdin = io.StringIO("/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ=env,
+        resume_latest=True,
+    )
+    assert code == 0
+    rendered = stdout.getvalue()
+    assert "resumed" in rendered.lower()
+    assert "prev-id" in rendered
+    assert "previous question" in rendered

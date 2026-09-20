@@ -14,14 +14,16 @@ documented in this module are the official Avo runtime API.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
 ProviderName = Literal[
     "ollama",
+    "ollama-cloud",
     "minimax",
     "anthropic",
+    "claude-code",
     "openai",
     "groq",
     "cerebras",
@@ -35,8 +37,10 @@ ProviderName = Literal[
 ]
 _PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "ollama",
+    "ollama-cloud",
     "minimax",
     "anthropic",
+    "claude-code",
     "openai",
     "groq",
     "cerebras",
@@ -69,6 +73,10 @@ PROVIDER_MODELS: dict[ProviderName, tuple[str, ...]] = {
         "gemma2",
         "command-r",
     ),
+    "ollama-cloud": (
+        "qwen3-coder:480b-cloud",
+        "qwen3-vl:235b-cloud",
+    ),
     "openai": (
         "gpt-4o",
         "gpt-4o-mini",
@@ -88,6 +96,11 @@ PROVIDER_MODELS: dict[ProviderName, tuple[str, ...]] = {
         "claude-3-5-sonnet",
         "claude-3-5-haiku",
         "claude-3-opus",
+    ),
+    "claude-code": (
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+        "claude-haiku-4-5",
     ),
     "minimax": (
         "MiniMax-M2",
@@ -124,6 +137,7 @@ PROVIDER_MODELS: dict[ProviderName, tuple[str, ...]] = {
     ),
     "codex": (
         "gpt-5.6-sol",
+        "gpt-5.6-luna",
         "gpt-5",
         "gpt-4.5-preview",
         "o3-mini",
@@ -203,6 +217,7 @@ def build_provider_from_env(
     *,
     max_completion_tokens: int = 1024,
     request_timeout_seconds: float = 30.0,
+    event_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
 ) -> Any:
     """Build the configured ``ModelProvider`` from the AVO_ environment.
 
@@ -211,7 +226,46 @@ def build_provider_from_env(
     ``KeyError`` deep inside a provider module.
     """
 
-    env: Mapping[str, str] = os.environ if environ is None else environ
+    env_dict = dict(os.environ if environ is None else environ)
+    from avo.savers.config_store import resolve_saver_setting
+    from avo.savers.presets import BUILTIN_PRESETS, resolve_saver
+
+    saver_name = resolve_saver_setting(env_dict)
+    saver = resolve_saver(saver_name) if saver_name else None
+    if saver_name and saver is None:
+        valid = ", ".join(BUILTIN_PRESETS)
+        raise ConfigError(f"unknown AVO_SAVER preset {saver_name!r}; valid names: {valid}")
+
+    provider = _build_base_provider_from_env(
+        environ,
+        max_completion_tokens=max_completion_tokens,
+        request_timeout_seconds=request_timeout_seconds,
+    )
+    if saver is None:
+        return provider
+    from avo.savers.provider import SaverProvider
+
+    return SaverProvider(provider, saver, event_callback=event_callback)
+
+
+def _build_base_provider_from_env(
+    environ: Mapping[str, str] | None = None,
+    *,
+    max_completion_tokens: int = 1024,
+    request_timeout_seconds: float = 30.0,
+) -> Any:
+    """Build a provider without applying an outer saver decorator."""
+
+    env_dict = dict(os.environ if environ is None else environ)
+    if environ is None and ("AVO_PROVIDER" not in env_dict or not env_dict["AVO_PROVIDER"].strip()):
+        try:
+            from avo.cli_setup import load_global_avo_config
+
+            for k, v in load_global_avo_config().items():
+                env_dict.setdefault(k, v)
+        except Exception:
+            pass
+    env: Mapping[str, str] = env_dict
 
     name = env.get("AVO_PROVIDER", "").strip().lower()
     auto_model = ""
@@ -219,7 +273,7 @@ def build_provider_from_env(
         from avo.oauth.store import get_credential
 
         for candidate, candidate_provider, def_model in (
-            ("claude", "anthropic", "claude-sonnet-4-5"),
+            ("claude", "claude-code", "claude-sonnet-4-6"),
             ("codex", "codex", "gpt-5.6-sol"),
             ("gemini", "gemini_cli", "gemini-2.5-pro"),
             ("openrouter", "openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
@@ -245,10 +299,21 @@ def build_provider_from_env(
                 request_timeout_seconds=request_timeout_seconds,
             )
 
-        if name == "ollama":
+        if name in ("ollama", "ollama-cloud"):
             from avo.providers.ollama import OllamaConfig, OllamaProvider
 
-            ollama_config = OllamaConfig.from_avo_env(env, fallback_model=model)
+            cloud_env = dict(env)
+            if name == "ollama-cloud":
+                cloud_env.setdefault("AVO_OLLAMA_BASE_URL", "https://ollama.com")
+                if not cloud_env.get("AVO_OLLAMA_API_KEY", "").strip():
+                    cloud_env["AVO_OLLAMA_API_KEY"] = cloud_env.get("AVO_OLLAMA_CLOUD_API_KEY", "")
+                if not cloud_env.get("AVO_OLLAMA_API_KEY", "").strip():
+                    from avo.oauth.store import get_credential
+
+                    stored_ollama = get_credential("ollama")
+                    if stored_ollama is not None and stored_ollama.access_token:
+                        cloud_env["AVO_OLLAMA_API_KEY"] = stored_ollama.access_token
+            ollama_config = OllamaConfig.from_avo_env(cloud_env, fallback_model=model)
             return OllamaProvider(
                 ollama_config,
                 max_completion_tokens=max_completion_tokens,
@@ -281,7 +346,7 @@ def build_provider_from_env(
                 tier_env = dict(env)
                 tier_env["AVO_PROVIDER"] = tier_prov_name
                 tier_env["AVO_MODEL"] = tier.model
-                tier_prov = build_provider_from_env(
+                tier_prov = _build_base_provider_from_env(
                     tier_env,
                     max_completion_tokens=max_completion_tokens,
                     request_timeout_seconds=tier.timeout_seconds,
@@ -290,7 +355,7 @@ def build_provider_from_env(
 
             return ComboRouterProvider(profile, tiers=tier_routes)
 
-        if name == "anthropic":
+        if name in ("anthropic", "claude-code"):
             from avo.providers.anthropic import AnthropicConfig, AnthropicProvider
 
             anthropic_config = AnthropicConfig.from_avo_env(env, fallback_model=model)
@@ -333,7 +398,14 @@ def build_provider_from_env(
         if name in ("gemini_cli", "gemini-cli"):
             from avo.providers.gemini_cli import GeminiCliConfig, GeminiCliProvider
 
-            gemini_cli_config = GeminiCliConfig.from_avo_env(env, fallback_model=model)
+            gemini_env = dict(env)
+            if not gemini_env.get("AVO_GEMINI_CLI_TRANSPORT"):
+                gemini_env["AVO_GEMINI_CLI_TRANSPORT"] = (
+                    "cliproxyapi"
+                    if gemini_env.get("AVO_CLIPROXYAPI_BASE_URL", "").strip()
+                    else "antigravity"
+                )
+            gemini_cli_config = GeminiCliConfig.from_avo_env(gemini_env, fallback_model=model)
             return GeminiCliProvider(
                 gemini_cli_config,
                 max_completion_tokens=max_completion_tokens,
@@ -349,7 +421,16 @@ def build_provider_from_env(
                 if stored_gemini is not None and stored_gemini.kind == "oauth":
                     from avo.providers.gemini_cli import GeminiCliConfig, GeminiCliProvider
 
-                    gemini_cli_config = GeminiCliConfig.from_avo_env(env, fallback_model=model)
+                    gemini_env = dict(env)
+                    if not gemini_env.get("AVO_GEMINI_CLI_TRANSPORT"):
+                        gemini_env["AVO_GEMINI_CLI_TRANSPORT"] = (
+                            "cliproxyapi"
+                            if gemini_env.get("AVO_CLIPROXYAPI_BASE_URL", "").strip()
+                            else "antigravity"
+                        )
+                    gemini_cli_config = GeminiCliConfig.from_avo_env(
+                        gemini_env, fallback_model=model
+                    )
                     return GeminiCliProvider(
                         gemini_cli_config,
                         max_completion_tokens=max_completion_tokens,
@@ -454,7 +535,7 @@ def _build_router_from_env(
         prov_env["AVO_PROVIDER"] = prov_name
         prov_env["AVO_MODEL"] = prov_model
         try:
-            prov_instance = build_provider_from_env(
+            prov_instance = _build_base_provider_from_env(
                 prov_env,
                 max_completion_tokens=max_completion_tokens,
                 request_timeout_seconds=request_timeout_seconds,

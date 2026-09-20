@@ -156,3 +156,87 @@ async def test_combo_aclose_calls_underlying_providers() -> None:
         tiers=[(profile.tiers[0], p1)],
     )
     await router.aclose()
+
+
+@pytest.mark.asyncio
+async def test_tier_health_lock_prevents_concurrent_write_corruption() -> None:
+    """Concurrent generate() calls must not corrupt TierHealth state."""
+    import asyncio
+
+    fail_count = 20
+
+    class _RateLimitedProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__([])
+
+        async def generate(self, request: ModelRequest) -> ModelResponse:
+            raise ProviderError("HTTP 429: Too Many Requests")
+
+    p_fail = _RateLimitedProvider()
+    p_ok = FakeProvider([ModelResponse(content=f"ok-{i}") for i in range(fail_count)])
+    profile = _profile()
+    router = ComboRouterProvider(
+        profile,
+        tiers=[(profile.tiers[0], p_fail), (profile.tiers[1], p_ok)],
+    )
+
+    # Fire concurrent generate() calls — each will record a failure then a success.
+    await asyncio.gather(*(router.generate(_make_req()) for _ in range(fail_count)))
+
+    # After all concurrent calls, health for tier[0] should be unhealthy (cooldown),
+    # and the consecutive_failures counter must be a consistent integer, not corrupted.
+    h = router._health[profile.tiers[0].name]
+    assert isinstance(h.consecutive_failures, int)
+    assert h.consecutive_failures >= 1
+    assert h.is_healthy is False
+
+
+@pytest.mark.asyncio
+async def test_combo_cost_strategy_prioritizes_free_tier() -> None:
+    p1 = FakeProvider([ModelResponse(content="tier1")])
+    p2 = FakeProvider([ModelResponse(content="free_tier")])
+
+    profile = ComboProfile(
+        name="cost_combo",
+        strategy="cost",
+        tiers=[
+            ComboTier(name="subscription", provider="claude", model="claude-sonnet-5"),
+            ComboTier(name="free_local", provider="ollama", model="qwen"),
+        ],
+    )
+    router = ComboRouterProvider(
+        profile,
+        tiers=[(profile.tiers[0], p1), (profile.tiers[1], p2)],
+    )
+
+    resp = await router.generate(_make_req())
+    assert resp.content == "free_tier"
+    assert len(p2.requests) == 1
+    assert len(p1.requests) == 0
+
+
+@pytest.mark.asyncio
+async def test_combo_latency_strategy_prioritizes_fastest_tier() -> None:
+    p1 = FakeProvider([ModelResponse(content="slow")])
+    p2 = FakeProvider([ModelResponse(content="fast")])
+
+    profile = ComboProfile(
+        name="latency_combo",
+        strategy="latency",
+        tiers=[
+            ComboTier(name="primary", provider="claude", model="claude-sonnet-5"),
+            ComboTier(name="secondary", provider="groq", model="llama"),
+        ],
+    )
+    router = ComboRouterProvider(
+        profile,
+        tiers=[(profile.tiers[0], p1), (profile.tiers[1], p2)],
+    )
+    # Simulate recorded latencies
+    router._health["primary"].last_latency_ms = 450.0
+    router._health["secondary"].last_latency_ms = 50.0
+
+    resp = await router.generate(_make_req())
+    assert resp.content == "fast"
+    assert len(p2.requests) == 1
+    assert len(p1.requests) == 0

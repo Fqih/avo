@@ -136,6 +136,24 @@ class WebApiMixin(WebHttpMixin):
             self._send_json(self.server.get_sync_router_status())
             return True
 
+        if path in ("/api/approvals", "/api/approvals/pending"):
+            bridge = getattr(self.server, "approval_bridge", None)
+            items = bridge.list_pending() if bridge else []
+            self._send_json({"pending": items, "count": len(items)})
+            return True
+
+        if path.startswith("/api/approvals/") and not path.endswith("/decision"):
+            req_id = path.split("/api/approvals/", 1)[1]
+            bridge = getattr(self.server, "approval_bridge", None)
+            item = (
+                bridge.get_approval(req_id) if bridge and hasattr(bridge, "get_approval") else None
+            )
+            if not item:
+                self._send_json({"error": f"Approval request {req_id} not found"}, status=404)
+                return True
+            self._send_json(item)
+            return True
+
         return False
 
     def _route_api_post(self, parsed: urllib.parse.ParseResult, path: str) -> bool:
@@ -220,8 +238,9 @@ class WebApiMixin(WebHttpMixin):
                 )
                 return True
 
-            self.server.permission_mode = mode
-            os.environ["AVO_PERMISSION_MODE"] = mode
+            with self.server._config_lock:
+                self.server.permission_mode = mode
+                os.environ["AVO_PERMISSION_MODE"] = mode
             self._send_json({"ok": True, "mode": mode})
             return True
 
@@ -260,11 +279,39 @@ class WebApiMixin(WebHttpMixin):
                 self._send_json({"error": "provider is required"}, status=400)
                 return True
 
-            os.environ["AVO_PROVIDER"] = provider
-            if model:
-                os.environ["AVO_MODEL"] = model
+            with self.server._config_lock:
+                self.server.active_provider = provider
+                self.server.active_model = model
+                os.environ["AVO_PROVIDER"] = provider
+                if model:
+                    os.environ["AVO_MODEL"] = model
             current_model = model or os.environ.get("AVO_MODEL", "")
             self._send_json({"ok": True, "provider": provider, "model": current_model})
+            return True
+
+        if path.startswith("/api/approvals/") and path.endswith("/decision"):
+            req_id = path.split("/api/approvals/", 1)[1].rsplit("/decision", 1)[0]
+            content_len = int(self.headers.get("Content-Length", 0))
+            if content_len <= 0:
+                self._send_json({"error": "empty body"}, status=400)
+                return True
+            try:
+                data = json.loads(self.rfile.read(content_len).decode("utf-8"))
+            except Exception:
+                self._send_json({"error": "invalid JSON body"}, status=400)
+                return True
+
+            approved = bool(data.get("approved", False))
+            reason = str(data.get("reason", ""))
+            bridge = getattr(self.server, "approval_bridge", None)
+            if not bridge:
+                self._send_json({"error": "No approval bridge configured"}, status=503)
+                return True
+            success = bridge.resolve(req_id, approved, reason=reason)
+            if not success:
+                self._send_json({"error": "Request not found or expired"}, status=404)
+                return True
+            self._send_json({"status": "resolved", "request_id": req_id, "approved": approved})
             return True
 
         return False

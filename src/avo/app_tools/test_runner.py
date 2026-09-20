@@ -16,10 +16,11 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from avo import FunctionTool as PublicFunctionTool
+from avo.app_tools.sandbox import build_safe_environment
 
 from .edit_file import EditFileError
 from .file_tools import _workspace_stack
-from .workspace import Workspace
+from .workspace import Workspace, WorkspacePathError
 
 
 class TestRunnerArguments(BaseModel):
@@ -51,6 +52,19 @@ def _current_workspace() -> Workspace:
     return _workspace_stack[-1]
 
 
+def resolve_test_target(workspace: Workspace, target: str | None) -> str | None:
+    """Validate a test path while preserving an optional pytest node selector."""
+
+    if target is None:
+        return None
+    path_part, separator, selector = target.partition("::")
+    if not path_part:
+        raise WorkspacePathError("test target path is empty")
+    resolved = workspace.validate_path(path_part, must_exist=True)
+    relative = resolved.relative_to(workspace.root).as_posix()
+    return relative + (f"::{selector}" if separator else "")
+
+
 def run_tests(
     workspace_root: Path,
     target: str | None = None,
@@ -59,6 +73,8 @@ def run_tests(
     timeout_seconds: float = 60.0,
 ) -> dict[str, Any]:
     """Execute automated tests in the workspace and return parsed results."""
+    workspace = Workspace(workspace_root)
+    validated_target: str | None = None
     # Determine test runner command
     runner_cmd: list[str]
     runner_name: str
@@ -79,8 +95,21 @@ def run_tests(
         runner_name = "unittest"
         runner_cmd = [sys.executable, "-m", "unittest"]
 
-    if target:
-        runner_cmd.append(target)
+    try:
+        validated_target = resolve_test_target(workspace, target)
+    except WorkspacePathError as exc:
+        return {
+            "ok": False,
+            "runner": runner_name,
+            "target": str(target or "all"),
+            "returncode": -1,
+            "summary": "Test target rejected by workspace boundary",
+            "failures": [str(exc)],
+            "output": "",
+        }
+
+    if validated_target:
+        runner_cmd.append(validated_target)
 
     try:
         proc = subprocess.run(
@@ -90,7 +119,10 @@ def run_tests(
             text=True,
             timeout=timeout_seconds,
             check=False,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env={
+                **build_safe_environment(os.environ, workspace_root=workspace.root),
+                "PYTHONUNBUFFERED": "1",
+            },
         )
         passed = proc.returncode == 0
         output = proc.stdout.strip() or proc.stderr.strip()
@@ -152,4 +184,4 @@ def test_runner_tool() -> PublicFunctionTool[TestRunnerArguments]:
     )
 
 
-__all__ = ["TestRunnerArguments", "run_tests", "test_runner_tool"]
+__all__ = ["TestRunnerArguments", "resolve_test_target", "run_tests", "test_runner_tool"]

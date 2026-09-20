@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import types
 from importlib import metadata
+from pathlib import Path
 
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
@@ -16,6 +17,7 @@ from avo.plugins import (
     PluginError,
     discover,
     discover_all,
+    discover_from_paths,
     names,
 )
 
@@ -179,3 +181,31 @@ def test_discover_empty_group_returns_empty(
 ) -> None:
     result = discover(TOOL_GROUP)
     assert result == ()
+
+
+def test_discover_from_private_paths_loads_only_selected_distributions(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    imported = tmp_path / "private_site"
+    imported.mkdir()
+    observed: list[list[str]] = []
+
+    class EntryPoint:
+        name = "private_tool"
+        group = TOOL_GROUP
+        dist = types.SimpleNamespace(name="private-pkg")
+
+        def load(self) -> object:
+            observed.append(list(__import__("sys").path))
+            return lambda: "private"
+
+    class Distribution:
+        name = "private-pkg"
+        entry_points = (EntryPoint(),)
+
+    monkeypatch.setattr(metadata, "distributions", lambda *, path: (Distribution(),))
+
+    result = discover_from_paths(TOOL_GROUP, (imported,))
+
+    assert result[0].package == "private-pkg"
+    assert str(imported) in observed[0]

@@ -51,6 +51,20 @@ async def test_successful_final_response_has_one_explicit_terminal_event() -> No
 
 
 @pytest.mark.asyncio
+async def test_run_places_optional_system_prompt_before_user_message() -> None:
+    provider = FakeProvider([ModelResponse(content="hello")])
+    runtime = AgentRuntime(provider=provider)
+
+    result = await runtime.run("say hello", system_prompt="You are Avo.")
+
+    assert result.status is RunState.COMPLETED
+    assert provider.requests[0].messages == [
+        {"role": "system", "content": "You are Avo."},
+        {"role": "user", "content": "say hello"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_successful_tool_flow_appends_observation_to_model_context() -> None:
     provider = FakeProvider(
         [
@@ -408,3 +422,44 @@ async def test_caller_cancellation_is_persisted_before_propagation() -> None:
     assert run.state is RunState.CANCELLED
     assert run.stop_reason is StopReason.USER_CANCELLED
     assert (await store.get_events(run.run_id))[-1].event_type is EventType.RUN_CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_runtime_aclose_calls_provider_aclose() -> None:
+    """AgentRuntime.aclose() must forward to provider.aclose() when available."""
+    closed: list[bool] = []
+
+    class _CloseableProvider(FakeProvider):
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    rt = AgentRuntime(provider=_CloseableProvider([ModelResponse(content="hi")]))
+    await rt.aclose()
+    assert closed == [True]
+
+    # Second call is a no-op (provider already closed; FakeProvider.aclose is idempotent)
+    await rt.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_async_context_manager_closes_provider() -> None:
+    """``async with AgentRuntime(...)`` must call aclose() on exit."""
+    closed: list[bool] = []
+
+    class _CloseableProvider(FakeProvider):
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    async with AgentRuntime(provider=_CloseableProvider([ModelResponse(content="hi")])) as rt:
+        result = await rt.run("hi")
+        assert result.status is RunState.COMPLETED
+
+    assert closed == [True]
+
+
+@pytest.mark.asyncio
+async def test_runtime_aclose_is_noop_for_provider_without_aclose() -> None:
+    """AgentRuntime.aclose() must not raise when provider has no aclose()."""
+    rt = AgentRuntime(provider=FakeProvider([ModelResponse(content="hi")]))
+    # FakeProvider has no aclose; this must not raise
+    await rt.aclose()

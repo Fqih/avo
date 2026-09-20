@@ -114,8 +114,11 @@ def test_run_creates_container_with_expected_kwargs(
     assert kwargs["network_mode"] == "none"
     assert kwargs["mem_limit"] == "512m"
     assert kwargs["image"] == "python:3.12-slim"
-    # remove=True is part of the documented sandbox contract.
-    assert kwargs["remove"] is True
+    assert kwargs["security_opt"] == ["no-new-privileges:true"]
+    assert kwargs["read_only"] is True
+    assert kwargs["cap_drop"] == ["ALL"]
+    assert kwargs["pids_limit"] == 128
+    assert kwargs["user"] == "65532:65532"
 
 
 def test_run_emits_json_report(

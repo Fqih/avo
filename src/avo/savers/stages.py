@@ -124,6 +124,45 @@ class JsonMinifyStage:
 
 
 @dataclass(frozen=True)
+class StructuralCollapseStage:
+    """Normalize redundant whitespace, excessive blank lines, and decorative rules."""
+
+    max_blank_lines: int = 1
+    max_rule_repeats: int = 10
+    name: str = "structural_collapse"
+
+    def apply(self, messages: Messages) -> Messages:
+        return _map_tool_contents(messages, self._collapse)
+
+    def _collapse(self, text: str) -> str:
+        if not text or len(text) < 40:
+            return text
+        lines = [line.rstrip() for line in text.split("\n")]
+        collapsed_lines: list[str] = []
+        rule_chars = set("=-_*#~")
+        for line in lines:
+            stripped = line.strip()
+            if len(stripped) >= 15 and len(set(stripped)) == 1 and stripped[0] in rule_chars:
+                collapsed_lines.append(stripped[0] * self.max_rule_repeats)
+            else:
+                collapsed_lines.append(line)
+
+        result_lines: list[str] = []
+        consecutive_blanks = 0
+        for line in collapsed_lines:
+            if not line:
+                consecutive_blanks += 1
+                if consecutive_blanks <= self.max_blank_lines:
+                    result_lines.append(line)
+            else:
+                consecutive_blanks = 0
+                result_lines.append(line)
+
+        collapsed = "\n".join(result_lines)
+        return collapsed if len(collapsed) < len(text) else text
+
+
+@dataclass(frozen=True)
 class DedupeToolResultsStage:
     """Replace repeated identical tool results with a back-reference."""
 
@@ -217,5 +256,6 @@ __all__ = [
     "Messages",
     "PreTrimmerStage",
     "SaverStage",
+    "StructuralCollapseStage",
     "estimate_messages",
 ]

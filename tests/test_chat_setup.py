@@ -166,14 +166,27 @@ def test_setup_router_fallback_chain(tmp_path: Path, monkeypatch: pytest.MonkeyP
 def test_setup_invalid_choice_re_prompts() -> None:
     from avo.chat import interactive_first_run_setup
 
-    # 9 invalid, 0 invalid, then 1 valid; empty base_url, empty model
-    stdin = io.StringIO("9\n0\n1\n\n\n")
+    # 11 invalid, 0 invalid, then 1 valid; empty base_url, empty model
+    stdin = io.StringIO("11\n0\n1\n\n\n")
     stdout = io.StringIO()
     env = interactive_first_run_setup(stdin, stdout, secret_reader=lambda _: "x")
     assert env is not None
     assert env["AVO_PROVIDER"] == "ollama"
     out = stdout.getvalue()
     assert "please choose one of" in out
+
+
+def test_setup_labels_vendor_accounts_by_quota_not_subscription_requirement() -> None:
+    from avo.chat import interactive_first_run_setup
+
+    env = interactive_first_run_setup(io.StringIO("1\n\n\n"), io.StringIO())
+    assert env is not None
+
+    stdout = io.StringIO()
+    interactive_first_run_setup(io.StringIO("1\n\n\n"), stdout)
+    output = stdout.getvalue().lower()
+    assert "free or paid" in output
+    assert "subscription required" not in output
 
 
 def test_setup_eof_returns_none() -> None:
@@ -310,6 +323,39 @@ async def test_fresh_ollama_setup_reaches_repl(
     combined = stdout.getvalue() + stderr.getvalue()
     assert "AVO_PROVIDER must be one of" not in combined
     assert "provider" in combined.lower() and "ollama" in combined
+
+
+@pytest.mark.asyncio
+async def test_invalid_persisted_anthropic_config_opens_setup_wizard(
+    tmp_path: Path,
+) -> None:
+    """A missing key in the remembered provider must not leak a traceback."""
+
+    from avo.chat import run_repl
+
+    chat_env = _chat_env(tmp_path)
+    stdin = io.StringIO("1\n\n\n/quit\n")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = await run_repl(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        environ={
+            "AVO_PROVIDER": "anthropic",
+            "AVO_MODEL": "claude-sonnet-4-6",
+        },
+        secret_reader=lambda _: "unused",
+    )
+
+    combined = stdout.getvalue() + stderr.getvalue()
+    assert code == 0
+    assert "Avo First-Time Setup" in combined
+    assert "Provider configured: Ollama" in combined
+    assert "Traceback" not in combined
 
 
 @pytest.mark.asyncio
@@ -638,6 +684,69 @@ def test_setup_codex_subscription() -> None:
         "AVO_ALLOW_SUBSCRIPTION": "1",
     }
     assert subscription_allowed(env) is True
+
+
+def test_setup_model_picker_accepts_numbered_codex_model() -> None:
+    from avo.chat import interactive_first_run_setup
+
+    env = interactive_first_run_setup(io.StringIO("7\n3\n"), io.StringIO())
+
+    assert env is not None
+    assert env["AVO_PROVIDER"] == "codex"
+    assert env["AVO_MODEL"] == "gpt-5"
+    assert env["AVO_ALLOW_SUBSCRIPTION"] == "1"
+
+
+def test_setup_claude_account_opens_official_vendor_login(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from avo.chat import interactive_first_run_setup
+    from avo.oauth.store import Credential, store_credential
+
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    calls: list[str] = []
+
+    def fake_vendor_login(provider: str) -> bool:
+        calls.append(provider)
+        store_credential(
+            Credential(
+                provider="claude",
+                kind="oauth",
+                access_token="claude-oauth-token",
+                account="user@example.com",
+            )
+        )
+        return True
+
+    # 9 = Claude account, then default model and no shell persistence.
+    env = interactive_first_run_setup(
+        io.StringIO("9\n\n"),
+        io.StringIO(),
+        vendor_login=fake_vendor_login,
+    )
+
+    assert env == {
+        "AVO_PROVIDER": "claude-code",
+        "AVO_MODEL": "claude-sonnet-4-6",
+        "AVO_ALLOW_SUBSCRIPTION": "1",
+    }
+    assert calls == ["claude-code"]
+
+
+def test_setup_ollama_cloud_is_separate_from_local() -> None:
+    from avo.chat import interactive_first_run_setup
+
+    env = interactive_first_run_setup(
+        io.StringIO("10\n\n"),
+        io.StringIO(),
+        secret_reader=lambda _: "ollama-cloud-key",
+    )
+
+    assert env == {
+        "AVO_PROVIDER": "ollama-cloud",
+        "AVO_OLLAMA_CLOUD_API_KEY": "ollama-cloud-key",
+        "AVO_MODEL": "qwen3-coder:480b-cloud",
+    }
 
 
 def test_setup_reuse_stored_oauth_login(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -203,6 +203,33 @@ class SessionLifecycle:
                 break
         return "\n".join(lines)
 
+    def render_transcript(
+        self,
+        session_id: str,
+        *,
+        max_turns: int = 20,
+        max_chars: int = 6000,
+    ) -> str:
+        """Render a compact Claude-Code-style transcript for a resumed chat."""
+
+        turns = self._store.turns(session_id)
+        if not turns:
+            raise SessionError(f"session {session_id!r} has no turns to display")
+        selected = list(turns[-max_turns:])
+        lines: list[str] = []
+        used = 0
+        for turn in selected:
+            content = _truncate(turn.content.replace("\n", " "), max_chars - used)
+            if turn.role == "user":
+                lines.append(f"{chr(0x276F)} {content}")
+            else:
+                lines.append(f"• {content}")
+            used += len(content) + 8
+            if used >= max_chars:
+                lines.append("…(earlier turns hidden)")
+                break
+        return "\n".join(lines)
+
     def export_markdown(
         self,
         session_id: str,
@@ -280,8 +307,9 @@ def render_session_row(info: SessionInfo) -> str:
     """Render one session row for the ``/sessions`` picker."""
 
     age = _format_age(info.age_seconds)
-    first = _truncate(info.first_user_preview.replace("\n", " "), 60)
-    return f"[{info.session_id}]  {info.turn_count:>3} turns  {age:>10}  {first}"
+    first = _truncate(info.first_user_preview.replace("\n", " "), 40)
+    turns = f"{info.turn_count:>2} turns" if info.turn_count != 1 else " 1 turn "
+    return f"│ {info.session_id:<14} │ {turns} │ {age:>8} │ {first:<40} │"
 
 
 def render_session_picker(infos: tuple[SessionInfo, ...]) -> str:
@@ -289,11 +317,21 @@ def render_session_picker(infos: tuple[SessionInfo, ...]) -> str:
 
     if not infos:
         return "No previous sessions.\n"
-    lines = ["Previous sessions (most recent first):", ""]
+    lines = [
+        "Previous sessions (most recent first):",
+        "╭────┬────────────────┬──────────┬──────────┬──────────────────────────────────────────╮",
+        "│  # │ Session ID     │ Turns    │ Age      │ First Message / Task                     │",
+        "├────┼────────────────┼──────────┼──────────┼──────────────────────────────────────────┤",
+    ]
     for index, info in enumerate(infos, start=1):
-        lines.append(f"  {index}. {render_session_row(info)}")
-    lines.append("")
-    lines.append("Pick a session: `/resume <id>` or `/resume <number>` (or `/new`).")
+        lines.append(f"│ {index:>2} " + render_session_row(info))
+    lines.extend(
+        [
+            "╰────┴────────────────┴──────────┴──────────┴──────────────────────────────────────────╯",
+            "",
+            "Select a number, search text, or use `/resume <id>` (or `/new`).",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 

@@ -1,0 +1,371 @@
+/* ==============================================================================
+   Avo Global Documentation Theme & Branding System
+   Theme: Obsidian Slate / Emerald Glow / Cyber Cyan
+   Applies across ALL pages under site/
+   ============================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root,
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #06090e !important;
+  --md-default-bg-color--light: #0c121d !important;
+  --md-default-bg-color--lighter: #131b2e !important;
+  --md-default-bg-color--lightest: #1e293b !important;
+
+  --md-default-fg-color: #f8fafc !important;
+  --md-default-fg-color--light: #cbd5e1 !important;
+  --md-default-fg-color--lighter: #94a3b8 !important;
+  --md-default-fg-color--lightest: #64748b !important;
+
+  --md-primary-fg-color: #06090e !important;
+  --md-primary-fg-color--dark: #030508 !important;
+  --md-accent-fg-color: #10b981 !important;
+  --md-accent-fg-color--transparent: rgba(16, 185, 129, 0.15) !important;
+
+  --md-code-bg-color: #0c121d !important;
+  --md-code-fg-color: #f1f5f9 !important;
+
+  --md-typeset-a-color: #10b981 !important;
+
+  --avo-ink: #f8fafc;
+  --avo-muted: #94a3b8;
+  --avo-teal: #10b981;
+  --avo-teal-dark: #059669;
+  --avo-mint: rgba(16, 185, 129, 0.12);
+  --avo-yellow: rgba(245, 158, 11, 0.12);
+  --avo-border: rgba(255, 255, 255, 0.08);
+  --avo-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+body {
+  background-color: #06090e !important;
+  color: #f8fafc !important;
+  font-family: var(--font-sans) !important;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==============================================================================
+   Top Header & Modern Branding
+   ============================================================================== */
+.md-header {
+  background: rgba(6, 9, 14, 0.85) !important;
+  backdrop-filter: blur(16px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4) !important;
+}
+
+.md-header__inner {
+  max-width: 82rem !important;
+}
+
+.md-header .md-logo {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+}
+
+.md-header .md-logo img {
+  width: 2.2rem !important;
+  height: 2.2rem !important;
+  filter: drop-shadow(0 0 10px rgba(16, 185, 129, 0.4)) !important;
+}
+
+.md-header__title {
+  font-family: var(--font-sans) !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.02em !important;
+}
+
+.md-header__title::after {
+  content: "v0.7.4";
+  margin-left: 0.6rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #10b981;
+  vertical-align: middle;
+}
+
+/* Navigation Tabs */
+.md-tabs {
+  background: rgba(12, 18, 29, 0.9) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+.md-tabs__link {
+  font-family: var(--font-sans) !important;
+  font-weight: 600 !important;
+  font-size: 0.82rem !important;
+  color: #94a3b8 !important;
+  transition: all 0.15s ease !important;
+}
+
+.md-tabs__link:hover,
+.md-tabs__item--active .md-tabs__link {
+  color: #10b981 !important;
+  opacity: 1 !important;
+}
+
+/* ==============================================================================
+   Sidebar & Navigation
+   ============================================================================== */
+.md-sidebar--primary .md-sidebar__inner {
+  padding-top: 1.5rem !important;
+}
+
+.md-nav__title {
+  font-family: var(--font-sans) !important;
+  font-weight: 700 !important;
+  font-size: 0.75rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  color: #64748b !important;
+}
+
+.md-nav__link {
+  font-family: var(--font-sans) !important;
+  font-size: 0.85rem !important;
+  color: #94a3b8 !important;
+  border-radius: 0.4rem !important;
+  padding: 0.35rem 0.6rem !important;
+  transition: all 0.15s ease !important;
+}
+
+.md-nav__link:hover {
+  color: #f8fafc !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+.md-nav__item--active > .md-nav__link {
+  color: #10b981 !important;
+  font-weight: 600 !important;
+  background: rgba(16, 185, 129, 0.1) !important;
+}
+
+/* Search Box */
+.md-search__inner {
+  border-radius: 0.6rem !important;
+  background: rgba(15, 23, 42, 0.8) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.md-search__input {
+  color: #f8fafc !important;
+  font-family: var(--font-sans) !important;
+}
+
+/* ==============================================================================
+   Main Content & Typography
+   ============================================================================== */
+.md-main__inner {
+  max-width: 82rem !important;
+  margin-top: 1.5rem !important;
+}
+
+.md-content {
+  background: transparent !important;
+}
+
+.md-typeset {
+  font-family: var(--font-sans) !important;
+  color: #cbd5e1 !important;
+  font-size: 0.95rem !important;
+  line-height: 1.7 !important;
+}
+
+.md-typeset h1 {
+  color: #f8fafc !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.025em !important;
+  font-size: 2.25rem !important;
+  margin-bottom: 1.25rem !important;
+}
+
+.md-typeset h2 {
+  color: #f8fafc !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.02em !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  padding-bottom: 0.5rem !important;
+  margin-top: 2.75rem !important;
+}
+
+.md-typeset h3 {
+  color: #f1f5f9 !important;
+  font-weight: 700 !important;
+}
+
+.md-typeset a {
+  color: #10b981 !important;
+  text-decoration: none !important;
+  font-weight: 500 !important;
+  transition: color 0.15s ease !important;
+}
+
+.md-typeset a:hover {
+  color: #34d399 !important;
+  text-decoration: underline !important;
+}
+
+/* ==============================================================================
+   Code Blocks & Pre
+   ============================================================================== */
+.md-typeset pre,
+.md-typeset code {
+  font-family: var(--font-mono) !important;
+}
+
+.md-typeset pre {
+  background: #0c121d !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 0.75rem !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+  padding: 1rem 1.25rem !important;
+}
+
+.md-typeset code {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-radius: 0.35rem !important;
+  padding: 0.15rem 0.4rem !important;
+  color: #a7f3d0 !important;
+}
+
+.md-typeset pre code {
+  background: transparent !important;
+  padding: 0 !important;
+  color: #e2e8f0 !important;
+}
+
+.md-clipboard {
+  color: #94a3b8 !important;
+}
+
+.md-clipboard:hover {
+  color: #10b981 !important;
+}
+
+/* Tabbed Sets */
+.tabbed-set {
+  border-radius: 0.75rem !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  background: #0c121d !important;
+  margin: 1.5rem 0 !important;
+}
+
+.tabbed-labels {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+.tabbed-labels > label {
+  color: #94a3b8 !important;
+  font-family: var(--font-sans) !important;
+  font-weight: 600 !important;
+  font-size: 0.82rem !important;
+  padding: 0.6rem 1.2rem !important;
+}
+
+.tabbed-labels > label:hover {
+  color: #f8fafc !important;
+}
+
+.tabbed-set input:nth-child(1):checked ~ .tabbed-labels > :nth-child(1),
+.tabbed-set input:nth-child(2):checked ~ .tabbed-labels > :nth-child(2),
+.tabbed-set input:nth-child(3):checked ~ .tabbed-labels > :nth-child(3) {
+  color: #10b981 !important;
+  border-color: #10b981 !important;
+}
+
+/* ==============================================================================
+   Admonitions (Notes, Warnings, Info)
+   ============================================================================== */
+.md-typeset .admonition {
+  background: rgba(15, 23, 42, 0.6) !important;
+  backdrop-filter: blur(8px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-left: 4px solid var(--accent-emerald, #10b981) !important;
+  border-radius: 0.75rem !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
+  margin: 1.5rem 0 !important;
+}
+
+.md-typeset .admonition.warning {
+  border-left-color: #f59e0b !important;
+}
+
+.md-typeset .admonition.danger {
+  border-left-color: #ef4444 !important;
+}
+
+.md-typeset .admonition.info {
+  border-left-color: #06b6d4 !important;
+}
+
+.md-typeset .admonition-title {
+  background: transparent !important;
+  font-family: var(--font-sans) !important;
+  font-weight: 700 !important;
+  color: #f8fafc !important;
+}
+
+/* ==============================================================================
+   Tables
+   ============================================================================== */
+.md-typeset table:not([class]) {
+  background: #0c121d !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 0.75rem !important;
+  overflow: hidden !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
+  margin: 1.5rem 0 !important;
+}
+
+.md-typeset table:not([class]) th {
+  background: rgba(255, 255, 255, 0.03) !important;
+  color: #94a3b8 !important;
+  font-family: var(--font-sans) !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  font-size: 0.75rem !important;
+  letter-spacing: 0.06em !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.md-typeset table:not([class]) td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
+}
+
+/* ==============================================================================
+   Footer
+   ============================================================================== */
+.md-footer {
+  background: #04060a !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.md-footer-meta {
+  background: transparent !important;
+}
+
+.md-copyright {
+  color: #64748b !important;
+  font-size: 0.85rem !important;
+}
+
+.md-social__link {
+  color: #94a3b8 !important;
+  transition: color 0.15s ease !important;
+}
+
+.md-social__link:hover {
+  color: #10b981 !important;
+}

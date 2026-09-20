@@ -150,3 +150,27 @@ def test_main_login_status_and_logout(
     assert main_login(["--logout", "openrouter"]) == 0
     assert "Logged out of openrouter" in capsys.readouterr().out
     assert get_stored_token("openrouter") is None
+
+
+@pytest.mark.parametrize(
+    ("provider", "url", "label"),
+    [
+        ("claude-web", "https://claude.ai/login", "Claude Web"),
+        ("chatgpt-web", "https://chatgpt.com", "ChatGPT Web"),
+    ],
+)
+def test_web_login_opens_browser_without_creating_cli_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    provider: str,
+    url: str,
+    label: str,
+) -> None:
+    monkeypatch.setenv("AVO_CONFIG_DIR", str(tmp_path))
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", lambda target: opened.append(target))
+
+    assert main_login([provider]) == 0
+    assert opened == [url]
+    assert label in capsys.readouterr().out

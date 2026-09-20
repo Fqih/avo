@@ -22,6 +22,8 @@ from typing import Any
 from pydantic import BaseModel, Field, JsonValue
 
 from avo import FunctionTool as PublicFunctionTool
+from avo.agent_profiles import AgentCapability
+from avo.capabilities import filter_tools, inherit_runtime_security
 from avo.models import ToolCall
 from avo.policies import LoopPolicy
 from avo.runtime import AgentRuntime
@@ -34,9 +36,6 @@ class AgentType(StrEnum):
 
     EXPLORE = "explore"
     GENERAL = "general"
-
-
-_READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({"read_file"})
 
 
 class TaskArguments(BaseModel):
@@ -62,7 +61,7 @@ def _default_tool_selector(
         if agent_type is AgentType.GENERAL:
             return list(by_name.values())
         # EXPLORE (and any future read-only preset): keep only read-only tools.
-        return [tool for tool in by_name.values() if tool.metadata.name in _READ_ONLY_TOOL_NAMES]
+        return filter_tools(list(by_name.values()), read_only=True)
 
     return select
 
@@ -79,11 +78,21 @@ async def _run_task(
     child_policy = policy_overrides or LoopPolicy(
         max_steps=arguments.max_steps or parent_runtime.policy.max_steps
     )
+    child_security = inherit_runtime_security(
+        parent_runtime.security_config,
+        (
+            AgentCapability.INHERITED
+            if arguments.agent_type is AgentType.GENERAL
+            else AgentCapability.READ_ONLY
+        ),
+    )
     child = AgentRuntime(
         provider=parent_runtime.provider,
         event_store=InMemoryEventStore(),
         tools=selector(arguments.agent_type),
         policy=child_policy,
+        approval_callback=parent_runtime.approval_callback,
+        security_config=child_security,
     )
     result = await child.run(arguments.prompt)
     payload: dict[str, JsonValue] = {

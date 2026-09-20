@@ -117,6 +117,56 @@ def test_render_report_ok_prints_endpoint_and_no_missing() -> None:
     assert "missing variables" not in text
 
 
+def test_render_report_shows_credential_backend() -> None:
+    report = run_doctor(
+        {
+            "AVO_PROVIDER": "ollama",
+            "AVO_MODEL": "llama3.1",
+        }
+    )
+    out = io.StringIO()
+
+    render_report(report, out=out)
+
+    assert "credential backend: file-permissions" in out.getvalue()
+
+
+def test_render_report_shows_security_posture_and_sources_without_secrets() -> None:
+    report = run_doctor(
+        {
+            "AVO_PROVIDER": "ollama",
+            "AVO_MODEL": "llama3.1",
+            "AVO_PERMISSION_MODE": "accept_edits",
+            "AVO_SANDBOX_REQUIRED": "0",
+            "AVO_WEB_CORS_ENABLED": "1",
+            "AVO_WEB_ALLOWED_ORIGIN": "https://dashboard.example",
+            "AVO_PLUGIN_EDITABLE": "1",
+        }
+    )
+    out = io.StringIO()
+
+    render_report(report, out=out)
+
+    text = out.getvalue()
+    assert "security configuration:" in text
+    assert "permission_mode=accept_edits (environment)" in text
+    assert "sandbox_required=false (environment)" in text
+    assert "plugin_editable=true (environment)" in text
+    assert "web_allowed_origin=https://dashboard.example (environment)" in text
+    assert "sk-" not in text
+
+
+def test_render_report_shows_catalog_and_attachment_diagnostics() -> None:
+    report = run_doctor({"AVO_PROVIDER": "ollama", "AVO_MODEL": "llama3.1"})
+    out = io.StringIO()
+
+    render_report(report, out=out)
+
+    text = out.getvalue()
+    assert "model catalog cache:" in text
+    assert "attachments: text=2MiB, image=10MiB, total=20MiB" in text
+
+
 def test_render_report_not_ok_lists_missing() -> None:
     report = run_doctor({"AVO_PROVIDER": "minimax", "AVO_MODEL": "x"})
     out = io.StringIO()

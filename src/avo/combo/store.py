@@ -15,7 +15,7 @@ COMBOS_FILE_ENV = "AVO_COMBOS_FILE"
 BUILTIN_COMBOS: dict[str, ComboProfile] = {
     "default": ComboProfile(
         name="default",
-        description="Subscription Claude -> OpenRouter Llama -> Local Ollama",
+        description="Claude account -> OpenRouter Llama -> Local Ollama",
         tiers=[
             ComboTier(name="subscription", provider="anthropic", model="claude-sonnet-5"),
             ComboTier(
@@ -28,7 +28,7 @@ BUILTIN_COMBOS: dict[str, ComboProfile] = {
     ),
     "coder": ComboProfile(
         name="coder",
-        description="Claude Sonnet -> OpenRouter Llama -> Local Qwen Coder",
+        description="Claude account -> OpenRouter Llama -> Local Qwen Coder",
         tiers=[
             ComboTier(name="subscription", provider="anthropic", model="claude-sonnet-5"),
             ComboTier(

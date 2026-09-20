@@ -10,6 +10,7 @@ one-way: ``runtime`` -> ``{handlers, persistence}``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -47,17 +48,11 @@ from avo.storage.memory import InMemoryEventStore
 from avo.tools import Tool, ToolRegistry
 
 if TYPE_CHECKING:
+    from avo.config_resolver import AvoSecurityConfig
     from avo.tracing import RunTrace
 
 Clock = Callable[[], datetime]
 ApprovalCallback = Callable[[ToolCall], bool | Awaitable[bool]]
-
-
-async def _always_approve(call: ToolCall) -> bool:
-    """Exercise the approval state in v0.1 without implementing approval policy."""
-
-    del call
-    return True
 
 
 @dataclass
@@ -100,6 +95,7 @@ class AgentRuntime:
         event_store: EventStore | None = None,
         clock: Clock = utc_now,
         approval_callback: ApprovalCallback | None = None,
+        security_config: AvoSecurityConfig | None = None,
         memory: LetheMemoryAdapter | None = None,
         hooks: HookRegistry | None = None,
         stream_callback: Callable[[str], None] | None = None,
@@ -108,9 +104,15 @@ class AgentRuntime:
         self.provider = provider
         self.tools = ToolRegistry(tools)
         self.policy = policy or LoopPolicy()
+        self.security_config = security_config
         self.event_store = event_store or InMemoryEventStore()
         self._clock = clock
-        self._approval_callback = approval_callback or _always_approve
+        if approval_callback is not None:
+            self._approval_callback: ApprovalCallback = approval_callback
+        else:
+            from avo.permissions import build_deny_by_default_callback
+
+            self._approval_callback = build_deny_by_default_callback()
         # Purely observational display plumbing (see handle_model_pending);
         # public so callers can swap them per turn like ``provider``.
         # Each run/resume snapshots both at entry, so a swap only binds
@@ -128,6 +130,12 @@ class AgentRuntime:
         )
         self._execution_lock = asyncio.Lock()
 
+    @property
+    def approval_callback(self) -> ApprovalCallback:
+        """Return the callback governing tool approval for this runtime."""
+
+        return self._approval_callback
+
     # ------------------------------------------------------------------
     # Public entry points
     # ------------------------------------------------------------------
@@ -136,6 +144,8 @@ class AgentRuntime:
         self,
         task: str,
         *,
+        system_prompt: str | None = None,
+        message_content: list[dict[str, JsonValue]] | None = None,
         user_state: dict[str, JsonValue] | None = None,
         run_id: str | None = None,
         stream_callback: Callable[[str], None] | None = None,
@@ -143,7 +153,8 @@ class AgentRuntime:
     ) -> RunResult:
         """Create and execute a run until it reaches one explicit terminal state.
 
-        ``stream_callback``/``stream_interrupt_callback`` passed here win
+        ``system_prompt`` is sent as a native ``system`` message before the
+        user task. ``stream_callback``/``stream_interrupt_callback`` passed here win
         over the instance attributes for this run only, so a chat turn can
         bind its printer without a concurrent background run — or a later
         turn — ever inheriting it. ``None`` means "inherit the instance".
@@ -160,7 +171,9 @@ class AgentRuntime:
             if run_id is not None:
                 values["run_id"] = run_id
             record = RunRecord.model_validate(values)
-            messages: list[dict[str, JsonValue]] = [{"role": "user", "content": task}]
+            messages: list[dict[str, JsonValue]] = []
+            if system_prompt and system_prompt.strip():
+                messages.append({"role": "system", "content": system_prompt.strip()})
             if self.memory is not None:
                 recalled = self.memory.recall_text(task)
                 if recalled:
@@ -170,6 +183,12 @@ class AgentRuntime:
                             "content": "Relevant memories:\n- " + "\n- ".join(recalled),
                         }
                     )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": cast(JsonValue, message_content if message_content else task),
+                }
+            )
             context = _RunContext(
                 run=record,
                 policy=self.policy,
@@ -437,6 +456,24 @@ class AgentRuntime:
         """Hook called after each durable event; useful for failure-injection tests."""
 
         del event
+
+    async def aclose(self) -> None:
+        """Release provider resources (HTTP clients, sockets, etc.).
+
+        Called automatically when used as ``async with AgentRuntime(...) as rt``.
+        Safe to call more than once — subsequent calls are no-ops if the
+        provider has already been closed.
+        """
+        aclose_fn = getattr(self.provider, "aclose", None)
+        if callable(aclose_fn):
+            with contextlib.suppress(Exception):
+                await aclose_fn()
+
+    async def __aenter__(self) -> AgentRuntime:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.aclose()
 
     # ------------------------------------------------------------------
     # Persistence facade — delegates to runtime_persistence. Kept here

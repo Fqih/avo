@@ -108,6 +108,20 @@ def test_router_raises_when_all_routes_fail() -> None:
         asyncio.run(router.generate(req))
 
 
+def test_router_does_not_fallback_for_non_retryable_provider_error() -> None:
+    p1 = _MockProvider("primary", error=ProviderError("invalid request", retryable=False))
+    p2 = _MockProvider("fallback", response=ModelResponse(content="must not run"))
+    router = FallbackRouterProvider([("primary", p1), ("fallback", p2)])  # type: ignore[list-item]
+    req = ModelRequest(run_id="r-non-retryable", step=1, messages=[])
+
+    with pytest.raises(ProviderError, match=r"primary.*invalid request") as exc_info:
+        asyncio.run(router.generate(req))
+
+    assert exc_info.value.retryable is False
+    assert p1.generate_called == 1
+    assert p2.generate_called == 0
+
+
 def test_router_streaming_primary_success() -> None:
     p1 = _MockProvider("ollama", chunks=["hello ", "world"])
     p2 = _MockProvider("openrouter", chunks=["cloud"])

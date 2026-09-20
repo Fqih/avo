@@ -3,8 +3,9 @@
 The docker client is mocked so the suite stays offline (matching the
 Avo principle: tests never depend on real services). The mock
 records the kwargs passed to ``containers().create(...)`` so we can
-verify the security-relevant settings (``network_mode``, ``mem_limit``,
-``remove=True``, working directory) made it through to docker.
+    verify the security-relevant settings (``network_mode``, ``mem_limit``,
+``auto_remove=True``, read-only root, dropped capabilities, and working
+directory) made it through to docker.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ class FakeContainer:
         self.stdout_text = stdout
         self.stderr_text = stderr
         self.removed = False
+        self.stop_calls = 0
         self.wait_calls = 0
 
     def wait(self) -> dict[str, int]:
@@ -52,6 +54,10 @@ class FakeContainer:
     def remove(self, *, force: bool = False) -> None:
         del force
         self.removed = True
+
+    def stop(self, *, timeout: int = 10) -> None:
+        del timeout
+        self.stop_calls += 1
 
 
 class FakeContainersAPI:
@@ -96,7 +102,12 @@ async def test_sandbox_creates_container_with_offline_network_and_mem_limit(
     assert create_kwargs["mem_limit"] == "256m"
     assert create_kwargs["cpu_quota"] == 50000
     assert create_kwargs["image"] == "python:3.12-slim"
-    assert create_kwargs["remove"] is True
+    assert create_kwargs["security_opt"] == ["no-new-privileges:true"]
+    assert create_kwargs["tmpfs"] == {"/tmp": "size=64m,mode=1777"}
+    assert create_kwargs["read_only"] is True
+    assert create_kwargs["cap_drop"] == ["ALL"]
+    assert create_kwargs["pids_limit"] == 128
+    assert create_kwargs["user"] == "65532:65532"
     assert create_kwargs["detach"] is True
     assert create_kwargs["working_dir"] == "/workspace"
     # Command is wrapped in ``sh -c`` so multi-token strings are honored.
@@ -135,6 +146,54 @@ async def test_sandbox_timeout_raises(tmp_path: Path) -> None:
         await executor.run("sleep 10", workspace_dir=tmp_path)
 
     assert container.removed is True
+
+
+@pytest.mark.asyncio
+async def test_sandbox_timeout_stops_container_before_removing(tmp_path: Path) -> None:
+    class _HangingContainer(FakeContainer):
+        def wait(self) -> dict[str, int]:
+            import time
+
+            time.sleep(5.0)
+            return {"StatusCode": 0}
+
+    container = _HangingContainer()
+    executor = SandboxExecutor(client=FakeDockerClient(container), timeout_seconds=0.05)
+
+    with pytest.raises(Exception, match="exceeded"):
+        await executor.run("sleep 10", workspace_dir=tmp_path)
+
+    assert container.stop_calls == 1
+    assert container.removed is True
+
+
+@pytest.mark.asyncio
+async def test_sandbox_timeout_cleans_legacy_container_without_stop(tmp_path: Path) -> None:
+    class _LegacyHangingContainer:
+        id = "legacy"
+        short_id = "legacy"
+
+        def wait(self) -> dict[str, int]:
+            import time
+
+            time.sleep(5.0)
+            return {"StatusCode": 0}
+
+        def logs(self, *, stdout: bool = True, stderr: bool = True) -> bytes:
+            del stdout, stderr
+            return b""
+
+        def remove(self, *, force: bool = False) -> None:
+            del force
+
+    container = _LegacyHangingContainer()
+    executor = SandboxExecutor(
+        client=FakeDockerClient(container),  # type: ignore[arg-type]
+        timeout_seconds=0.05,
+    )
+
+    with pytest.raises(Exception, match="exceeded"):
+        await executor.run("sleep 10", workspace_dir=tmp_path)
 
 
 @pytest.mark.asyncio

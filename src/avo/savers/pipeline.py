@@ -20,6 +20,7 @@ from avo.savers.stages import (
     Messages,
     PreTrimmerStage,
     SaverStage,
+    StructuralCollapseStage,
     estimate_messages,
 )
 
@@ -63,6 +64,7 @@ class PipelineConfig(AvoModel):
     model_config = _FROZEN
 
     json_minify: bool = True
+    structural_collapse: bool = True
     dedupe: bool = True
     elide: ElideConfig | None = Field(default_factory=ElideConfig)
     pre_trim: PreTrimConfig | None = None
@@ -82,6 +84,8 @@ def _stages_for(config: PipelineConfig) -> list[SaverStage]:
     stages: list[SaverStage] = []
     if config.json_minify:
         stages.append(JsonMinifyStage())
+    if config.structural_collapse:
+        stages.append(StructuralCollapseStage())
     if config.dedupe:
         stages.append(DedupeToolResultsStage())
     if config.elide is not None:
