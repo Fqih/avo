@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Direct Autonomous Prompt Execution (`avo run` / `avo "task"`)**:
+  - Direct task execution without entering interactive chat REPL.
+  - Automatic isolation in Git worktrees via `--worktree` / `-w` and automated `--auto-merge`.
+- **Zero-Config Local Ollama Auto-Detection**:
+  - Automatic 1-click start when local Ollama daemon is detected on `127.0.0.1:11434`.
+- **Visual Colorized Diffs in Tool Approval Prompts**:
+  - ANSI colored diff rendering for `edit_file`, `write_file`, and `run_terminal` approval prompts.
+- **Interactive Slash Commands (`/worktree` and `/review`)**:
+  - `/worktree [status|isolate|merge|discard]` for in-session git worktree management.
+  - `/review` for running automated code reviews on uncommitted working tree diffs.
 - **Zero-Python Standalone Executable & Builders (`scripts/build_standalone.py`)**:
   - Added PyInstaller single-file packaging for Linux (`x86_64`, `aarch64`), macOS (`x86_64`, `aarch64`), and Windows (`x86_64`).
   - Added one-line standalone installers (`install.sh`, `install.ps1`) that download pre-built binaries directly without requiring Python or uv.
