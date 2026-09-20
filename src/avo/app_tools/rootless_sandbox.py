@@ -49,6 +49,21 @@ def is_rootless_sandbox_supported() -> bool:
         return False
 
 
+def _parse_mem_limit_bytes(mem_str: str) -> int:
+    """Parse memory limit string like '256m' or '1g' into bytes."""
+    s = mem_str.strip().lower()
+    if s.endswith("k") or s.endswith("kb"):
+        return int(float(s.rstrip("kb").rstrip("k")) * 1024)
+    if s.endswith("m") or s.endswith("mb"):
+        return int(float(s.rstrip("mb").rstrip("m")) * 1024 * 1024)
+    if s.endswith("g") or s.endswith("gb"):
+        return int(float(s.rstrip("gb").rstrip("g")) * 1024 * 1024 * 1024)
+    try:
+        return int(s)
+    except ValueError:
+        return 256 * 1024 * 1024
+
+
 class RootlessSandboxExecutor:
     """Ephemeral command execution isolated with Linux Bubblewrap (bwrap)."""
 
@@ -58,10 +73,14 @@ class RootlessSandboxExecutor:
         network_mode: str = "none",
         timeout_seconds: float = 30.0,
         mem_limit: str = "256m",
+        cpu_quota: int = 50000,
+        pids_limit: int = 128,
     ) -> None:
         self.network_mode = network_mode
         self.timeout_seconds = timeout_seconds
         self.mem_limit = mem_limit
+        self.cpu_quota = cpu_quota
+        self.pids_limit = pids_limit
 
     async def run(
         self,
@@ -72,14 +91,33 @@ class RootlessSandboxExecutor:
         timeout_seconds: float | None = None,
     ) -> SandboxResult:
         """Run command in a rootless bwrap sandbox."""
+        ws_path = Path(workspace_dir).resolve()  # noqa: ASYNC240
+        if not ws_path.is_dir():
+            raise SandboxError(f"invalid workspace directory: {workspace_dir}")
+        ws_resolved = str(ws_path)
+
         bwrap_path = shutil.which("bwrap")
         if not bwrap_path or not is_rootless_sandbox_supported():
             raise SandboxError("Bubblewrap (bwrap) is not available or supported on this host.")
 
         effective_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
-        ws_resolved = str(Path(workspace_dir).resolve())  # noqa: ASYNC240
 
-        args: list[str] = [bwrap_path]
+        args: list[str] = []
+        prlimit_path = shutil.which("prlimit")
+        if prlimit_path:
+            mem_bytes = _parse_mem_limit_bytes(self.mem_limit)
+            cpu_seconds = max(1, int(effective_timeout) + 1)
+            args.extend(
+                [
+                    prlimit_path,
+                    f"--as={mem_bytes}",
+                    f"--nproc={self.pids_limit}",
+                    f"--cpu={cpu_seconds}",
+                    "--",
+                ]
+            )
+
+        args.append(bwrap_path)
 
         # Bind-mount minimal standard system directories instead of full root /
         for sys_dir in ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc"):
@@ -143,4 +181,5 @@ class RootlessSandboxExecutor:
             image="bwrap:host",
             network_mode=self.network_mode,
             mem_limit=self.mem_limit,
+            isolation_level="rootless:bwrap",
         )

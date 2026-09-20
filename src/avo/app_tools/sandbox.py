@@ -298,6 +298,7 @@ class SandboxResult:
     image: str
     network_mode: str
     mem_limit: str
+    isolation_level: str = "container:docker"
 
 
 def _coerce_log(value: Any) -> str:
