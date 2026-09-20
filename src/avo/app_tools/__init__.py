@@ -24,8 +24,11 @@ from .symbols import symbols_tool
 from .terminal_tool import run_terminal_tool
 from .test_runner import test_runner_tool
 from .workspace_map import workspace_map_tool
+from .worktree import GitWorktreeError, GitWorktreeManager
 
 __all__ = [
+    "GitWorktreeError",
+    "GitWorktreeManager",
     "batch_replace_tool",
     "bind_workspace",
     "edit_file_tool",
