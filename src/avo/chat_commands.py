@@ -1288,9 +1288,37 @@ async def _run_slash(
         _run_workspace_tests(ctx.workspace.root, out, err, target)
         return False
 
+    if cmd == "/fix":
+        from avo.cli_fix import run_cli_fix
+
+        target = args[1] if len(args) > 1 else None
+        await run_cli_fix(
+            workspace_root=ctx.workspace.root,
+            database_path=ctx.store.path,
+            target=target,
+            provider=ctx.runtime.provider,
+            auto_merge=True,
+            stdout=out,
+            stderr=err,
+        )
+        return False
+
     if cmd == "/commit":
         msg = " ".join(args[1:]) if len(args) > 1 else None
         _run_workspace_commit(ctx.workspace.root, out, err, msg)
+        return False
+
+    if cmd == "/pr":
+        from avo.cli_pr import run_cli_pr
+
+        base_branch = args[1] if len(args) > 1 else "main"
+        await run_cli_pr(
+            workspace_root=ctx.workspace.root,
+            base_branch=base_branch,
+            provider=ctx.runtime.provider,
+            stdout=out,
+            stderr=err,
+        )
         return False
 
     if cmd == "/branch":

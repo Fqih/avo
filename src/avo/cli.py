@@ -279,6 +279,52 @@ def _parser() -> argparse.ArgumentParser:
         help="Output JSON summary.",
     )
 
+    fix_cmd = commands.add_parser(
+        "fix",
+        help="Autonomously diagnose and repair failing tests in an isolated worktree.",
+    )
+    fix_cmd.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        help="Optional test file or expression (e.g. tests/test_foo.py).",
+    )
+    fix_cmd.add_argument(
+        "--no-auto-merge",
+        dest="auto_merge",
+        action="store_false",
+        default=True,
+        help="Do not automatically merge the fix back into the repository.",
+    )
+    fix_cmd.add_argument(
+        "--workspace-root",
+        type=Path,
+        default=None,
+        help="Workspace directory (default: current working directory).",
+    )
+
+    pr_cmd = commands.add_parser(
+        "pr",
+        help="Generate a production-ready GitHub Pull Request draft and optionally create it.",
+    )
+    pr_cmd.add_argument(
+        "--base",
+        "-b",
+        default="main",
+        help="Base branch to compare against (default: main).",
+    )
+    pr_cmd.add_argument(
+        "--create",
+        action="store_true",
+        help="Create the Pull Request on GitHub using `gh pr create`.",
+    )
+    pr_cmd.add_argument(
+        "--workspace-root",
+        type=Path,
+        default=None,
+        help="Workspace directory (default: current working directory).",
+    )
+
     return parser
 
 
@@ -415,6 +461,30 @@ async def _execute(
         )
         return 0 if result.status.value in ("green", "completed") else 1
 
+    if args.command == "fix":
+        from avo.cli_fix import run_cli_fix
+
+        workspace_root = (args.workspace_root or Path.cwd()).resolve()
+        db_path = resolve_database_path(args.database)
+        success = await run_cli_fix(
+            workspace_root=workspace_root,
+            database_path=db_path,
+            target=args.target,
+            auto_merge=bool(args.auto_merge),
+        )
+        return 0 if success else 1
+
+    if args.command == "pr":
+        from avo.cli_pr import run_cli_pr
+
+        workspace_root = (args.workspace_root or Path.cwd()).resolve()
+        res_pr = await run_cli_pr(
+            workspace_root=workspace_root,
+            base_branch=args.base,
+            create=bool(args.create),
+        )
+        return 0 if res_pr is not None else 1
+
     if args.command == "chat":
         workspace_root = (args.workspace_root or Path.cwd()).resolve()
         return await run_repl(
@@ -518,6 +588,8 @@ _TOP_LEVEL_COMMANDS = {
     "models",
     "saver",
     "run",
+    "fix",
+    "pr",
 }
 
 
@@ -549,6 +621,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "models",
         "saver",
         "run",
+        "fix",
+        "pr",
     }:
         parser.error(f"unrecognized arguments: {' '.join(rest)}")
     try:
