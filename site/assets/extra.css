@@ -1,0 +1,304 @@
+:root {
+  --avo-ink: #102a43;
+  --avo-muted: #52606d;
+  --avo-teal: #0f766e;
+  --avo-teal-dark: #115e59;
+  --avo-mint: #dff7f2;
+  --avo-yellow: #fef3c7;
+  --avo-border: rgba(16, 42, 67, 0.12);
+  --avo-shadow: 0 18px 50px rgba(15, 61, 70, 0.12);
+}
+
+[data-md-color-scheme="slate"] {
+  --avo-ink: #f0fdfb;
+  --avo-muted: #b7c9c8;
+  --avo-teal: #5eead4;
+  --avo-teal-dark: #99f6e4;
+  --avo-mint: rgba(20, 184, 166, 0.14);
+  --avo-yellow: rgba(250, 204, 21, 0.14);
+  --avo-border: rgba(226, 252, 248, 0.14);
+  --avo-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+}
+
+.md-header {
+  box-shadow: 0 1px 0 var(--avo-border);
+}
+
+.md-header .md-logo img {
+  width: 2.15rem;
+  height: 2.15rem;
+  object-fit: contain;
+}
+
+.md-header .md-logo {
+  margin: 0 0.35rem 0 0;
+}
+
+.md-main__inner {
+  max-width: 76rem;
+}
+
+.md-content h2 {
+  margin-top: 2.8rem;
+}
+
+.avo-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(18rem, 0.65fr);
+  gap: 2rem;
+  align-items: stretch;
+  margin: 1rem 0 2rem;
+  padding: clamp(1.5rem, 4vw, 3.5rem);
+  border: 1px solid var(--avo-border);
+  border-radius: 1.5rem;
+  background:
+    radial-gradient(circle at 85% 10%, rgba(45, 212, 191, 0.24), transparent 35%),
+    linear-gradient(135deg, var(--avo-mint), transparent 68%);
+  box-shadow: var(--avo-shadow);
+}
+
+.avo-hero__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.avo-hero__brand img {
+  width: 3.4rem;
+  height: 3.4rem;
+  padding: 0.35rem;
+  border-radius: 1rem;
+  background: rgba(240, 253, 250, 0.92);
+  box-shadow: 0 8px 22px rgba(15, 118, 110, 0.16);
+  object-fit: contain;
+}
+
+.avo-hero__brand span {
+  color: var(--avo-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.avo-hero h1 {
+  margin: 0.4rem 0 0.75rem;
+  color: var(--avo-ink);
+  font-size: clamp(2.2rem, 5.5vw, 4rem);
+  letter-spacing: -0.05em;
+  line-height: 1.02;
+}
+
+.avo-hero__eyebrow,
+.avo-card__eyebrow {
+  color: var(--avo-teal-dark);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.avo-hero__lead {
+  max-width: 42rem;
+  color: var(--avo-muted);
+  font-size: clamp(1.05rem, 2vw, 1.3rem);
+  line-height: 1.65;
+}
+
+.avo-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1.4rem;
+}
+
+.avo-hero__actions .md-button--primary {
+  border-color: var(--avo-teal);
+  background: var(--avo-teal);
+}
+
+.avo-hero__terminal {
+  align-self: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 1rem;
+  background: #102a43;
+  box-shadow: 0 16px 30px rgba(16, 42, 67, 0.22);
+}
+
+.avo-hero__terminal header {
+  padding: 0.7rem 1rem;
+  color: #9fb3c8;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.avo-hero__terminal pre {
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.avo-hero__terminal code {
+  color: #d9f99d;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.avo-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.2rem 0 2rem;
+}
+
+.avo-card {
+  min-height: 11rem;
+  padding: 1.25rem;
+  border: 1px solid var(--avo-border);
+  border-radius: 1rem;
+  background: var(--md-default-bg-color);
+  box-shadow: 0 8px 24px rgba(15, 61, 70, 0.06);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.avo-card:hover {
+  border-color: var(--avo-teal);
+  box-shadow: var(--avo-shadow);
+  transform: translateY(-3px);
+}
+
+.avo-card h3 {
+  margin-top: 0.5rem;
+}
+
+.avo-card p:last-child {
+  margin-bottom: 0;
+  color: var(--avo-muted);
+}
+
+.avo-callout {
+  margin: 1.5rem 0;
+  padding: 1rem 1.2rem;
+  border-left: 0.3rem solid var(--avo-teal);
+  border-radius: 0.7rem;
+  background: var(--avo-mint);
+}
+
+.avo-callout strong {
+  color: var(--avo-ink);
+}
+
+.avo-steps {
+  counter-reset: avo-step;
+  display: grid;
+  gap: 0.8rem;
+  margin: 1.2rem 0;
+}
+
+.avo-step {
+  display: grid;
+  grid-template-columns: 2.2rem 1fr;
+  gap: 0.8rem;
+  align-items: start;
+}
+
+.avo-step::before {
+  counter-increment: avo-step;
+  display: grid;
+  width: 2.2rem;
+  height: 2.2rem;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--avo-teal);
+  color: white;
+}
+
+/* Modern standalone badge & feature pills */
+.avo-badge-standalone {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.85rem;
+  margin-bottom: 0.8rem;
+  border-radius: 9999px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #10b981;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.avo-badge-standalone .pulse-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.avo-pill {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: rgba(94, 234, 212, 0.15);
+  color: var(--avo-teal);
+  border: 1px solid rgba(94, 234, 212, 0.3);
+}
+
+.avo-terminal-tab-group {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.avo-terminal-tab {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #94a3b8;
+  border-radius: 0.4rem 0.4rem 0 0;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+}
+
+.avo-terminal-tab.active {
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.08);
+  border-bottom: 2px solid #10b981;
+}
+
+  content: counter(avo-step);
+  font-weight: 800;
+}
+
+.avo-step h3 {
+  margin: 0.1rem 0 0.3rem;
+}
+
+.avo-step p {
+  margin-top: 0;
+  color: var(--avo-muted);
+}
+
+@media screen and (max-width: 800px) {
+  .avo-hero,
+  .avo-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .avo-hero__terminal {
+    margin-top: 0.5rem;
+  }
+}

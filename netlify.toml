@@ -1,17 +1,10 @@
 # Netlify configuration for the Avo documentation site.
 #
-# The site is published by Netlify from the `site/` directory produced
-# by `mkdocs build`. The build is run by Netlify's CI from the
-# `mkdocs build --strict` command below — the `site/` directory is
-# only shipped as a fallback artifact from the GitHub Actions docs
-# workflow when you want to deploy manually.
-#
-# To enable drag-and-drop UI deploys, Netlify needs the `publish`
-# directory below — drop the artifact from the Actions docs workflow
-# into Netlify without these settings and the upload ignores them.
+# The site is published directly by Netlify from the static `site/` directory
+# without requiring a Python environment or build step in CI.
 
 [build]
-  command = "python -m pip install -e '.[dev,docs,providers,sandbox,otel,langchain]' && bash scripts/build_site.sh"
+  command = ""
   publish = "site/"
 
 [build.environment]
