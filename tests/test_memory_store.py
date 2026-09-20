@@ -153,4 +153,3 @@ def test_factstore_concurrent_process_merge(tmp_path: Path) -> None:
     assert "Fact A from process 1" in contents
     assert "Fact B from process 2" in contents
     assert "Fact C from process 1" in contents
-

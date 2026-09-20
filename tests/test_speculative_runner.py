@@ -217,5 +217,3 @@ async def test_speculative_runner_truncates_long_test_output(tmp_path: Path) -> 
     assert res.error is not None
     assert "[output truncated]" in res.error
     assert len(res.error) < 1000
-
-

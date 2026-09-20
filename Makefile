@@ -1,4 +1,4 @@
-.PHONY: install install-global setup dev lint format typecheck test test-app-tools benchmark clean build
+.PHONY: install install-global setup dev lint format format-check typecheck test test-app-tools security-check coverage ci benchmark clean build smoke-test all-gates
 
 PYTHON ?= python
 
@@ -36,9 +36,12 @@ security-check:
 	bandit -r src/avo -c pyproject.toml --severity-level medium
 
 coverage:
-	$(PYTHON) -m pytest --cov=avo --cov-report=term-missing
+	$(PYTHON) -m pytest --cov=avo --cov-report=term-missing --cov-fail-under=90
 
-ci: lint format-check typecheck security-check test
+smoke-test:
+	$(PYTHON) -m pytest tests/test_smoke_cli.py -v
+
+ci: lint format-check typecheck security-check test coverage build smoke-test
 
 benchmark:
 	$(PYTHON) benchmark/run_benchmark.py

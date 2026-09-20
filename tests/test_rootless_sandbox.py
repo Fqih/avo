@@ -110,5 +110,3 @@ async def test_rootless_sandbox_prlimit_args(
     assert "--nproc=64" in captured_args
     assert "--cpu=16" in captured_args
     assert "/bin/bwrap" in captured_args
-
-
