@@ -98,3 +98,59 @@ def test_fact_store_malformed_lines_handling(tmp_path: Path) -> None:
     assert len(facts) == 2
     assert facts[0].id == "valid1"
     assert facts[1].id == "valid2"
+
+
+def test_factstore_redacts_credentials(tmp_path: Path) -> None:
+    store = FactStore(tmp_path / "memory.jsonl")
+    fact = store.remember(
+        "API key is sk-1234567890abcdef12345678 and token is Bearer secret_tok_99999"
+    )
+    assert "sk-1234567890abcdef12345678" not in fact.content
+    assert "secret_tok_99999" not in fact.content
+    assert "[REDACTED]" in fact.content
+
+
+def test_factstore_file_permissions_are_0600(tmp_path: Path) -> None:
+    import stat
+
+    file_path = tmp_path / "memory.jsonl"
+    store = FactStore(file_path)
+    store.remember("Important secret preference")
+    mode = stat.S_IMODE(file_path.stat().st_mode)
+    assert mode == 0o600
+
+
+def test_factstore_clear_by_session_and_category(tmp_path: Path) -> None:
+    store = FactStore(tmp_path / "memory.jsonl")
+    store.remember("Fact 1", session_id="s1", category="user")
+    store.remember("Fact 2", session_id="s1", category="project")
+    store.remember("Fact 3", session_id="s2", category="user")
+
+    # Clear s1 only
+    count = store.clear(session_id="s1")
+    assert count == 2
+    assert len(store.list_all()) == 1
+    assert store.list_all()[0].session_id == "s2"
+
+    # Clear category user
+    count2 = store.clear(category="user")
+    assert count2 == 1
+    assert len(store.list_all()) == 0
+
+
+def test_factstore_concurrent_process_merge(tmp_path: Path) -> None:
+    file_path = tmp_path / "memory.jsonl"
+    store_a = FactStore(file_path)
+    store_b = FactStore(file_path)
+
+    store_a.remember("Fact A from process 1")
+    store_b.remember("Fact B from process 2")
+    store_a.remember("Fact C from process 1")
+
+    # Reload store_c from disk to inspect final persisted state
+    store_c = FactStore(file_path)
+    contents = [f.content for f in store_c.list_all()]
+    assert "Fact A from process 1" in contents
+    assert "Fact B from process 2" in contents
+    assert "Fact C from process 1" in contents
+
