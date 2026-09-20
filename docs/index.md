@@ -32,10 +32,9 @@ avo doctor
 
 </div>
 
-!!! warning "Alpha / Pre-Beta status"
+!!! success "Production Ready · v1.0.0"
 
-    v0.7.3+ is an **alpha foundation / pre-beta candidate**. Suitable for evaluation, deterministic
-    tests, and local prototypes; **not production-ready**.
+    Avo v1.0.0 is **Production Ready**. Enterprise-grade reliability infrastructure with deterministic state machine replay, fail-closed isolation, cryptographic durable approvals, and standalone zero-Python distribution.
 
 ## Start here
 

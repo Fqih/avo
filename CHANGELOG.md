@@ -5,6 +5,32 @@ All notable changes to avo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-09-21
+
+### Added
+
+- **Production-Ready Core Runtime**:
+  - Transitioned package status to `Development Status :: 5 - Production/Stable`.
+  - Guaranteed deterministic state machine replay, ledger immutability, and 90%+ verified test coverage.
+- **Cryptographic Durable Approvals (`avo.web_approval`)**:
+  - Deterministic SHA-256 argument binding (`arguments_hash`) for pending and historical tool approvals.
+  - Fail-closed rejection of legacy unhashed approvals to prevent replay attacks.
+  - Real-time expiration checking against strict per-call timeout thresholds.
+- **Fail-Closed Web Read Authentication (`avo.web_http`, `avo.web_workspace`)**:
+  - `WebSecurityConfig.require_read_auth` defaults to `True`.
+  - All sensitive workspace file and directory inspection endpoints (`/api/workspace/tree`, `/api/workspace/file`) strictly require valid Bearer tokens or HttpOnly session cookies.
+- **Robust Git Worktree Branch Restoration (`avo.app_tools.worktree`)**:
+  - Ensured calling branches are restored even on unexpected merge aborts or merge conflicts.
+  - Automatic `git merge --abort` execution in cleanup error paths to prevent dangling merge states.
+- **Cryptographic Installer Integrity Checksums (`install.sh`, `install.ps1`)**:
+  - Fail-closed SHA-256 checksum verification during standalone binary installation.
+  - Immediate abort if checksum download fails, hash utility is missing, or payload hash mismatches.
+- **SQLite Database Versioning & Schema Migration Engine (`avo.storage.sqlite`)**:
+  - Explicit database schema version tracking via `PRAGMA user_version = 2`.
+  - High-concurrency WAL journal mode (`PRAGMA journal_mode = WAL`) and busy timeouts (`PRAGMA busy_timeout = 5000`).
+  - Automated `.bak.<version>` snapshot creation before schema migrations with integrity verification (`PRAGMA quick_check`).
+  - Automated creation of covering query indexes (`idx_events_type_run`, `idx_runs_state`).
+
 ## [0.7.4] - 2026-09-20
 
 ### Added

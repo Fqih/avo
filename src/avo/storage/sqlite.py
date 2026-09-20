@@ -7,7 +7,6 @@ import contextlib
 import shutil
 import sqlite3
 from pathlib import Path
-from types import TracebackType
 from typing import cast
 
 from pydantic import ValidationError
@@ -49,6 +48,10 @@ CREATE INDEX IF NOT EXISTS idx_events_run_sequence
     ON events(run_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_run_sequence
     ON checkpoints(run_id, event_sequence DESC);
+CREATE INDEX IF NOT EXISTS idx_events_type_run
+    ON events(event_type, run_id);
+CREATE INDEX IF NOT EXISTS idx_runs_state
+    ON runs(state);
 """
 
 
@@ -74,19 +77,54 @@ class SQLiteEventStore:
         self._closed = False
 
     def _apply_migrations(self) -> None:
-        """Verify schema version and apply migrations with automated backup."""
+        """Verify schema version and apply migrations with automated backup and validation."""
         row = self._connection.execute("PRAGMA user_version").fetchone()
-        current_version = row[0] if row else 0
+        current_version = int(row[0]) if row else 0
         target_version = 2
+
+        if current_version > target_version:
+            raise StorageError(
+                f"Database version {current_version} at {self.path!s} is newer "
+                f"than supported version {target_version}."
+            )
+
         if current_version == 0:
+            self._validate_schema_integrity()
             self._connection.execute(f"PRAGMA user_version = {target_version}")
             return
+
         if current_version < target_version:
             if self.path.exists() and self.path.stat().st_size > 0:
                 backup_path = self.path.with_suffix(f".bak.{current_version}")
                 with contextlib.suppress(Exception):
                     shutil.copy2(self.path, backup_path)
+
+            if current_version < 2:
+                self._migrate_v1_to_v2()
+
+            self._validate_schema_integrity()
             self._connection.execute(f"PRAGMA user_version = {target_version}")
+
+    def _migrate_v1_to_v2(self) -> None:
+        """Apply schema enhancements from v1 to v2: create covering indexes and verify tables."""
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_type_run ON events(event_type, run_id)"
+        )
+        self._connection.execute("CREATE INDEX IF NOT EXISTS idx_runs_state ON runs(state)")
+
+    def _validate_schema_integrity(self) -> None:
+        """Run integrity check and verify required tables exist."""
+        row = self._connection.execute("PRAGMA quick_check").fetchone()
+        if not row or row[0] != "ok":
+            raise StorageError(f"Database integrity check failed at {self.path!s}: {row}")
+
+        tables_res = self._connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+        table_names = {r["name"] for r in tables_res}
+        missing = {"runs", "events", "checkpoints"} - table_names
+        if missing:
+            raise StorageError(f"Database at {self.path!s} is missing required tables: {missing}")
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -396,12 +434,6 @@ class SQLiteEventStore:
         self._ensure_open()
         return self
 
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
+    async def __aexit__(self, *_: object) -> None:
         """Close the connection on async context-manager exit."""
-
         await self.close()

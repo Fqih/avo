@@ -82,7 +82,7 @@ body {
 }
 
 .md-header__title::after {
-  content: "v0.7.4";
+  content: "v1.0.0";
   margin-left: 0.6rem;
   font-size: 0.68rem;
   font-weight: 700;

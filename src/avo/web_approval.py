@@ -163,7 +163,7 @@ class DurableApprovalStore:
     ) -> bool | None:
         """Find a valid, unexpired persistent decision matching run, tool, and argument hash."""
         now = datetime.now(UTC)
-        expected_hash = canonical_arguments_hash(arguments) if arguments is not None else None
+        expected_hash = canonical_arguments_hash(arguments)
 
         with self._lock, self._connect() as conn:
             query = (
@@ -174,13 +174,11 @@ class DurableApprovalStore:
             cursor = conn.execute(query, (run_id, tool_name))
             rows = cursor.fetchall()
             for row in rows:
-                if tool_call_id and row["tool_call_id"] and row["tool_call_id"] != tool_call_id:
+                # Reject legacy or unhashed approvals (fail-closed)
+                row_hash = row["arguments_hash"]
+                if not row_hash or row_hash != expected_hash:
                     continue
-                if (
-                    expected_hash
-                    and row["arguments_hash"]
-                    and row["arguments_hash"] != expected_hash
-                ):
+                if tool_call_id and row["tool_call_id"] and row["tool_call_id"] != tool_call_id:
                     continue
                 try:
                     created = datetime.fromisoformat(row["created_at"])
@@ -189,7 +187,7 @@ class DurableApprovalStore:
                         _LOG.warning("Approval for %s in run %s has expired", tool_name, run_id)
                         continue
                 except Exception:
-                    pass
+                    continue
                 return bool(row["status"] == "approved")
             return None
 
@@ -239,7 +237,10 @@ class WebApprovalBridge:
         # Check if already decided in persistent database (matching tool, args, unexpired)
         if self.store is not None and run_id:
             past_decision = self.store.find_decision_for_run(
-                run_id, tool_name=tool_call.name, arguments=args
+                run_id,
+                tool_name=tool_call.name,
+                arguments=args,
+                tool_call_id=tool_call.tool_call_id,
             )
             if past_decision is not None:
                 _LOG.info(
@@ -274,6 +275,7 @@ class WebApprovalBridge:
                 tool_name=tool_call.name,
                 arguments=args,
                 timeout_seconds=self.default_timeout_seconds,
+                tool_call_id=tool_call.tool_call_id,
             )
 
         try:

@@ -75,15 +75,18 @@ if (-not $FromSource) {
         Write-Host "`u{2192} Verifying SHA-256 checksum ..."
         try {
             $checksumContent = (Invoke-RestMethod -Uri $checksumUrl).Trim()
-            $expectedHash = ($checksumContent -split '\s+')[0]
-            $actualHash = (Get-FileHash -Path $tempZip -Algorithm SHA256).Hash.ToLower()
-            if ($actualHash -ne $expectedHash.ToLower()) {
-                throw "Checksum mismatch! Expected: $expectedHash, got: $actualHash"
-            }
-            Write-Host "`u{2713} Checksum verified: $actualHash"
         } catch {
-            Write-Warning "Checksum verification notice: $_"
+            throw "Failed to download SHA-256 checksum from ${checksumUrl}: $_"
         }
+        $expectedHash = ($checksumContent -split '\s+')[0]
+        if ([string]::IsNullOrWhiteSpace($expectedHash)) {
+            throw "Checksum file from ${checksumUrl} did not contain a valid hash."
+        }
+        $actualHash = (Get-FileHash -Path $tempZip -Algorithm SHA256).Hash.ToLower()
+        if ($actualHash -ne $expectedHash.ToLower()) {
+            throw "Checksum mismatch! Expected: $expectedHash, got: $actualHash. Aborting installation."
+        }
+        Write-Host "`u{2713} Checksum verified: $actualHash"
 
         Write-Host "`u{2192} Extracting archive ..."
         Expand-Archive -LiteralPath $tempZip -DestinationPath $tempExtract -Force

@@ -93,7 +93,7 @@ Avo gives you full control over how you work:
 
 ```
 $ avo
-🥑 Avo v0.7.4 (mode: code, model: combo/tier1-claude -> tier2-ollama)
+🥑 Avo v1.0.0 (mode: code, model: combo/tier1-claude -> tier2-ollama)
 Type /help for slash commands, or describe your task:
 
 avo> Implement git worktree isolation for our test suite and run tests
@@ -181,8 +181,9 @@ pip install avo
 - [x] **v0.7.2**: Autonomous Loop, AST Code Intelligence, Shared Blackboard Memory.
 - [x] **v0.7.3**: Rootless Bubblewrap Sandbox (`bwrap`) & Web Cockpit Full-Duplex.
 - [x] **v0.7.4**: Zero-Python Standalone Executable, Git Worktree Isolation & Durable Webhook Approval.
-- [ ] **v0.8.0**: Distributed PostgreSQL EventStore & Celery/Redis Remote Worker Mesh.
-- [ ] **v0.9.0**: Native Headless Browser Sandbox (Playwright verification).
+- [x] **v1.0.0**: Production-Ready Foundation — Fail-Closed Read Auth & Checksums, Cryptographic Durable Approvals, SQLite Schema Migrations & WAL Engine.
+- [ ] **v1.1.0**: Distributed PostgreSQL EventStore & Celery/Redis Remote Worker Mesh.
+- [ ] **v1.2.0**: Native Headless Browser Sandbox (Playwright verification).
 
 ### 📊 1. Measurable ROI & Financial Governance
 - **Deterministic Token Reduction:** Automatically minifies tool JSON payloads, deduplicates redundant outputs, and elides verbose lines, reducing token consumption by up to **26%+** on long tool-heavy sessions (see [benchmark results](benchmark/savers/RESULTS.md)).

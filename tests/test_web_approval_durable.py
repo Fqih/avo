@@ -189,3 +189,37 @@ def test_durable_store_rejects_expired_approvals(tmp_path: Path) -> None:
     # After expiry, find_decision_for_run must reject stale approval
     expired = store.find_decision_for_run("run-expire", "run_terminal", arguments={"cmd": "ls"})
     assert expired is None
+
+
+def test_durable_store_rejects_legacy_unhashed_approvals(tmp_path: Path) -> None:
+    db_path = tmp_path / "approvals.db"
+    store = DurableApprovalStore(db_path)
+
+    # Directly insert legacy unhashed approval with status 'approved'
+    with store._lock, store._connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO pending_approvals
+            (id, run_id, tool_name, arguments, arguments_hash, tool_call_id,
+             status, created_at, decided_at, timeout_seconds)
+            VALUES (?, ?, ?, ?, NULL, ?, 'approved', ?, ?, 300.0)
+            """,
+            (
+                "req-legacy-1",
+                "run-legacy",
+                "write_file",
+                '{"path": "foo.txt"}',
+                "tc-legacy",
+                "2026-09-20T10:00:00+00:00",
+                "2026-09-20T10:00:05+00:00",
+            ),
+        )
+
+    # Legacy row with NULL arguments_hash MUST be rejected (fails closed)
+    decision = store.find_decision_for_run(
+        "run-legacy",
+        "write_file",
+        arguments={"path": "foo.txt"},
+        tool_call_id="tc-legacy",
+    )
+    assert decision is None

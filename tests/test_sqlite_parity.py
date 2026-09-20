@@ -339,5 +339,24 @@ async def test_sqlite_user_version_and_migration_backup(tmp_path: Path) -> None:
     store2 = SQLiteEventStore(db_path)
     row2 = store2._connection.execute("PRAGMA user_version").fetchone()
     assert row2[0] == 2
+
+    # Verify migration actually created the v2 indexes
+    indexes = {
+        r[0]
+        for r in store2._connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        ).fetchall()
+    }
+    assert "idx_events_type_run" in indexes
+    assert "idx_runs_state" in indexes
+
     await store2.close()
     assert (tmp_path / "versioned.bak.1").exists()
+
+    # Reopening with higher unsupported version must fail
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA user_version = 99")
+    conn.close()
+
+    with pytest.raises(StorageError, match="is newer than supported version"):
+        SQLiteEventStore(db_path)

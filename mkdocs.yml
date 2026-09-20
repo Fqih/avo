@@ -97,6 +97,7 @@ nav:
     - Execution boundaries: security/execution-boundaries.md
     - Milestone 1 migration: migrations/0.7.2-to-milestone-one.md
     - Milestone 3 migration: migrations/0.7.x-to-milestone-three.md
+    - 0.7.x to 1.0.0 migration: migrations/0.7.x-to-1.0.0.md
   - Reference:
     - Project reference: avo-reference.md
     - API stability: api-stability.md
