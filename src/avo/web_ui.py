@@ -106,6 +106,7 @@ class AvoWebServer(
         persona_manager: PersonaManager | None = None,
         permission_mode: str | None = None,
         workspace_root: Path | None = None,
+        web_security: WebSecurityConfig | None = None,
     ) -> None:
         super().__init__(server_address, AvoWebHandler)
         self.auth_token = secrets.token_urlsafe(32)
@@ -115,11 +116,14 @@ class AvoWebServer(
         self.workspace_root = (
             Path(workspace_root).resolve() if workspace_root is not None else Path.cwd().resolve()
         )
-        security = resolve_security_config(workspace_root=self.workspace_root)
-        self.web_security = WebSecurityConfig(
-            allowed_origin=security.web_allowed_origin.value,
-            cors_enabled=security.web_cors_enabled.value,
-        )
+        if web_security is not None:
+            self.web_security = web_security
+        else:
+            security = resolve_security_config(workspace_root=self.workspace_root)
+            self.web_security = WebSecurityConfig(
+                allowed_origin=security.web_allowed_origin.value,
+                cors_enabled=security.web_cors_enabled.value,
+            )
         self.persona_manager = (
             persona_manager if persona_manager is not None else PersonaManager(self.workspace_root)
         )

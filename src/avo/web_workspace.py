@@ -57,6 +57,8 @@ class WebWorkspaceMixin(WebHttpMixin):
             return True
 
         if path == "/api/workspace/tree":
+            if not self._authenticate_read():
+                return True
             tree_params = urllib.parse.parse_qs(parsed.query)
             subpath = tree_params.get("path", [""])[0].strip()
             depth_str = tree_params.get("depth", ["8"])[0].strip()
@@ -70,6 +72,8 @@ class WebWorkspaceMixin(WebHttpMixin):
             return True
 
         if path == "/api/workspace/file":
+            if not self._authenticate_read():
+                return True
             file_params = urllib.parse.parse_qs(parsed.query)
             file_path = file_params.get("path", [""])[0].strip()
             if not file_path:

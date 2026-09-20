@@ -93,6 +93,10 @@ nav:
     - Installation: guides/install.md
     - Subscription OAuth: guides/subscription-auth.md
     - Combo Routing: guides/combo-routing.md
+  - Security & Migrations:
+    - Execution boundaries: security/execution-boundaries.md
+    - Milestone 1 migration: migrations/0.7.2-to-milestone-one.md
+    - Milestone 3 migration: migrations/0.7.x-to-milestone-three.md
   - Reference:
     - Project reference: avo-reference.md
     - API stability: api-stability.md
@@ -101,6 +105,9 @@ nav:
     - Changelog: changelog.md
     - CLI: cli.md
     - API reference: api/index.md
+
+not_in_nav: |
+  superpowers/**
 
 extra:
   social:

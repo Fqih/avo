@@ -70,16 +70,18 @@ def bind_workspace(workspace: Workspace) -> Generator[None, None, None]:
             _workspace_stack.pop()
 
 
-def _current_workspace() -> Workspace:
+def current_workspace() -> Workspace:
+    """Return the active workspace bound to the current execution context."""
     stack = _workspace_stack_var.get()
     if stack:
         return stack[-1]
-    if _workspace_stack:
-        return _workspace_stack[-1]
     raise WorkspaceNotBoundError(
         "file tool invoked without an active workspace; wrap the run in "
         "avo.app_tools.file_tools.bind_workspace(...)"
     )
+
+
+_current_workspace = current_workspace
 
 
 async def _read_file(arguments: ReadFileArguments) -> dict[str, Any]:

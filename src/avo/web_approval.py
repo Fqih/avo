@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import secrets
 import sqlite3
 import threading
@@ -15,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from avo.models import ToolCall
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -123,6 +126,21 @@ class DurableApprovalStore:
             )
             return [self._row_to_dict(row) for row in cursor.fetchall()]
 
+    def find_decision_for_run(self, run_id: str, tool_name: str | None = None) -> bool | None:
+        """Check if an approval for this run was already decided in persistent storage."""
+        with self._lock, self._connect() as conn:
+            query = "SELECT status FROM pending_approvals WHERE run_id = ?"
+            params: list[Any] = [run_id]
+            if tool_name:
+                query += " AND tool_name = ?"
+                params.append(tool_name)
+            query += " AND status IN ('approved', 'denied') ORDER BY decided_at DESC LIMIT 1"
+            cursor = conn.execute(query, params)
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return bool(row["status"] == "approved")
+
     def _row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         raw_args = row["arguments"]
         try:
@@ -164,6 +182,18 @@ class WebApprovalBridge:
 
     async def request_approval(self, tool_call: ToolCall, run_id: str | None = None) -> bool:
         """Register a pending approval and pause until web decision or timeout."""
+        # Check if already decided in persistent database (e.g. following process restart)
+        if self.store is not None and run_id:
+            past_decision = self.store.find_decision_for_run(run_id, tool_name=tool_call.name)
+            if past_decision is not None:
+                _LOG.info(
+                    "Resuming tool %s for run %s with durable decision: %s",
+                    tool_call.name,
+                    run_id,
+                    past_decision,
+                )
+                return past_decision
+
         loop = asyncio.get_running_loop()
         future: asyncio.Future[bool] = loop.create_future()
         request_id = secrets.token_hex(8)

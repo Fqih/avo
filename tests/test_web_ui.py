@@ -1029,3 +1029,42 @@ def test_web_ui_api_workspace_tree_and_editor(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_web_ui_workspace_read_auth_enforced(tmp_path: Path) -> None:
+    ws = tmp_path / "ws_auth"
+    ws.mkdir()
+    (ws / "secret.txt").write_text("classified", encoding="utf-8")
+
+    from avo.web_http import WebSecurityConfig
+
+    server = AvoWebServer(
+        ("127.0.0.1", 0),
+        database_path=tmp_path / "sec.db",
+        workspace_root=ws,
+        web_security=WebSecurityConfig(require_read_auth=True),
+    )
+    port = server.server_port
+    token = server.auth_token
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        # Unauthenticated GET -> 401
+        with pytest.raises(urllib.error.HTTPError) as exc_unauth:
+            urllib.request.urlopen(f"{base_url}/api/workspace/file?path=secret.txt", timeout=5)
+        assert exc_unauth.value.code == 401
+
+        # Authenticated GET with Bearer token -> 200
+        req = urllib.request.Request(
+            f"{base_url}/api/workspace/file?path=secret.txt",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["content"] == "classified"
+    finally:
+        server.shutdown()
+        server.server_close()

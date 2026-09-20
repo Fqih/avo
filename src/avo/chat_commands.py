@@ -1038,7 +1038,6 @@ def _manage_worktree_command(
     """Manage git worktree isolation within the chat session."""
     import time
 
-    from avo.app_tools.file_tools import bind_workspace
     from avo.app_tools.workspace import Workspace
     from avo.app_tools.worktree import GitWorktreeError, GitWorktreeManager
 
@@ -1077,7 +1076,6 @@ def _manage_worktree_command(
             wt_path = manager.create_worktree(name)
             ctx.active_worktree_id = name
             ctx.workspace = Workspace(wt_path, create=False)
-            bind_workspace(ctx.workspace)
             out.write(f"✓ Isolated worktree active at: {wt_path}\n")
             out.write("All agent file modifications will now occur in this isolated worktree.\n")
             out.write("Use `/worktree merge` to merge back, or `/worktree discard` to cancel.\n")
@@ -1099,7 +1097,6 @@ def _manage_worktree_command(
             out.write(f"✓ Merged worktree {current_wt} into {dest} and cleaned up.\n")
             if ctx.original_repo_root is not None:
                 ctx.workspace = Workspace(ctx.original_repo_root, create=False)
-                bind_workspace(ctx.workspace)
             ctx.active_worktree_id = None
             out.flush()
         except GitWorktreeError as exc:
@@ -1117,7 +1114,6 @@ def _manage_worktree_command(
         out.write(f"✓ Discarded worktree {current_wt}.\n")
         if ctx.original_repo_root is not None:
             ctx.workspace = Workspace(ctx.original_repo_root, create=False)
-            bind_workspace(ctx.workspace)
         ctx.active_worktree_id = None
         out.flush()
         return

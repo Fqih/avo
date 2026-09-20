@@ -43,6 +43,7 @@ class WebSecurityConfig:
     allowed_origin: str | None = None
     cors_enabled: bool = False
     require_confirmation: bool = True
+    require_read_auth: bool = False
 
     def __post_init__(self) -> None:
         if self.allowed_origin == "*":
@@ -172,6 +173,34 @@ class WebHttpMixin(BaseHTTPRequestHandler):
                 )
                 and secrets.compare_digest(
                     self.headers.get("X-CSRF-Token", "").encode(), self.server.csrf_token.encode()
+                )
+            )
+        if not valid:
+            self._send_error("authentication_required", "Authentication required", status=401)
+        return valid
+
+    def _authenticate_read(self) -> bool:
+        """Verify authentication for sensitive read endpoints when configured."""
+        if not self._check_origin():
+            return False
+        if not getattr(self.server.web_security, "require_read_auth", False):
+            return True
+        authorization = self.headers.get("Authorization", "")
+        if authorization:
+            valid = len(self.headers.get_all("Authorization", [])) == 1 and secrets.compare_digest(
+                authorization.encode(), f"Bearer {self.server.auth_token}".encode()
+            )
+        else:
+            cookie = SimpleCookie()
+            try:
+                cookie.load(self.headers.get("Cookie", ""))
+            except CookieError:
+                cookie = SimpleCookie()
+            session = cookie.get(self.server.session_cookie_name)
+            valid = bool(
+                session
+                and secrets.compare_digest(
+                    session.value.encode(), self.server.session_token.encode()
                 )
             )
         if not valid:

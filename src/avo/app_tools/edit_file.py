@@ -26,7 +26,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from avo import FunctionTool as PublicFunctionTool
 
-from .file_tools import _workspace_stack
 from .workspace import Workspace
 
 
@@ -55,12 +54,15 @@ class EditFileArguments(BaseModel):
 
 
 def _current_edit_workspace() -> Workspace:
-    if not _workspace_stack:
+    from avo.app_tools.file_tools import current_workspace
+
+    try:
+        return current_workspace()
+    except Exception as exc:
         raise EditFileError(
             "edit_file invoked without an active workspace; wrap the run in "
             "avo.app_tools.file_tools.bind_workspace(...)"
-        )
-    return _workspace_stack[-1]
+        ) from exc
 
 
 def _apply_edit(text: str, old_string: str, new_string: str, replace_all: bool) -> str:

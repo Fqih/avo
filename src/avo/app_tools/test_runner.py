@@ -16,10 +16,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from avo import FunctionTool as PublicFunctionTool
+from avo.app_tools.file_tools import current_workspace
 from avo.app_tools.sandbox import build_safe_environment
 
 from .edit_file import EditFileError
-from .file_tools import _workspace_stack
 from .workspace import Workspace, WorkspacePathError
 
 
@@ -44,12 +44,13 @@ class TestRunnerArguments(BaseModel):
 
 
 def _current_workspace() -> Workspace:
-    if not _workspace_stack:
+    try:
+        return current_workspace()
+    except Exception as exc:
         raise EditFileError(
             "test_runner tool invoked without an active workspace; wrap the run in "
             "avo.app_tools.file_tools.bind_workspace(...)"
-        )
-    return _workspace_stack[-1]
+        ) from exc
 
 
 def resolve_test_target(workspace: Workspace, target: str | None) -> str | None:

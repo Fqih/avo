@@ -116,3 +116,29 @@ async def test_bridge_with_durable_store(tmp_path: Path) -> None:
     updated = store.get_approval(req_id)
     assert updated is not None
     assert updated["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_bridge_recovers_durable_decision_after_process_restart(tmp_path: Path) -> None:
+    db_path = tmp_path / "approvals.db"
+    store1 = DurableApprovalStore(db_path)
+    store1.create_approval(
+        request_id="req-restart-1",
+        run_id="run-restart-1",
+        tool_name="edit_file",
+        arguments={"path": "src/main.py"},
+        timeout_seconds=60.0,
+    )
+
+    # Webhook resolves approval while process is offline
+    store1.record_decision("req-restart-1", approved=True)
+
+    # Process 2 boots up fresh with new bridge on same DB
+    store2 = DurableApprovalStore(db_path)
+    bridge2 = WebApprovalBridge(store=store2)
+
+    tool_call = ToolCall(name="edit_file", arguments={"path": "src/main.py"})
+
+    # Agent resumes and requests approval for the run
+    decision = await bridge2.request_approval(tool_call, run_id="run-restart-1")
+    assert decision is True
