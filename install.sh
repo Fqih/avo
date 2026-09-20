@@ -5,7 +5,7 @@
 # Examples:
 #   curl -fsSL https://avo.faqihhakim.tech/install.sh | bash
 #   bash install.sh --dry-run
-#   bash install.sh --version 0.7.3
+#   bash install.sh --version 0.7.4
 #   bash install.sh --from-source --package '.[providers]'
 #
 # Environment:
