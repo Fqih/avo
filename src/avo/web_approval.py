@@ -204,12 +204,39 @@ class WebApprovalBridge:
 
     def list_pending(self) -> list[dict[str, Any]]:
         """Return all active pending approval requests."""
+        results: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
         if self.store is not None:
-            return self.store.list_pending()
+            for item in self.store.list_pending():
+                results.append(item)
+                seen_ids.add(item["request_id"])
 
         with self._lock:
-            return [
-                {
+            for req in self._pending.values():
+                if req.request_id not in seen_ids:
+                    results.append(
+                        {
+                            "request_id": req.request_id,
+                            "run_id": req.run_id,
+                            "tool_name": req.tool_name,
+                            "arguments": req.arguments,
+                            "status": "pending",
+                            "created_at": req.created_at.isoformat(),
+                            "decided_at": None,
+                            "timeout_seconds": req.timeout_seconds,
+                        }
+                    )
+                    seen_ids.add(req.request_id)
+
+        return results
+
+    def get_approval(self, request_id: str) -> dict[str, Any] | None:
+        """Fetch approval details by request ID."""
+        with self._lock:
+            req = self._pending.get(request_id)
+            if req:
+                return {
                     "request_id": req.request_id,
                     "run_id": req.run_id,
                     "tool_name": req.tool_name,
@@ -219,28 +246,11 @@ class WebApprovalBridge:
                     "decided_at": None,
                     "timeout_seconds": req.timeout_seconds,
                 }
-                for req in self._pending.values()
-            ]
 
-    def get_approval(self, request_id: str) -> dict[str, Any] | None:
-        """Fetch approval details by request ID."""
         if self.store is not None:
             return self.store.get_approval(request_id)
 
-        with self._lock:
-            req = self._pending.get(request_id)
-            if not req:
-                return None
-            return {
-                "request_id": req.request_id,
-                "run_id": req.run_id,
-                "tool_name": req.tool_name,
-                "arguments": req.arguments,
-                "status": "pending",
-                "created_at": req.created_at.isoformat(),
-                "decided_at": None,
-                "timeout_seconds": req.timeout_seconds,
-            }
+        return None
 
     def resolve(self, request_id: str, approved: bool, reason: str = "") -> bool:
         """Resolve a pending approval request. Return True if found and resolved."""
