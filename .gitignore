@@ -228,10 +228,12 @@ project.md
 NEXT-UPDATE.md
 *.db
 
+# Demo generator and video recordings
+demo/
+avo-development-analysis.html
+
 # Local Avo runtime cache
 .avo/
 
 # Demo generator and video recordings
 demo/
-
-avo-development-analysis.html

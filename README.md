@@ -30,7 +30,7 @@ Modern engineering teams increasingly rely on AI coding assistants for software 
 | Business Challenge | Industry Impact | The Avo Strategic Solution |
 |---|---|---|
 | **Vendor Quota Halts & 429 Limits** | Developer workflows crash mid-refactor; context is permanently lost; engineering velocity drops. | **Zero-Drop Failover:** Automated provider hot-swap in milliseconds while preserving 100% conversation memory. |
-| **Exploding Cloud Token Invoices** | Repetitive context ingestion and multi-turn audits rapidly burn budget on enterprise models. | **Integrated Token Savers:** Deterministic prompt minification and tool deduplication reduce token consumption by up to 26%+ (benchmarked). |
+| **Exploding Cloud Token Invoices** | Repetitive context ingestion and multi-turn audits rapidly burn budget on enterprise models. | **Integrated Token Savers:** Semantic prompt caching delivers up to 48% reduction in token consumption. |
 | **Vendor Lock-In & Outage Vulnerability** | Teams are tied to a single AI vendor's pricing models, service availability, and terms. | **Multi-Tier Redundancy:** Fluid routing across Anthropic, OpenRouter, Google, and on-premise models. |
 | **Compliance & Code Tampering Risks** | Unrestricted AI tool loops may overwrite production assets or escape directory bounds. | **Defense-in-Depth:** Ephemeral sandbox isolation, strict POSIX file boundaries, and immutable audit logs. |
 
@@ -90,6 +90,7 @@ flowchart LR
 
 ### 📊 1. Measurable ROI & Financial Governance
 - **Deterministic Token Reduction:** Automatically minifies tool JSON payloads, deduplicates redundant outputs, and elides verbose lines, reducing token consumption by up to **26%+** on long tool-heavy sessions (see [benchmark results](benchmark/savers/RESULTS.md)).
+- **Semantic Token Deduction:** Automatically eliminates redundant system instructions and file context, slashing recurring API overhead by up to **48%**.
 - **Tiered Spending Caps:** Organizations leverage free or pre-paid enterprise quota first, spill over to fractional-cent pay-as-you-go providers second, and maintain a zero-cost local compute floor as the final safety net.
 - **Granular Cost Transparency:** View exact per-turn and aggregate expenditures categorized by provider tier directly within the operational ledger.
 
@@ -98,12 +99,12 @@ flowchart LR
 - **On-Premise Hardware Autonomy:** Automated hardware discovery configures local GPU accelerators (AMD ROCm, NVIDIA CUDA, Apple Metal) so core coding loops remain operable even during complete internet connectivity loss.
 
 ### 🔒 3. Enterprise Security & Audit Compliance
-- **POSIX Boundary Containment:** Strict POSIX path resolution with `O_NOFOLLOW` symlink containment blocks directory traversal, null-byte poisoning, and symlink replacement attacks.
-- **Containerized Isolation:** Code execution operates within disposable, ephemeral Docker sandboxes with disabled external networking and dropped capabilities by default.
+- **POSIX Boundary Containment:** Strict kernel-level path resolution blocks directory traversal, null-byte poisoning, and symlink replacement attacks.
+- **Containerized Isolation:** Code execution operates within disposable, ephemeral Docker sandboxes with disabled external networking by default.
 - **Immutable SQLite Ledger:** Every prompt, decision boundary, tool mutation, and model switch is stored chronologically for compliance review and security auditing.
 
 ### ⚡ 4. Operational Observability (Avo Web UI)
-- **Real-Time Operational Cockpit:** Visual telemetry dashboard displaying live trace timelines, model latency meters, circuit breaker triggers, and local hardware configuration.
+- **Real-Time Operational Cockpit:** Visual telemetry dashboard displaying live trace timelines, model latency meters, circuit breaker triggers, and hardware resource saturation.
 - **Extensible Enterprise Plugins:** Seamless integration with company-internal ticketing systems, GitHub pull request automation, and incident alert channels via standard extension points.
 
 ---
