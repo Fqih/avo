@@ -136,10 +136,22 @@ class WebApiMixin(WebHttpMixin):
             self._send_json(self.server.get_sync_router_status())
             return True
 
-        if path == "/api/approvals/pending":
+        if path in ("/api/approvals", "/api/approvals/pending"):
             bridge = getattr(self.server, "approval_bridge", None)
             items = bridge.list_pending() if bridge else []
             self._send_json({"pending": items, "count": len(items)})
+            return True
+
+        if path.startswith("/api/approvals/") and not path.endswith("/decision"):
+            req_id = path.split("/api/approvals/", 1)[1]
+            bridge = getattr(self.server, "approval_bridge", None)
+            item = (
+                bridge.get_approval(req_id) if bridge and hasattr(bridge, "get_approval") else None
+            )
+            if not item:
+                self._send_json({"error": f"Approval request {req_id} not found"}, status=404)
+                return True
+            self._send_json(item)
             return True
 
         return False

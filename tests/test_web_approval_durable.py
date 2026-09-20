@@ -1,0 +1,118 @@
+"""Tests for DurableApprovalStore and persistent WebApprovalBridge."""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+import pytest
+
+from avo.models import ToolCall
+from avo.web_approval import DurableApprovalStore, WebApprovalBridge
+
+
+def test_durable_approval_store_crud(tmp_path: Path) -> None:
+    db_path = tmp_path / "approvals.db"
+    store = DurableApprovalStore(db_path)
+
+    request_id = "req-test-1"
+    run_id = "run-test-1"
+    tool_name = "run_terminal"
+    args = {"command": "pytest"}
+
+    store.create_approval(
+        request_id=request_id,
+        run_id=run_id,
+        tool_name=tool_name,
+        arguments=args,
+        timeout_seconds=60.0,
+    )
+
+    # Verify retrieval
+    item = store.get_approval(request_id)
+    assert item is not None
+    assert item["request_id"] == request_id
+    assert item["run_id"] == run_id
+    assert item["tool_name"] == tool_name
+    assert item["arguments"] == args
+    assert item["status"] == "pending"
+
+    # List pending
+    pending = store.list_pending()
+    assert len(pending) == 1
+    assert pending[0]["request_id"] == request_id
+
+    # Record decision
+    success = store.record_decision(request_id, approved=True)
+    assert success is True
+
+    # Check updated item
+    updated = store.get_approval(request_id)
+    assert updated is not None
+    assert updated["status"] == "approved"
+    assert updated["decided_at"] is not None
+
+    # Pending list should now be empty
+    assert len(store.list_pending()) == 0
+
+
+def test_durable_approval_store_survives_restart(tmp_path: Path) -> None:
+    db_path = tmp_path / "approvals.db"
+
+    # Process 1 creates approval
+    store1 = DurableApprovalStore(db_path)
+    store1.create_approval(
+        request_id="req-persist",
+        run_id="run-persist",
+        tool_name="edit_file",
+        arguments={"path": "foo.py"},
+        timeout_seconds=120.0,
+    )
+
+    # Process 2 (new instance on same DB) reads and resolves
+    store2 = DurableApprovalStore(db_path)
+    pending = store2.list_pending()
+    assert len(pending) == 1
+    assert pending[0]["request_id"] == "req-persist"
+
+    store2.record_decision("req-persist", approved=False)
+    resolved = store2.get_approval("req-persist")
+    assert resolved is not None
+    assert resolved["status"] == "denied"
+
+
+@pytest.mark.asyncio
+async def test_bridge_with_durable_store(tmp_path: Path) -> None:
+    db_path = tmp_path / "approvals.db"
+    store = DurableApprovalStore(db_path)
+    bridge = WebApprovalBridge(store=store)
+
+    tool_call = ToolCall(
+        name="test_tool",
+        arguments={"key": "val"},
+    )
+
+    # Start approval request in background
+    req_task = asyncio.create_task(bridge.request_approval(tool_call, run_id="run-bridge"))
+    await asyncio.sleep(0.05)
+
+    pending = bridge.list_pending()
+    assert len(pending) == 1
+    req_id = pending[0]["request_id"]
+
+    # Verify store has the pending item
+    stored = store.get_approval(req_id)
+    assert stored is not None
+    assert stored["status"] == "pending"
+
+    # Resolve approval via bridge
+    resolved = bridge.resolve(req_id, approved=True)
+    assert resolved is True
+
+    result = await req_task
+    assert result is True
+
+    # Verify store is updated
+    updated = store.get_approval(req_id)
+    assert updated is not None
+    assert updated["status"] == "approved"
