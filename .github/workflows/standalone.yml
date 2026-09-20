@@ -1,0 +1,87 @@
+name: Standalone Binary Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name or version (e.g. v0.7.3)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    name: Build standalone binary (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: linux-x86_64
+            archive_ext: tar.gz
+          - os: macos-13
+            target: macos-x86_64
+            archive_ext: tar.gz
+          - os: macos-14
+            target: macos-aarch64
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: windows-x86_64
+            archive_ext: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies and build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[all]"
+          python -m pip install pyinstaller>=6.10
+
+      - name: Build standalone binary and package
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${VERSION#v}"
+          python scripts/build_standalone.py --package --version "$VERSION" --output-dir dist/standalone
+
+      - name: Upload binary artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: avo-${{ matrix.target }}
+          path: dist/standalone/avo-*.*
+
+  publish-release:
+    name: Attach standalone binaries to GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/all-binaries
+          pattern: avo-*
+          merge-multiple: true
+
+      - name: List downloaded release assets
+        run: |
+          ls -la dist/all-binaries
+
+      - name: Attach artifacts to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: dist/all-binaries/*

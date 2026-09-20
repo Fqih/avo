@@ -1,4 +1,4 @@
-.PHONY: install install-global setup dev lint format format-check typecheck test test-app-tools security-check coverage ci benchmark clean build smoke-test all-gates
+.PHONY: install install-global setup dev lint format format-check typecheck test test-app-tools test-installers security-check coverage ci benchmark clean build standalone-build standalone-package smoke-test all-gates
 
 PYTHON ?= python
 
@@ -32,6 +32,9 @@ test:
 test-app-tools:
 	$(PYTHON) -m pytest tests/test_workspace.py tests/test_approval.py tests/test_file_tools.py -v
 
+test-installers:
+	$(PYTHON) -m pytest tests/test_installers.py -v
+
 security-check:
 	bandit -r src/avo -c pyproject.toml --severity-level medium
 
@@ -48,6 +51,12 @@ benchmark:
 
 build:
 	$(PYTHON) -m build
+
+standalone-build:
+	$(PYTHON) scripts/build_standalone.py
+
+standalone-package:
+	$(PYTHON) scripts/build_standalone.py --package
 
 clean:
 	rm -rf build dist *.egg-info src/*.egg-info

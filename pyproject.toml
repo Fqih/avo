@@ -105,6 +105,10 @@ security = [
 sandbox = [
   "docker>=7.0",
 ]
+standalone = [
+  # PyInstaller for packaging single-file zero-Python standalone binaries.
+  "pyinstaller>=6.10",
+]
 mcp = [
   # MCP servers are launched as subprocesses that speak JSON-RPC over stdio.
   # Avo itself does not depend on the upstream `mcp` SDK — it ships a

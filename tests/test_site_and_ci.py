@@ -10,7 +10,8 @@ ROOT = Path(__file__).parents[1]
 def test_docs_ci_workflow_removed() -> None:
     """CI docs workflow must not exist so GitHub Actions never overwrites custom site/."""
     docs_workflow = ROOT / ".github" / "workflows" / "docs.yml"
-    assert not docs_workflow.exists(), "docs.yml must be removed to prevent CI from overwriting site/"
+    msg = "docs.yml must be removed to prevent CI from overwriting site/"
+    assert not docs_workflow.exists(), msg
 
 
 def test_netlify_configuration_publishes_site_directly() -> None:
