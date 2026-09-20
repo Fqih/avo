@@ -527,7 +527,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     effective_argv = list(sys.argv[1:] if argv is None else argv)
     if not effective_argv:
-        effective_argv = ["run"] if not sys.stdin.isatty() else ["chat"]
+        effective_argv = ["chat"]
     elif effective_argv[0] in ("-p", "--prompt") or (
         effective_argv[0] not in _TOP_LEVEL_COMMANDS and not effective_argv[0].startswith("-")
     ):
