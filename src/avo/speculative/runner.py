@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import secrets
 import shlex
@@ -267,31 +268,40 @@ class SpeculativeRunner:
         workspace_root: Path,
         test_command: str | Sequence[str] = "pytest -q",
         max_attempts: int = 2,
+        timeout_seconds: float = 60.0,
+        max_output_length: int = 4096,
     ) -> None:
         self.runtime = runtime
         self.workspace_root = Path(workspace_root).resolve()
-        self.test_command = test_command
+        if isinstance(test_command, str):
+            cmd_parts = shlex.split(test_command)
+            if not cmd_parts:
+                raise ValueError("test_command cannot be empty")
+            self.test_command: Sequence[str] = cmd_parts
+        else:
+            if not test_command:
+                raise ValueError("test_command cannot be empty")
+            self.test_command = list(test_command)
         self.max_attempts = max(1, max_attempts)
+        self.timeout_seconds = timeout_seconds
+        self.max_output_length = max(100, max_output_length)
         self.snapshot = WorkspaceSnapshot(self.workspace_root)
 
     def _run_tests(self) -> tuple[bool, str]:
         """Execute test command in workspace. Return (passed, output)."""
         try:
-            cmd = (
-                shlex.split(self.test_command)
-                if isinstance(self.test_command, str)
-                else list(self.test_command)
-            )
             res = subprocess.run(
-                cmd,
+                list(self.test_command),
                 cwd=self.workspace_root,
                 capture_output=True,
                 text=True,
-                timeout=60.0,
+                timeout=self.timeout_seconds,
                 check=False,
             )
             passed = res.returncode == 0
             output = (res.stdout + "\n" + res.stderr).strip()
+            if len(output) > self.max_output_length:
+                output = output[: self.max_output_length] + "\n... [output truncated]"
             return passed, output
         except Exception as exc:
             return False, str(exc)
@@ -308,13 +318,16 @@ class SpeculativeRunner:
 
         for attempt in range(1, self.max_attempts + 1):
             if action_fn:
-                action_fn()
+                res = action_fn()
+                if inspect.isawaitable(res):
+                    await res
             else:
                 run_res = await self.runtime.run(prompt)
                 last_output = run_res.output
 
             passed, test_output = self._run_tests()
             if passed:
+                self.snapshot.discard(tag)
                 return SpeculativeResult(
                     success=True,
                     rolled_back=False,

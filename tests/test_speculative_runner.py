@@ -169,3 +169,53 @@ def test_rollback_with_tracked_staged_untracked_and_multiple_snapshots(tmp_path:
     assert not (tmp_path / "trash.tmp").exists()
     assert not (tmp_path / "untracked.txt").exists()
 
+
+@pytest.mark.asyncio
+async def test_speculative_runner_discards_snapshot_on_success(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    runtime = AgentRuntime(provider=FakeProvider([ModelResponse(content="ok")]))
+    runner = SpeculativeRunner(runtime=runtime, workspace_root=tmp_path, test_command=["true"])
+
+    res = await runner.run_speculative(prompt="test", action_fn=lambda: None)
+    assert res.success is True
+    assert res.rolled_back is False
+    assert len(runner.snapshot.list_snapshots()) == 0
+
+
+@pytest.mark.asyncio
+async def test_speculative_runner_supports_async_action_fn(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    runtime = AgentRuntime(provider=FakeProvider([ModelResponse(content="ok")]))
+    runner = SpeculativeRunner(runtime=runtime, workspace_root=tmp_path, test_command=["true"])
+
+    called = False
+
+    async def _async_action() -> None:
+        nonlocal called
+        called = True
+
+    res = await runner.run_speculative(prompt="test", action_fn=_async_action)
+    assert res.success is True
+    assert called is True
+
+
+@pytest.mark.asyncio
+async def test_speculative_runner_truncates_long_test_output(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    runtime = AgentRuntime(provider=FakeProvider([ModelResponse(content="ok")]))
+    # Run command that produces massive output and fails
+    runner = SpeculativeRunner(
+        runtime=runtime,
+        workspace_root=tmp_path,
+        test_command=["sh", "-c", "python -c 'print(\"x\" * 10000)'; exit 1"],
+        max_attempts=1,
+        max_output_length=200,
+    )
+
+    res = await runner.run_speculative(prompt="test", action_fn=lambda: None)
+    assert res.success is False
+    assert res.error is not None
+    assert "[output truncated]" in res.error
+    assert len(res.error) < 1000
+
+
