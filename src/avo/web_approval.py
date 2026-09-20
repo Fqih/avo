@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import secrets
 import sqlite3
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,15 @@ from typing import Any
 from avo.models import ToolCall
 
 _LOG = logging.getLogger(__name__)
+
+
+def canonical_arguments_hash(arguments: Mapping[str, Any] | None) -> str:
+    """Compute deterministic SHA-256 hash over canonical sorted JSON serialization."""
+    if not arguments:
+        payload = "{}"
+    else:
+        payload = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -56,6 +66,8 @@ class DurableApprovalStore:
                     run_id TEXT,
                     tool_name TEXT NOT NULL,
                     arguments TEXT NOT NULL,
+                    arguments_hash TEXT,
+                    tool_call_id TEXT,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     decided_at TEXT,
@@ -63,6 +75,10 @@ class DurableApprovalStore:
                 )
                 """
             )
+            for col in ("arguments_hash TEXT", "tool_call_id TEXT"):
+                with contextlib.suppress(sqlite3.OperationalError):
+                    conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {col}")
+
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_approvals_status ON pending_approvals(status)"
             )
@@ -77,18 +93,30 @@ class DurableApprovalStore:
         tool_name: str,
         arguments: dict[str, Any],
         timeout_seconds: float = 300.0,
+        tool_call_id: str | None = None,
     ) -> None:
         """Insert a pending approval record."""
         now_str = datetime.now(UTC).isoformat()
         args_json = json.dumps(arguments)
+        args_hash = canonical_arguments_hash(arguments)
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO pending_approvals
-                (id, run_id, tool_name, arguments, status, created_at, decided_at, timeout_seconds)
-                VALUES (?, ?, ?, ?, 'pending', ?, NULL, ?)
+                (id, run_id, tool_name, arguments, arguments_hash, tool_call_id,
+                 status, created_at, decided_at, timeout_seconds)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NULL, ?)
                 """,
-                (request_id, run_id, tool_name, args_json, now_str, timeout_seconds),
+                (
+                    request_id,
+                    run_id,
+                    tool_name,
+                    args_json,
+                    args_hash,
+                    tool_call_id,
+                    now_str,
+                    timeout_seconds,
+                ),
             )
 
     def get_approval(self, request_id: str) -> dict[str, Any] | None:
@@ -126,20 +154,44 @@ class DurableApprovalStore:
             )
             return [self._row_to_dict(row) for row in cursor.fetchall()]
 
-    def find_decision_for_run(self, run_id: str, tool_name: str | None = None) -> bool | None:
-        """Check if an approval for this run was already decided in persistent storage."""
+    def find_decision_for_run(
+        self,
+        run_id: str,
+        tool_name: str,
+        arguments: Mapping[str, Any] | None = None,
+        tool_call_id: str | None = None,
+    ) -> bool | None:
+        """Find a valid, unexpired persistent decision matching run, tool, and argument hash."""
+        now = datetime.now(UTC)
+        expected_hash = canonical_arguments_hash(arguments) if arguments is not None else None
+
         with self._lock, self._connect() as conn:
-            query = "SELECT status FROM pending_approvals WHERE run_id = ?"
-            params: list[Any] = [run_id]
-            if tool_name:
-                query += " AND tool_name = ?"
-                params.append(tool_name)
-            query += " AND status IN ('approved', 'denied') ORDER BY decided_at DESC LIMIT 1"
-            cursor = conn.execute(query, params)
-            row = cursor.fetchone()
-            if not row:
-                return None
-            return bool(row["status"] == "approved")
+            query = (
+                "SELECT status, created_at, timeout_seconds, arguments_hash, tool_call_id "
+                "FROM pending_approvals WHERE run_id = ? AND tool_name = ? "
+                "AND status IN ('approved', 'denied') ORDER BY decided_at DESC"
+            )
+            cursor = conn.execute(query, (run_id, tool_name))
+            rows = cursor.fetchall()
+            for row in rows:
+                if tool_call_id and row["tool_call_id"] and row["tool_call_id"] != tool_call_id:
+                    continue
+                if (
+                    expected_hash
+                    and row["arguments_hash"]
+                    and row["arguments_hash"] != expected_hash
+                ):
+                    continue
+                try:
+                    created = datetime.fromisoformat(row["created_at"])
+                    timeout = float(row["timeout_seconds"])
+                    if (now - created).total_seconds() > timeout:
+                        _LOG.warning("Approval for %s in run %s has expired", tool_name, run_id)
+                        continue
+                except Exception:
+                    pass
+                return bool(row["status"] == "approved")
+            return None
 
     def _row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         raw_args = row["arguments"]
@@ -182,9 +234,13 @@ class WebApprovalBridge:
 
     async def request_approval(self, tool_call: ToolCall, run_id: str | None = None) -> bool:
         """Register a pending approval and pause until web decision or timeout."""
-        # Check if already decided in persistent database (e.g. following process restart)
+        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+
+        # Check if already decided in persistent database (matching tool, args, unexpired)
         if self.store is not None and run_id:
-            past_decision = self.store.find_decision_for_run(run_id, tool_name=tool_call.name)
+            past_decision = self.store.find_decision_for_run(
+                run_id, tool_name=tool_call.name, arguments=args
+            )
             if past_decision is not None:
                 _LOG.info(
                     "Resuming tool %s for run %s with durable decision: %s",
@@ -197,7 +253,6 @@ class WebApprovalBridge:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[bool] = loop.create_future()
         request_id = secrets.token_hex(8)
-        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
 
         req = PendingApproval(
             request_id=request_id,

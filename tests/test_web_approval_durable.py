@@ -142,3 +142,50 @@ async def test_bridge_recovers_durable_decision_after_process_restart(tmp_path: 
     # Agent resumes and requests approval for the run
     decision = await bridge2.request_approval(tool_call, run_id="run-restart-1")
     assert decision is True
+
+
+def test_durable_store_rejects_replay_on_argument_mismatch(tmp_path: Path) -> None:
+    db_path = tmp_path / "approvals.db"
+    store = DurableApprovalStore(db_path)
+    store.create_approval(
+        request_id="req-mismatch-1",
+        run_id="run-mismatch",
+        tool_name="edit_file",
+        arguments={"path": "safe.py"},
+        timeout_seconds=60.0,
+    )
+    store.record_decision("req-mismatch-1", approved=True)
+
+    # Matching args succeeds
+    decision_ok = store.find_decision_for_run(
+        "run-mismatch", "edit_file", arguments={"path": "safe.py"}
+    )
+    assert decision_ok is True
+
+    # Differing args fails closed (returns None, cannot replay approved status on changed args)
+    decision_diff = store.find_decision_for_run(
+        "run-mismatch", "edit_file", arguments={"path": "danger.py"}
+    )
+    assert decision_diff is None
+
+
+def test_durable_store_rejects_expired_approvals(tmp_path: Path) -> None:
+    db_path = tmp_path / "approvals.db"
+    store = DurableApprovalStore(db_path)
+    # Approval created with 0.001s timeout
+    store.create_approval(
+        request_id="req-expire-1",
+        run_id="run-expire",
+        tool_name="run_terminal",
+        arguments={"cmd": "ls"},
+        timeout_seconds=0.001,
+    )
+    store.record_decision("req-expire-1", approved=True)
+
+    import time
+
+    time.sleep(0.01)
+
+    # After expiry, find_decision_for_run must reject stale approval
+    expired = store.find_decision_for_run("run-expire", "run_terminal", arguments={"cmd": "ls"})
+    assert expired is None

@@ -317,3 +317,27 @@ async def test_sqlite_wraps_low_level_read_error_with_cause(tmp_path: Path) -> N
         await store.list_runs()
     assert captured.value.__cause__ is not None
     await store.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_user_version_and_migration_backup(tmp_path: Path) -> None:
+    db_path = tmp_path / "versioned.db"
+    store = SQLiteEventStore(db_path)
+    # Check user_version is initialized to 2
+    row = store._connection.execute("PRAGMA user_version").fetchone()
+    assert row[0] == 2
+    await store.close()
+
+    # Simulate older version 1 database with content
+    import sqlite3
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA user_version = 1")
+    conn.close()
+
+    # Reopening should detect version 1, create backup .bak.1, and upgrade to 2
+    store2 = SQLiteEventStore(db_path)
+    row2 = store2._connection.execute("PRAGMA user_version").fetchone()
+    assert row2[0] == 2
+    await store2.close()
+    assert (tmp_path / "versioned.bak.1").exists()

@@ -36,9 +36,15 @@ def _confirmed_json(data: dict[str, Any]) -> str:
 
 @pytest.fixture
 def web_server(tmp_path: Path):
+    from avo.web_http import WebSecurityConfig
+
     db_path = tmp_path / "test.db"
-    # Start server on dynamic port (port 0 selects available port)
-    server = AvoWebServer(("127.0.0.1", 0), database_path=db_path)
+    # Start server on dynamic port with require_read_auth=False for general functional test routes
+    server = AvoWebServer(
+        ("127.0.0.1", 0),
+        database_path=db_path,
+        web_security=WebSecurityConfig(require_read_auth=False),
+    )
     port = server.server_port
     _SERVER_TOKENS[port] = server.auth_token
 
@@ -884,8 +890,15 @@ def test_web_ui_api_workspace_tree_and_editor(tmp_path: Path) -> None:
     (ws / "__pycache__").mkdir()
     (ws / "__pycache__" / "cached.pyc").write_text("pyc", encoding="utf-8")
 
+    from avo.web_http import WebSecurityConfig
+
     db_path = tmp_path / "workspace_test.db"
-    server = AvoWebServer(("127.0.0.1", 0), database_path=db_path, workspace_root=ws)
+    server = AvoWebServer(
+        ("127.0.0.1", 0),
+        database_path=db_path,
+        workspace_root=ws,
+        web_security=WebSecurityConfig(require_read_auth=False),
+    )
     port = server.server_port
     _SERVER_TOKENS[port] = server.auth_token
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -1065,6 +1078,44 @@ def test_web_ui_workspace_read_auth_enforced(tmp_path: Path) -> None:
             assert resp.status == 200
             data = json.loads(resp.read().decode("utf-8"))
             assert data["content"] == "classified"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_web_ui_default_config_is_fail_closed(tmp_path: Path) -> None:
+    ws = tmp_path / "ws_default"
+    ws.mkdir()
+    (ws / "data.txt").write_text("sensitive data", encoding="utf-8")
+
+    # Start server without explicit web_security
+    server = AvoWebServer(("127.0.0.1", 0), database_path=tmp_path / "def.db", workspace_root=ws)
+    assert server.web_security.require_read_auth is True
+
+    port = server.server_port
+    token = server.auth_token
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        # Default unauthenticated read MUST be rejected with 401
+        with pytest.raises(urllib.error.HTTPError) as exc_unauth:
+            urllib.request.urlopen(f"{base_url}/api/workspace/file?path=data.txt", timeout=5)
+        assert exc_unauth.value.code == 401
+
+        # Tree read MUST also be rejected with 401
+        with pytest.raises(urllib.error.HTTPError) as exc_tree_unauth:
+            urllib.request.urlopen(f"{base_url}/api/workspace/tree", timeout=5)
+        assert exc_tree_unauth.value.code == 401
+
+        # Providing Bearer token succeeds
+        req = urllib.request.Request(
+            f"{base_url}/api/workspace/file?path=data.txt",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 200
     finally:
         server.shutdown()
         server.server_close()

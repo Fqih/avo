@@ -36,8 +36,8 @@ jobs:
         # fails for the unreleased version editable-installed from the
         # repo (the same race release.yml already avoids).
         run: pip-audit --strict --requirement <(python -c "import tomllib; print('\n'.join(tomllib.loads(open('pyproject.toml').read())['project']['dependencies']))")
-      - name: Tests
-        run: pytest
+      - name: Tests & Coverage
+        run: pytest --cov=avo --cov-fail-under=90
       - name: Build
         env:
           # Reproducible build: pin build timestamp to the latest

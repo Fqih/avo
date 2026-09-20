@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import shutil
 import sqlite3
 from pathlib import Path
 from types import TracebackType
@@ -59,13 +61,32 @@ class SQLiteEventStore:
             self._connection = sqlite3.connect(self.path, isolation_level=None)
             self._connection.row_factory = sqlite3.Row
             self._connection.execute("PRAGMA foreign_keys = ON")
+            self._connection.execute("PRAGMA busy_timeout = 5000")
+            with contextlib.suppress(sqlite3.OperationalError):
+                self._connection.execute("PRAGMA journal_mode = WAL")
             self._connection.executescript(_SCHEMA)
+            self._apply_migrations()
         except sqlite3.Error as exc:
             raise StorageError(
                 f"Could not initialize SQLite event store at {self.path!s}: {exc}"
             ) from exc
         self._lock = asyncio.Lock()
         self._closed = False
+
+    def _apply_migrations(self) -> None:
+        """Verify schema version and apply migrations with automated backup."""
+        row = self._connection.execute("PRAGMA user_version").fetchone()
+        current_version = row[0] if row else 0
+        target_version = 2
+        if current_version == 0:
+            self._connection.execute(f"PRAGMA user_version = {target_version}")
+            return
+        if current_version < target_version:
+            if self.path.exists() and self.path.stat().st_size > 0:
+                backup_path = self.path.with_suffix(f".bak.{current_version}")
+                with contextlib.suppress(Exception):
+                    shutil.copy2(self.path, backup_path)
+            self._connection.execute(f"PRAGMA user_version = {target_version}")
 
     def _ensure_open(self) -> None:
         if self._closed:

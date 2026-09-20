@@ -138,11 +138,23 @@ class GitWorktreeManager:
                     merge_cmd, cwd=self.repo_root, capture_output=True, text=True, check=False
                 )
                 if m_res.returncode != 0:
+                    subprocess.run(
+                        ["git", "merge", "--abort"],
+                        cwd=self.repo_root,
+                        capture_output=True,
+                        check=False,
+                    )
                     raise GitWorktreeError(
                         f"Failed to merge branch {branch_name} into {dest}: {m_res.stderr.strip()}"
                     )
             finally:
                 if need_switch and original_branch:
+                    subprocess.run(
+                        ["git", "merge", "--abort"],
+                        cwd=self.repo_root,
+                        capture_output=True,
+                        check=False,
+                    )
                     subprocess.run(
                         ["git", "checkout", original_branch],
                         cwd=self.repo_root,

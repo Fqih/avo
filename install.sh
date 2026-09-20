@@ -192,6 +192,31 @@ if [ "$install_mode" = "standalone" ]; then
   fi
 
   if [ "$install_mode" = "standalone" ]; then
+    checksum_file="$archive_file.sha256"
+    printf '→ Verifying SHA-256 checksum ...\n'
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL "$checksum_url" -o "$checksum_file" 2>/dev/null || true
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO "$checksum_file" "$checksum_url" 2>/dev/null || true
+    fi
+
+    if [ -f "$checksum_file" ] && [ -s "$checksum_file" ]; then
+      expected_hash="$(awk '{print $1}' "$checksum_file")"
+      actual_hash=""
+      if command -v sha256sum >/dev/null 2>&1; then
+        actual_hash="$(sha256sum "$archive_file" | awk '{print $1}')"
+      elif command -v shasum >/dev/null 2>&1; then
+        actual_hash="$(shasum -a 256 "$archive_file" | awk '{print $1}')"
+      fi
+
+      if [ -n "$actual_hash" ]; then
+        if [ "$actual_hash" != "$expected_hash" ]; then
+          die "Checksum verification failed! Expected ${expected_hash}, got ${actual_hash}. Aborting installation."
+        fi
+        printf '✓ SHA-256 checksum verified (%s)\n' "$actual_hash"
+      fi
+    fi
+
     printf '→ Extracting %s ...\n' "$archive_name"
     tar -xzf "$archive_file" -C "$tmp_dir"
 

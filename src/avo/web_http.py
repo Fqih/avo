@@ -43,7 +43,7 @@ class WebSecurityConfig:
     allowed_origin: str | None = None
     cors_enabled: bool = False
     require_confirmation: bool = True
-    require_read_auth: bool = False
+    require_read_auth: bool = True
 
     def __post_init__(self) -> None:
         if self.allowed_origin == "*":
