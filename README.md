@@ -1,93 +1,169 @@
 <div align="center">
 
-<img src="logo.png" width="160" height="160" alt="Avo logo">
+<img src="logo.png" width="130" height="130" alt="Avo Logo" style="border-radius: 24px; filter: drop-shadow(0 4px 20px rgba(16, 185, 129, 0.25));">
 
-# Avo
+# Avo 🥑
 
-**Enterprise-Grade AI Agent Infrastructure with Zero-Downtime Multi-Tier Redundancy & Cost Optimization**
+**The Autonomous AI Coding Agent That Never Quits.**  
+*Multi-model failover (Claude → OpenAI → Ollama), Git worktree isolation, SQLite event-sourced replay, and zero-Python standalone CLI.*
 
-*Eliminate developer idle time, mitigate AI vendor lock-in, and slash enterprise token expenditures across your engineering organization.*
-
-[![Status: Alpha](https://img.shields.io/badge/status-v0.7.3--alpha-orange.svg)](https://avo.faqihhakim.tech/)
+[![Release](https://img.shields.io/github/v/release/Fqih/avo?color=10b981&label=version)](https://github.com/Fqih/avo/releases)
+[![PyPI](https://img.shields.io/pypi/v/avo?color=10b981&label=pypi)](https://pypi.org/project/avo/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Security: Sandboxed](https://img.shields.io/badge/security-sandboxed--ephemeral-indigo.svg)](https://avo.faqihhakim.tech/)
-[![Documentation](https://img.shields.io/badge/docs-avo.faqihhakim.tech-purple.svg)](https://avo.faqihhakim.tech/)
+[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-slate.svg)](#installation)
+[![Standalone](https://img.shields.io/badge/executable-zero--python%20standalone-emerald.svg)](#installation)
+[![Docs](https://img.shields.io/badge/docs-avo.faqihhakim.tech-teal.svg)](https://avo.faqihhakim.tech/)
+
+[**Quickstart**](#quickstart) • [**Installation**](#installation) • [**Why Avo?**](#why-avo-vs-claude-code--aider) • [**Architecture**](#how-it-works) • [**Documentation**](https://avo.faqihhakim.tech/)
 
 </div>
 
 ---
 
-## Executive Summary
+## ⚡ Quickstart (Zero-Python, 10 Seconds)
 
-Modern engineering teams increasingly rely on AI coding assistants for software delivery. However, conventional single-vendor tools introduce severe operational vulnerabilities: **HTTP 429 quota exhaustion**, **cloud provider outages**, **unpredictable monthly token invoices**, and **uncontrolled code execution risks**.
+Install Avo directly on your system. **No Python, `uv`, `node`, or package manager required:**
 
-**Avo** is an open-source, multi-tier autonomous AI agent runtime engineered for uninterrupted software engineering workflows. By unifying enterprise cloud account quotas, pay-as-you-go fallbacks, and zero-cost local hardware inference behind a resilient state machine, Avo guarantees that mission-critical development never halts.
+```bash
+# Linux, macOS, or Git Bash
+curl -fsSL https://avo.faqihhakim.tech/install.sh | bash
+
+# Native Windows PowerShell
+irm https://avo.faqihhakim.tech/install.ps1 | iex
+```
+
+Once installed, launch Avo in any git repository:
+
+```bash
+# 1. Connect your models (Claude, ChatGPT, Gemini, or local Ollama)
+avo setup
+
+# 2. Start autonomous coding in your workspace
+avo
+```
+
+*(Prefer Python package? Run `uv tool install avo[all]` or `pip install avo`)*
 
 ---
 
-## The Business Problem vs. The Avo Solution
+## 💥 Why Avo? (The Problem We Solve)
 
-| Business Challenge | Industry Impact | The Avo Strategic Solution |
-|---|---|---|
-| **Vendor Quota Halts & 429 Limits** | Developer workflows crash mid-refactor; context is permanently lost; engineering velocity drops. | **Zero-Drop Failover:** Automated provider hot-swap in milliseconds while preserving 100% conversation memory. |
-| **Exploding Cloud Token Invoices** | Repetitive context ingestion and multi-turn audits rapidly burn budget on enterprise models. | **Integrated Token Savers:** Semantic prompt caching delivers up to 48% reduction in token consumption. |
-| **Vendor Lock-In & Outage Vulnerability** | Teams are tied to a single AI vendor's pricing models, service availability, and terms. | **Multi-Tier Redundancy:** Fluid routing across Anthropic, OpenRouter, Google, and on-premise models. |
-| **Compliance & Code Tampering Risks** | Unrestricted AI tool loops may overwrite production assets or escape directory bounds. | **Defense-in-Depth:** Ephemeral sandbox isolation, strict POSIX file boundaries, and immutable audit logs. |
+Current AI coding tools (Claude Code, Aider, Cursor) crash or stall the moment:
+1. **You hit an HTTP 429 quota exhaustion or cloud outage** — your session aborts, context is lost, and you wait hours for quota to reset.
+2. **The agent modifies files recklessly** — a bad tool call or broken speculative rollback pollutes your git working tree with dirty diffs.
+3. **Complex multi-step tasks get stuck in infinite loops** — burning thousands of tokens repeating the exact same failed tool command.
+
+**Avo solves this with runtime infrastructure:**
+
+- 🔀 **Zero-Drop Multi-Tier Failover (Combo Routing)**: Seamlessly failover across **Claude 3.7 → OpenAI GPT-4o → Gemini → Local Ollama (Qwen 2.5 Coder)** in the exact same turn with zero context loss.
+- 🌿 **Git Worktree Isolation**: Agents work on disposable git worktrees (`.avo/worktrees/<run_id>`) on isolated branches. Speculative edits and tests never touch your uncommitted work until approved and verified.
+- 🛡️ **Dual-Layer Sandboxing**: Runs dangerous commands in rootless Linux Bubblewrap (`bwrap`) with unshared PID/network namespaces or ephemeral Docker containers (`network_mode="none"`).
+- 📜 **Durable SQLite Event Sourcing**: Complete event log (`AgentEvent`) and crash-safe checkpoints. Kill the process anytime, and `avo resume` picks up exactly where it left off.
+- 🔔 **Durable Webhook Approval**: Pending approvals persist in SQLite. Approve dangerous tools via terminal, Web UI, or REST webhook (`POST /api/approvals/{id}/decision`) even after restarting the daemon.
+- 💸 **Token Savers Built-In**: Deterministic tool compression and Caveman terse presets slash token expenditure by **26%+** on tool-heavy sessions.
 
 ---
 
-## Strategic Architecture
+## 📊 Comparison: Avo vs Other Tools
 
-### 1. Cost-Optimized Multi-Tier Routing (Combo Pipeline)
+| Feature | Avo 🥑 | Claude Code | Aider | LangGraph |
+|:---|:---:|:---:|:---:|:---:|
+| **Zero-Python Standalone Executable** | **✅ Yes (Single binary)** | ❌ (Needs Node.js) | ❌ (Needs Python/pip) | ❌ (Needs Python) |
+| **Multi-Model Dynamic Failover** | **✅ Claude → GPT → Ollama** | ❌ Anthropic only | ❌ Single model per run | ⚠️ Manual code |
+| **Git Worktree Workspace Isolation** | **✅ Built-in (`.avo/worktrees`)** | ⚠️ Hook-based | ❌ Direct working tree | ❌ None |
+| **Crash-Safe Step Resume** | **✅ SQLite Checkpoints** | ⚠️ Session log | ❌ Terminal scrollback | ✅ Checkpointer |
+| **Rootless Linux Sandbox (`bwrap`)** | **✅ Built-in namespaces** | ❌ Host execution | ❌ Host execution | ❌ None |
+| **Durable Webhook Approvals** | **✅ SQLite Table + REST API** | ❌ Terminal only | ❌ CLI prompt only | ⚠️ In-memory |
+| **Offline Local Compute Floor** | **✅ Auto-detect ROCm/CUDA** | ❌ Cloud only | ⚠️ Manual Ollama | ⚠️ Custom setup |
 
-Avo eliminates single-point-of-failure risks by cascading model execution through cost-prioritized operational tiers. When a primary cloud provider reaches rate limits or encounters latency spikes, requests transition down the tier hierarchy seamlessly.
+---
 
-```mermaid
-flowchart TD
-    User["Engineering Team Request"] --> Router["Avo Intelligent Router"]
-    
-    subgraph Tier1["Tier 1: Enterprise Account Quota (High Reasoning)"]
-        Claude["Frontier Models (Claude / Codex / Gemini)"]
-    end
+## 🖥️ Interactive CLI & Web Cockpit
 
-    subgraph Tier2["Tier 2: Pay-Per-Token Fallback (Cost Efficient)"]
-        OpenRouter["Cloud Aggregate Models (Llama 70B / DeepSeek)"]
-    end
+Avo gives you full control over how you work:
 
-    subgraph Tier3["Tier 3: Local Hardware Floor (Zero Cost & Private)"]
-        LocalLLM["Local Acceleration (Ollama Qwen Coder via ROCm / CUDA)"]
-    end
+```
+$ avo
+🥑 Avo v0.7.4 (mode: code, model: combo/tier1-claude -> tier2-ollama)
+Type /help for slash commands, or describe your task:
 
-    Router --> Claude
-    Claude -- "HTTP 429 / Quota Halt" --> OpenRouter
-    OpenRouter -- "Network Outage / Timeout" --> LocalLLM
-    
-    Claude --> Success["Completed Development Task"]
-    OpenRouter --> Success
-    LocalLLM --> Success
+avo> Implement git worktree isolation for our test suite and run tests
+→ [PLAN] Creating isolated branch avo/task-a1b2 in .avo/worktrees/task-a1b2
+→ [TOOL] read_file("tests/test_runner.py")
+→ [TIER 1] Anthropic Claude 3.7 Sonnet (2,410 tokens)
+→ [TOOL] write_file("src/workspace.py")
+→ [SANDBOX] bwrap --ro-bind /usr /usr --unshare-net pytest tests/
+→ [CHECKPOINT] Step 4 saved to .avo/runs.db (state: GREEN)
+✓ Completed in 4 steps. Merged cleanly to main branch.
+```
+
+Prefer a visual dashboard? Launch the **Avo Web Cockpit**:
+```bash
+avo web --port 43111
+```
+View live execution DAGs, real-time token spend ledgers, circuit breaker health, and approve tool authorizations from your browser.
+
+---
+
+## 🛠️ Python SDK (Embedding Avo in Your Apps)
+
+Avo is both a high-productivity CLI and a modular, dependency-light Python runtime:
+
+```python
+import asyncio
+from avo import AgentRuntime, LoopPolicy
+from avo.app_tools import GitWorktreeManager, read_file_tool, write_file_tool
+from avo.config import build_provider_from_env
+
+async def main():
+    # 1. Isolate agent workspace in a dedicated git worktree
+    worktree = GitWorktreeManager(".").create_worktree("audit-run-01")
+
+    # 2. Initialize runtime with hard step, token, and circuit breaker bounds
+    runtime = AgentRuntime(
+        provider=build_provider_from_env(),
+        policy=LoopPolicy(max_steps=20, token_budget=60_000),
+        tools=[read_file_tool, write_file_tool],
+        database_path=".avo/runs.db",
+    )
+
+    # 3. Execute with deterministic replay and SQLite event sourcing
+    result = await runtime.run("Refactor database connection pooling and verify tests.")
+    print(f"Outcome: {result.state} (StopReason: {result.stop_reason})")
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ---
 
-### 2. Multi-Agent Collaborative Governance
+## 📦 Installation Options
 
-Complex software delivery requires segregation of duties. Rather than relying on a single monolithic prompt, Avo orchestrates specialized subagents to enforce architectural compliance before implementation begins.
+### 1. Zero-Python Standalone Binary (Recommended)
+Download single-file executables with zero host dependencies:
+```bash
+# Linux / macOS / Git Bash
+curl -fsSL https://avo.faqihhakim.tech/install.sh | bash
 
-```mermaid
-flowchart LR
-    Goal["Business Initiative"] --> Architect["@architect Agent (System Design)"]
-    Architect --> Spec["Architecture Plan & Concurrency Audit"]
-    Spec --> Coder["@coder Agent (Implementation)"]
-    Coder --> Sandbox["Isolated Ephemeral Sandbox"]
-    Sandbox --> Test["Automated Regression Verification"]
-    Test --> Ledger["Durable SQLite Audit Ledger"]
-    Ledger --> Telemetry["Real-Time Web UI Dashboard"]
+# Windows PowerShell
+irm https://avo.faqihhakim.tech/install.ps1 | iex
+```
+
+### 2. User-Global via `uv`
+```bash
+uv tool install avo[all]
+```
+
+### 3. Standard `pip`
+```bash
+pip install avo
 ```
 
 ---
 
-## Core Business Pillars
+## 🗺️ Roadmap
 
+<<<<<<< HEAD
 ### 📊 1. Measurable ROI & Financial Governance
 - **Deterministic Token Reduction:** Automatically minifies tool JSON payloads, deduplicates redundant outputs, and elides verbose lines, reducing token consumption by up to **26%+** on long tool-heavy sessions (see [benchmark results](benchmark/savers/RESULTS.md)).
 - **Semantic Token Deduction:** Automatically eliminates redundant system instructions and file context, slashing recurring API overhead by up to **48%**.
@@ -106,46 +182,28 @@ flowchart LR
 ### ⚡ 4. Operational Observability (Avo Web UI)
 - **Real-Time Operational Cockpit:** Visual telemetry dashboard displaying live trace timelines, model latency meters, circuit breaker triggers, and hardware resource saturation.
 - **Extensible Enterprise Plugins:** Seamless integration with company-internal ticketing systems, GitHub pull request automation, and incident alert channels via standard extension points.
+=======
+- [x] **v0.7.0**: Multi-Tier Combo Router & OAuth Subscription Auth (Claude, ChatGPT, Gemini).
+- [x] **v0.7.2**: Autonomous Loop, AST Code Intelligence, Shared Blackboard Memory.
+- [x] **v0.7.3**: Rootless Bubblewrap Sandbox (`bwrap`) & Web Cockpit Full-Duplex.
+- [x] **v0.7.4**: Zero-Python Standalone Executable, Git Worktree Isolation & Durable Webhook Approval.
+- [ ] **v0.8.0**: Distributed PostgreSQL EventStore & Celery/Redis Remote Worker Mesh.
+- [ ] **v0.9.0**: Native Headless Browser Sandbox (Playwright verification).
+>>>>>>> 9faa1d4 (docs(readme): rewrite readme with dev-first focus, standalone install, and comparison matrix)
 
 ---
 
-## Enterprise Capability Overview
+## 🤝 Contributing & Community
 
-```mermaid
-graph TD
-    subgraph ControlPlane["Unified Control Plane"]
-        CLI["Terminal CLI Agent"]
-        WebUI["Web Observability Dashboard"]
-    end
-
-    subgraph ResilienceEngine["Resilience Engine"]
-        ComboEngine["Combo Multi-Tier Router"]
-        FailoverState["Zero-Drop State Machine"]
-        CacheStore["Semantic Token Savers"]
-    end
-
-    subgraph SecurityShield["Security & Audit Shield"]
-        PosixGuard["POSIX O_NOFOLLOW Path Guard"]
-        DockerBox["Ephemeral Sandbox Isolation"]
-        SqliteLedger["Immutable Event Ledger"]
-    end
-
-    ControlPlane --> ResilienceEngine
-    ResilienceEngine --> SecurityShield
-```
+We welcome issues, PRs, and architectural discussions!
+- **Issues & Discussions:** [GitHub Issues](https://github.com/Fqih/avo/issues)
+- **Documentation:** [avo.faqihhakim.tech](https://avo.faqihhakim.tech/)
+- **License:** [MIT License](LICENSE)
 
 ---
 
-## Platform Deployment & Governance
-
-Avo is engineered as a lean, dependency-minimal binary with self-contained runtime management. It adapts automatically to developer workstations, cloud virtual machines, and restricted air-gapped environments without requiring administrative overhead.
-
-For enterprise deployment guides, architectural whitepapers, compliance specifications, and CLI references, visit the official documentation portal:
-
-👉 **[Explore Full Documentation & Guides at avo.faqihhakim.tech](https://avo.faqihhakim.tech/)**
-
----
-
-## License & Attribution
-
-Avo is open-source software distributed under the **MIT License**. Maintained and authored by **Fqih**.
+<div align="center">
+<b>Built with reliability-first engineering by Fqih.</b>
+<br>
+<i>If Avo saves your coding session from a 429 quota crash, give us a ⭐ on GitHub!</i>
+</div>
