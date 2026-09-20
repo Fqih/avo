@@ -12,6 +12,8 @@ the chance to persist to ``~/.zshrc`` / ``~/.bashrc`` separately.
 from __future__ import annotations
 
 import getpass
+import json
+import urllib.request
 from collections.abc import Callable
 from typing import Any, TextIO
 
@@ -312,12 +314,28 @@ def _prompt_model_tui(
     return selected.strip() if selected.strip() in choices else default
 
 
+def probe_local_ollama(base_url: str = "http://127.0.0.1:11434") -> list[str]:
+    """Check if local Ollama daemon is running and return list of installed model names."""
+    endpoint = f"{base_url.rstrip('/')}/api/tags"
+    req = urllib.request.Request(endpoint, headers={"User-Agent": "avo-cli"})
+    try:
+        with urllib.request.urlopen(req, timeout=0.8) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                models = data.get("models", [])
+                return [str(m.get("name")) for m in models if isinstance(m, dict) and m.get("name")]
+    except Exception:
+        pass
+    return []
+
+
 def interactive_first_run_setup(
     stdin: TextIO,
     stdout: TextIO,
     *,
     secret_reader: Callable[[str], str] | None = None,
     vendor_login: Callable[[str], bool] | None = None,
+    auto_detect_local: bool | None = None,
 ) -> dict[str, str] | None:
     """Prompt the operator through provider, API key, and model selection.
 
@@ -332,6 +350,32 @@ def interactive_first_run_setup(
     """
 
     try:
+        # Quick probe for local Ollama to offer 1-click zero-config start in interactive terminal
+        should_probe = (
+            auto_detect_local
+            if auto_detect_local is not None
+            else (hasattr(stdin, "isatty") and stdin.isatty())
+        )
+        if should_probe:
+            detected_models = probe_local_ollama()
+            if detected_models:
+                preferred = next(
+                    (m for m in detected_models if "coder" in m.lower()),
+                    detected_models[0],
+                )
+                stdout.write("\n🥑 Local Ollama detected on localhost:11434 with models:\n")
+                stdout.write(f"   {', '.join(detected_models[:4])}\n\n")
+                ans = _prompt_optional(
+                    stdin,
+                    stdout,
+                    f"Start coding immediately with local model '{preferred}'? [Y/n]",
+                    default="y",
+                )
+                if ans.lower() in ("y", "yes"):
+                    stdout.write(f"\n✓ Using local Ollama with {preferred}.\n")
+                    stdout.flush()
+                    return {"AVO_PROVIDER": "ollama", "AVO_MODEL": preferred}
+
         stdout.write("\n")
         stdout.write("Avo First-Time Setup\n")
         stdout.write("\n")
