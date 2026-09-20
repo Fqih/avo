@@ -197,6 +197,7 @@ class ChatContext:
     provider_factory: Callable[[], Any] | None = None
     active_loop_runner: Any | None = None
     active_loop_task: asyncio.Task[None] | None = None
+    mcp_manager: Any | None = None
 
 
 def _position_prompt_at_bottom(out: TextIO, *, terminal_rows: int | None = None) -> None:
@@ -404,6 +405,17 @@ def build_chat_context(
     history_mgr = ReplHistoryManager(workspace_root=workspace.root)
     agent_profiles = AgentProfileRegistry(workspace.root)
 
+    mcp_mgr: Any | None = None
+    for cand in (workspace.root / ".avo" / "mcp.json", workspace.root / "mcp.json"):
+        if cand.is_file():
+            try:
+                from avo.mcp_client import McpClientManager
+
+                mcp_mgr = McpClientManager.from_file(cand)
+            except Exception:
+                pass
+            break
+
     def provider_factory() -> Any:
         return build_provider_from_env(environ)
 
@@ -423,6 +435,7 @@ def build_chat_context(
             stream_enabled=chat_stream_enabled(environ),
             agent_profiles=agent_profiles,
             provider_factory=provider_factory,
+            mcp_manager=mcp_mgr,
         )
     if not session.session_exists(session_id):
         session.close()
@@ -444,6 +457,7 @@ def build_chat_context(
         stream_enabled=chat_stream_enabled(environ),
         agent_profiles=agent_profiles,
         provider_factory=provider_factory,
+        mcp_manager=mcp_mgr,
     )
 
 

@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Code Intelligence & AST Tools (`avo.code_intel`)**:
   - Native Python `ast` symbol extractor (`extract_symbols`), declaration finder (`find_symbol_definitions`), and reference tracker (`find_symbol_references`).
   - Added workspace-contained FunctionTools: `outline_symbols`, `find_definitions`, and `find_references`.
+  - Added `CodeSearchEngine` with BM25 keyword and docstring relevance scoring and `code_search_tool` (`code_search`).
+- **Dynamic MCP Client Hub (`avo.mcp_client`)**:
+  - Added `McpStdioClient` for communicating with external MCP servers over stdio with JSON-RPC 2.0 framing.
+  - Added `McpClientManager` reading `.avo/mcp.json` / `mcp.json` and discovering tools dynamically.
+  - Added auto-conversion of remote MCP tools into namespaced `FunctionTool` instances (`mcp__{server}__{tool}`).
+  - Added `/mcp [list|reload|connect]` REPL slash command.
 - **Multi-Agent Shared Blackboard Memory (`avo.blackboard`)**:
   - Shared typed key-value scratchpad backed by SQLite with optimistic versioning and namespace isolation.
   - Added agent FunctionTools: `blackboard_set`, `blackboard_get`, and `blackboard_list`.

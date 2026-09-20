@@ -13,6 +13,12 @@ from .models import (
     SymbolInfo,
     SymbolKind,
 )
+from .search import (
+    CodeSearchArguments,
+    CodeSearchEngine,
+    CodeSearchResult,
+    code_search_tool,
+)
 from .tools import (
     FindDefinitionsArguments,
     FindReferencesArguments,
@@ -23,6 +29,9 @@ from .tools import (
 )
 
 __all__ = [
+    "CodeSearchArguments",
+    "CodeSearchEngine",
+    "CodeSearchResult",
     "DefinitionLocation",
     "FindDefinitionsArguments",
     "FindReferencesArguments",
@@ -30,6 +39,7 @@ __all__ = [
     "ReferenceLocation",
     "SymbolInfo",
     "SymbolKind",
+    "code_search_tool",
     "extract_symbols",
     "find_definitions_tool",
     "find_references_tool",

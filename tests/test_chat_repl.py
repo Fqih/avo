@@ -2172,3 +2172,64 @@ async def test_repl_loop_commands(
     assert res is False
     assert "Stopped autonomous loop" in stdout.getvalue()
     assert ctx.active_loop_runner is None
+
+
+@pytest.mark.asyncio
+async def test_repl_mcp_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    import sys
+
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+
+    # 1. /mcp with no config
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/mcp", "list"], stdout, stderr, env)
+    assert res is False
+    assert "No MCP servers configured" in stdout.getvalue()
+
+    # 2. Write an mcp.json in workspace
+    fixture_path = Path(__file__).parent / "fixtures" / "fake_mcp_server.py"
+    mcp_config = {
+        "mcpServers": {
+            "test_server": {
+                "command": sys.executable,
+                "args": [str(fixture_path)],
+            }
+        }
+    }
+    (chat_env["workspace"] / ".avo").mkdir(parents=True, exist_ok=True)
+    (chat_env["workspace"] / ".avo" / "mcp.json").write_text(
+        json.dumps(mcp_config), encoding="utf-8"
+    )
+
+    # 3. /mcp list shows configured
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/mcp", "list"], stdout, stderr, env)
+    assert res is False
+    assert "test_server [configured]" in stdout.getvalue()
+
+    # 4. /mcp connect discovers tools
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/mcp", "connect"], stdout, stderr, env)
+    assert res is False
+    assert "Connected to MCP servers" in stdout.getvalue()
+    assert "mcp__test_server__echo" in stdout.getvalue()
+    assert "mcp__test_server__echo" in ctx.runtime.tools._tools
+
+    if ctx.mcp_manager:
+        await ctx.mcp_manager.close()

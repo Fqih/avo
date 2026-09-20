@@ -856,6 +856,62 @@ def _show_loop_status(ctx: ChatContext, out: TextIO) -> None:
     out.flush()
 
 
+async def _manage_mcp_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Inspect or connect external Model Context Protocol (MCP) servers."""
+    sub = args[1].lower() if len(args) > 1 else "list"
+    manager = ctx.mcp_manager
+    if manager is None:
+        from avo.mcp_client import McpClientManager
+
+        for cand in (ctx.workspace.root / ".avo" / "mcp.json", ctx.workspace.root / "mcp.json"):
+            if cand.is_file():
+                try:
+                    manager = McpClientManager.from_file(cand)
+                    ctx.mcp_manager = manager
+                except Exception as exc:
+                    err.write(f"Failed to load MCP config: {exc}\n")
+                break
+
+    if manager is None or not manager.config:
+        out.write("No MCP servers configured (.avo/mcp.json or mcp.json).\n")
+        out.flush()
+        return
+
+    if sub == "list":
+        out.write(f"Configured MCP Servers ({len(manager.config)}):\n")
+        for name, cfg in manager.config.items():
+            status = (
+                "disabled"
+                if cfg.disabled
+                else ("connected" if name in manager._clients else "configured")
+            )
+            out.write(f"  • {name} [{status}]: {cfg.command} {' '.join(cfg.args)}\n")
+        out.flush()
+        return
+
+    if sub in ("connect", "reload"):
+        try:
+            tools = await manager.discover_tools()
+            for t in tools:
+                ctx.runtime.tools._tools[t.metadata.name] = t
+            out.write(f"✓ Connected to MCP servers. Discovered {len(tools)} tools:\n")
+            for t in tools:
+                out.write(f"  • {t.metadata.name}: {t.metadata.description}\n")
+            out.flush()
+        except Exception as exc:
+            err.write(f"Failed to connect MCP servers: {exc}\n")
+            err.flush()
+        return
+
+    err.write("usage: /mcp [list|reload|connect]\n")
+    err.flush()
+
+
 async def _run_slash(
     ctx: ChatContext,
     args: list[str],
@@ -1231,6 +1287,10 @@ async def _run_slash(
 
     if cmd in ("/loop-status", "/loop_status"):
         _show_loop_status(ctx, out)
+        return False
+
+    if cmd == "/mcp":
+        await _manage_mcp_command(ctx, args, out, err)
         return False
 
     err.write(f"unknown command: {cmd}; try /help to list slash commands\n")

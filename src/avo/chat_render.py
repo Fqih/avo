@@ -436,6 +436,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/loop CADENCE PROMPT", "start an autonomous loop (e.g. /loop 5m run tests)"),
     ("/unloop", "stop the active autonomous loop"),
     ("/loop-status", "show active autonomous loop status and metrics"),
+    ("/mcp [list|reload|connect]", "manage external Model Context Protocol (MCP) servers"),
     ("/quit (or /exit, Ctrl+D)", "leave the chat"),
 )
 
