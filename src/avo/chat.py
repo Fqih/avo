@@ -198,6 +198,7 @@ class ChatContext:
     active_loop_runner: Any | None = None
     active_loop_task: asyncio.Task[None] | None = None
     mcp_manager: Any | None = None
+    fact_store: Any | None = None
 
 
 def _position_prompt_at_bottom(out: TextIO, *, terminal_rows: int | None = None) -> None:
@@ -371,6 +372,11 @@ def build_chat_context(
     resolved_approval_callback = approval_callback
     if resolved_approval_callback is None:
         resolved_approval_callback = build_approval_callback(resolved_policy)
+
+    from avo.memory import FactStore, recall_memory_tool, remember_tool
+
+    fact_store = FactStore(path=workspace_root / ".avo" / "memory.jsonl")
+
     runtime = AgentRuntime(
         provider=provider,
         event_store=store,
@@ -389,6 +395,8 @@ def build_chat_context(
             git_status_tool(),
             git_diff_tool(),
             git_commit_tool(),
+            remember_tool(fact_store),
+            recall_memory_tool(fact_store),
             *plugin_tools,
         ],
         approval_callback=resolved_approval_callback,
@@ -436,6 +444,7 @@ def build_chat_context(
             agent_profiles=agent_profiles,
             provider_factory=provider_factory,
             mcp_manager=mcp_mgr,
+            fact_store=fact_store,
         )
     if not session.session_exists(session_id):
         session.close()
@@ -458,6 +467,7 @@ def build_chat_context(
         agent_profiles=agent_profiles,
         provider_factory=provider_factory,
         mcp_manager=mcp_mgr,
+        fact_store=fact_store,
     )
 
 

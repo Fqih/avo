@@ -337,6 +337,8 @@ def test_build_chat_context_constructs_runtime_with_tools(
         "git_diff",
         "git_commit",
         "run_terminal",
+        "remember",
+        "recall_memory",
     }
 
 
@@ -2233,3 +2235,130 @@ async def test_repl_mcp_commands(
 
     if ctx.mcp_manager:
         await ctx.mcp_manager.close()
+
+
+@pytest.mark.asyncio
+async def test_repl_memory_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+
+    # 1. /remember
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(
+        ctx,
+        ["/remember", "Always", "use", "ruff", "for", "linting"],
+        stdout,
+        stderr,
+        env,
+    )
+    assert res is False
+    assert "✓ Remembered" in stdout.getvalue()
+    assert "Always use ruff for linting" in stdout.getvalue()
+
+    # Extract fact ID
+    out_text = stdout.getvalue()
+    fact_id = out_text.split("[")[1].split("]")[0]
+
+    # 2. /memories list
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/memories"], stdout, stderr, env)
+    assert res is False
+    assert "Stored Memories" in stdout.getvalue()
+    assert fact_id in stdout.getvalue()
+
+    # 3. /memories search
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/memories", "ruff", "linting"], stdout, stderr, env)
+    assert res is False
+    assert "Search memories for" in stdout.getvalue()
+    assert fact_id in stdout.getvalue()
+
+    # 4. /forget
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/forget", fact_id], stdout, stderr, env)
+    assert res is False
+    assert f"✓ Forgot memory {fact_id}" in stdout.getvalue()
+
+    # 5. /forget non-existent
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/forget", "missing-id"], stdout, stderr, env)
+    assert res is False
+    assert "not found" in stderr.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_repl_fork_and_rollback_commands(
+    chat_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from avo.chat import _run_slash
+
+    env = _environ_with_ollama()
+    monkeypatch.setattr("os.environ", env)
+
+    # Initialize a git repo in chat_env["workspace"]
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=chat_env["workspace"], check=True, capture_output=True)  # noqa: ASYNC221
+    subprocess.run(  # noqa: ASYNC221
+        ["git", "config", "user.name", "TestUser"],
+        cwd=chat_env["workspace"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(  # noqa: ASYNC221
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=chat_env["workspace"],
+        check=True,
+        capture_output=True,
+    )
+    (chat_env["workspace"] / "file.txt").write_text("clean state\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=chat_env["workspace"], check=True, capture_output=True)  # noqa: ASYNC221
+    subprocess.run(  # noqa: ASYNC221
+        ["git", "commit", "-m", "initial"],
+        cwd=chat_env["workspace"],
+        check=True,
+        capture_output=True,
+    )
+
+    ctx = build_chat_context(
+        database_path=chat_env["db"],
+        workspace_root=chat_env["workspace"],
+        environ=env,
+    )
+
+    # 1. /fork to create checkpoint
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/fork", "my-feature"], stdout, stderr, env)
+    assert res is False
+    assert "Created speculative workspace checkpoint" in stdout.getvalue()
+
+    # Make breaking change and add untracked file
+    (chat_env["workspace"] / "file.txt").write_text("corrupted content\n", encoding="utf-8")
+    (chat_env["workspace"] / "trash.tmp").write_text("junk", encoding="utf-8")
+
+    # 2. /rollback to revert
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    res = await _run_slash(ctx, ["/rollback", "my-feature"], stdout, stderr, env)
+    assert res is False
+    assert "Successfully rolled back workspace" in stdout.getvalue()
+    assert (chat_env["workspace"] / "file.txt").read_text(encoding="utf-8") == "clean state\n"
+    assert not (chat_env["workspace"] / "trash.tmp").exists()

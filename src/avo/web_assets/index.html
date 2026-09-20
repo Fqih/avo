@@ -17,6 +17,7 @@
       }
     }
   </script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <style>
     body { background-color: #0b0f19; color: #f3f4f6; font-family: ui-sans-serif, system-ui, sans-serif; }
     .glass { background: rgba(17, 24, 39, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
@@ -24,6 +25,25 @@
   </style>
 </head>
 <body class="min-h-screen flex flex-col">
+  <!-- Live Tool Approval Banner (Human-in-the-loop) -->
+  <div id="approvalBanner" class="hidden bg-amber-950/90 border-b border-amber-600/60 px-6 py-3 text-amber-200 text-xs shadow-lg flex flex-wrap items-center justify-between gap-3 z-50 sticky top-0">
+    <div class="flex items-center gap-2.5">
+      <span class="text-base animate-bounce">⚠️</span>
+      <div>
+        <span class="font-bold text-white uppercase tracking-wider text-[11px] bg-amber-900 px-2 py-0.5 rounded border border-amber-700">Approval Required</span>
+        <span id="approvalText" class="ml-2 font-mono text-amber-100">Tool execution waiting for authorization...</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <button id="approveBtn" onclick="resolveCurrentApproval(true)" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg shadow transition text-xs flex items-center gap-1">
+        ✓ Approve
+      </button>
+      <button id="denyBtn" onclick="resolveCurrentApproval(false)" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg shadow transition text-xs flex items-center gap-1">
+        ✕ Deny
+      </button>
+    </div>
+  </div>
+
   <!-- Navbar -->
   <header class="glass sticky top-0 z-40 px-6 py-4 flex items-center justify-between border-b border-gray-800">
     <div class="flex items-center gap-3">
@@ -615,6 +635,7 @@
         <div class="flex items-center gap-2">
           <div class="flex items-center bg-gray-900 rounded-lg p-0.5 border border-gray-800 text-xs">
             <button id="modalTabBtnTimeline" onclick="switchModalTab('timeline')" class="px-2.5 py-1 rounded font-semibold text-white bg-indigo-600 transition text-[11px]">Timeline</button>
+            <button id="modalTabBtnDag" onclick="switchModalTab('dag')" class="px-2.5 py-1 rounded font-semibold text-gray-400 hover:text-white transition text-[11px]">DAG Graph</button>
             <button id="modalTabBtnRaw" onclick="switchModalTab('raw')" class="px-2.5 py-1 rounded font-semibold text-gray-400 hover:text-white transition text-[11px]">Raw</button>
             <button id="modalTabBtnJson" onclick="switchModalTab('json')" class="px-2.5 py-1 rounded font-semibold text-gray-400 hover:text-white transition text-[11px]">JSON</button>
           </div>
@@ -676,12 +697,52 @@
       router: null,
       workspaceTree: null,
       currentFile: null,
-      currentFileOriginalContent: null
+      currentFileOriginalContent: null,
+      currentRunId: null,
+      currentTrace: null,
+      currentRunDag: null,
+      activeModalTab: 'timeline',
+      currentApproval: null
     };
 
     async function fetchJson(url) {
       const res = await fetch(url);
       return await res.json();
+    }
+
+    async function pollApprovals() {
+      try {
+        const data = await fetchJson('/api/approvals/pending');
+        const banner = document.getElementById('approvalBanner');
+        const textEl = document.getElementById('approvalText');
+        if (data && data.count > 0 && data.pending && data.pending.length > 0) {
+          state.currentApproval = data.pending[0];
+          const req = state.currentApproval;
+          const argsStr = JSON.stringify(req.arguments || {});
+          textEl.innerText = `Tool: ${req.tool_name} (Run: ${req.run_id || 'active'}) | Args: ${argsStr}`;
+          banner.classList.remove('hidden');
+        } else {
+          state.currentApproval = null;
+          banner.classList.add('hidden');
+        }
+      } catch (err) {
+        // quiet catch for approvals poll
+      }
+    }
+
+    async function resolveCurrentApproval(approved) {
+      if (!state.currentApproval) return;
+      const reqId = state.currentApproval.request_id;
+      try {
+        await fetch(`/api/approvals/${reqId}/decision`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ approved, reason: 'Operator decision from Web Cockpit' })
+        });
+        await pollApprovals();
+      } catch (err) {
+        alert('Failed to resolve approval: ' + err.message);
+      }
     }
 
     async function refreshData() {
@@ -707,6 +768,7 @@
         renderRouter();
         renderChatSessionsNav();
         renderGit();
+        await pollApprovals();
       } catch (err) {
         console.error("Fetch failed", err);
       }
@@ -1148,18 +1210,161 @@
     }
 
     async function inspectRun(runId) {
+      state.currentRunId = runId;
+      state.currentRunDag = null;
       document.getElementById('traceModal').classList.remove('hidden');
       document.getElementById('modalTitle').innerText = 'Run: ' + runId;
       const body = document.getElementById('modalBody');
       body.innerText = 'Loading trace details...';
+
       try {
         const trace = await fetchJson('/api/runs/' + runId);
+        state.currentTrace = trace;
+
+        // Populate KPI bar
+        const kpiSteps = document.getElementById('modalKpiSteps');
+        if (kpiSteps) kpiSteps.innerText = trace.steps ?? '-';
+        const kpiDur = document.getElementById('modalKpiDuration');
+        if (kpiDur) kpiDur.innerText = trace.duration_seconds != null ? `${Number(trace.duration_seconds).toFixed(2)}s` : '-';
+        const kpiReason = document.getElementById('modalKpiReason');
+        if (kpiReason) kpiReason.innerText = trace.stop_reason || '-';
+        const tok = trace.tokens || {};
+        const kpiTokens = document.getElementById('modalKpiTokens');
+        if (kpiTokens) kpiTokens.innerText = (tok.total_tokens || 0).toLocaleString();
+
+        const badge = document.getElementById('modalRunStateBadge');
+        if (badge) {
+          badge.classList.remove('hidden');
+          badge.innerText = trace.state || 'UNKNOWN';
+          badge.className = trace.state === 'COMPLETED' ? 'font-mono text-[10px] font-bold px-2 py-0.5 rounded border text-emerald-300 bg-emerald-950/60 border-emerald-800' :
+                            trace.state === 'FAILED' ? 'font-mono text-[10px] font-bold px-2 py-0.5 rounded border text-rose-300 bg-rose-950/60 border-rose-800' :
+                            'font-mono text-[10px] font-bold px-2 py-0.5 rounded border text-indigo-300 bg-indigo-950/60 border-indigo-800';
+        }
+
         const pre = document.createElement('pre');
         pre.className = 'text-gray-200 whitespace-pre-wrap';
         pre.textContent = trace.text || JSON.stringify(trace, null, 2);
         body.replaceChildren(pre);
       } catch (err) {
         body.innerText = 'Failed to load trace: ' + err;
+      }
+    }
+
+    async function switchModalTab(tabName) {
+      state.activeModalTab = tabName;
+      ['timeline', 'dag', 'raw', 'json'].forEach(t => {
+        const btn = document.getElementById('modalTabBtn' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (btn) {
+          if (t === tabName) {
+            btn.className = 'px-2.5 py-1 rounded font-semibold text-white bg-indigo-600 transition text-[11px]';
+          } else {
+            btn.className = 'px-2.5 py-1 rounded font-semibold text-gray-400 hover:text-white transition text-[11px]';
+          }
+        }
+      });
+      await renderModalTabContent();
+    }
+
+    async function renderModalTabContent() {
+      const body = document.getElementById('modalBody');
+      if (!state.currentTrace) return;
+      const trace = state.currentTrace;
+
+      if (state.activeModalTab === 'timeline') {
+        const entries = trace.entries || [];
+        if (!entries.length) {
+          body.innerHTML = '<div class="text-xs text-gray-500 italic p-4">No chronological events in this trace.</div>';
+          return;
+        }
+        body.innerHTML = `
+          <div class="space-y-2">
+            ${entries.map(e => {
+              const durBadge = e.duration_ms != null ? `<span class="text-[10px] font-mono text-gray-400">${Number(e.duration_ms).toFixed(1)}ms</span>` : '';
+              const errBadge = e.error ? `<span class="text-[10px] font-semibold text-rose-400 bg-rose-950 px-1.5 py-0.5 rounded border border-rose-800">${escapeHtml(e.error)}</span>` : '';
+              return `
+                <div class="p-3 rounded-xl bg-gray-900/60 border border-gray-800 flex items-start justify-between gap-3 font-mono text-xs">
+                  <div class="flex items-start gap-2.5">
+                    <span class="text-indigo-400 font-bold shrink-0">#${e.sequence}</span>
+                    <div>
+                      <span class="font-semibold text-white">${escapeHtml(e.event_type)}</span>
+                      <p class="text-gray-300 font-sans text-xs mt-0.5">${escapeHtml(e.summary || '')}</p>
+                      ${errBadge}
+                    </div>
+                  </div>
+                  <div class="text-right shrink-0 flex flex-col items-end gap-1">
+                    <span class="text-[10px] text-gray-500">${e.created_at ? e.created_at.substring(11, 19) : ''}</span>
+                    ${durBadge}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      } else if (state.activeModalTab === 'dag') {
+        body.innerHTML = '<div class="text-xs text-indigo-400 p-4 italic">Generating interactive DAG flow graph...</div>';
+        try {
+          if (!state.currentRunDag) {
+            state.currentRunDag = await fetchJson(`/api/runs/${state.currentRunId}/dag`);
+          }
+          const dag = state.currentRunDag;
+          if (dag.error) {
+            body.innerHTML = `<div class="text-xs text-rose-400 p-4">DAG generation error: ${escapeHtml(dag.error)}</div>`;
+            return;
+          }
+
+          body.innerHTML = `
+            <div class="space-y-4">
+              <div class="flex items-center justify-between text-xs text-gray-400 px-1">
+                <span>Execution DAG: <strong>${dag.node_count}</strong> nodes, <strong>${dag.edge_count}</strong> transitions</span>
+                <span class="text-[11px] font-mono text-indigo-400">Mermaid Visualizer</span>
+              </div>
+              <div id="mermaidContainer" class="mermaid p-4 rounded-xl bg-gray-950 border border-gray-800 text-xs overflow-x-auto flex justify-center">
+                ${escapeHtml(dag.mermaid)}
+              </div>
+              <div class="space-y-2 mt-4">
+                <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">Node Sequence</h4>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  ${dag.nodes.map(n => `
+                    <div class="p-2.5 rounded-lg bg-gray-900/50 border border-gray-800 flex items-center justify-between gap-2">
+                      <div class="truncate">
+                        <span class="font-mono text-indigo-400 font-bold mr-1">#${n.sequence}</span>
+                        <span class="text-white font-medium">${escapeHtml(n.label)}</span>
+                      </div>
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-mono border ${
+                        n.kind === 'error' ? 'text-rose-400 bg-rose-950 border-rose-800' :
+                        n.kind === 'tool' ? 'text-amber-400 bg-amber-950 border-amber-800' :
+                        n.kind === 'model' ? 'text-indigo-400 bg-indigo-950 border-indigo-800' :
+                        'text-gray-400 bg-gray-900 border-gray-700'
+                      }">${n.kind}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          `;
+
+          if (window.mermaid) {
+            try {
+              const el = document.getElementById('mermaidContainer');
+              if (el) {
+                el.removeAttribute('data-processed');
+                await window.mermaid.run({ nodes: [el] });
+              }
+            } catch (mErr) {
+              console.warn('Mermaid render error', mErr);
+            }
+          }
+        } catch (err) {
+          body.innerHTML = `<div class="text-xs text-rose-400 p-4">Failed to load DAG: ${escapeHtml(err.message)}</div>`;
+        }
+      } else if (state.activeModalTab === 'raw') {
+        body.innerHTML = `
+          <pre class="p-4 bg-gray-950 rounded-xl border border-gray-800 text-gray-200 font-mono text-xs whitespace-pre-wrap leading-relaxed select-text">${escapeHtml(trace.text || '')}</pre>
+        `;
+      } else if (state.activeModalTab === 'json') {
+        body.innerHTML = `
+          <pre class="p-4 bg-gray-950 rounded-xl border border-gray-800 text-indigo-200 font-mono text-xs whitespace-pre-wrap leading-relaxed select-text">${escapeHtml(JSON.stringify(trace, null, 2))}</pre>
+        `;
       }
     }
 
@@ -2074,7 +2279,10 @@
       }
     }
 
-    window.onload = refreshData;
+    window.onload = () => {
+      refreshData();
+      setInterval(pollApprovals, 2500);
+    };
   </script>
 </body>
 </html>

@@ -343,6 +343,7 @@ class SandboxExecutor:
         cpu_quota: int = _DEFAULT_CPU_QUOTA,
         network_mode: str = "none",
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+        allow_rootless_fallback: bool = False,
     ) -> None:
         self._explicit_client = client is not None
         self._client: _DockerClient | None = client
@@ -356,6 +357,7 @@ class SandboxExecutor:
         self.cpu_quota = cpu_quota
         self.network_mode = network_mode
         self.timeout_seconds = timeout_seconds
+        self.allow_rootless_fallback = allow_rootless_fallback
 
     @classmethod
     def for_language(
@@ -407,7 +409,31 @@ class SandboxExecutor:
         """
 
         effective_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
-        client = self._resolve_client()
+        import os
+
+        can_fallback = self.allow_rootless_fallback or os.environ.get("AVO_SANDBOX_ROOTLESS") == "1"
+        try:
+            client = self._resolve_client()
+        except SandboxError:
+            if can_fallback:
+                from .rootless_sandbox import (
+                    RootlessSandboxExecutor,
+                    is_rootless_sandbox_supported,
+                )
+
+                if is_rootless_sandbox_supported():
+                    rootless = RootlessSandboxExecutor(
+                        network_mode=self.network_mode,
+                        timeout_seconds=self.timeout_seconds,
+                        mem_limit=self.mem_limit,
+                    )
+                    return await rootless.run(
+                        command,
+                        workspace_dir=workspace_dir,
+                        env=env,
+                        timeout_seconds=timeout_seconds,
+                    )
+            raise
 
         try:
             container = await asyncio.to_thread(
@@ -420,6 +446,23 @@ class SandboxExecutor:
         except SandboxError:
             raise
         except Exception as exc:  # pragma: no cover - docker errors vary
+            from .rootless_sandbox import (
+                RootlessSandboxExecutor,
+                is_rootless_sandbox_supported,
+            )
+
+            if is_rootless_sandbox_supported():
+                rootless = RootlessSandboxExecutor(
+                    network_mode=self.network_mode,
+                    timeout_seconds=self.timeout_seconds,
+                    mem_limit=self.mem_limit,
+                )
+                return await rootless.run(
+                    command,
+                    workspace_dir=workspace_dir,
+                    env=env,
+                    timeout_seconds=timeout_seconds,
+                )
             raise SandboxError(f"failed to create sandbox container: {exc}") from exc
 
         try:

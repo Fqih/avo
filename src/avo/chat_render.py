@@ -437,6 +437,11 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/unloop", "stop the active autonomous loop"),
     ("/loop-status", "show active autonomous loop status and metrics"),
     ("/mcp [list|reload|connect]", "manage external Model Context Protocol (MCP) servers"),
+    ("/remember FACT", "save a persistent fact, preference, or project decision"),
+    ("/memories [QUERY]", "search or list stored long-term facts"),
+    ("/forget ID", "delete a remembered fact by its ID"),
+    ("/fork [NAME]", "create a speculative safety checkpoint of the workspace"),
+    ("/rollback [TAG]", "revert workspace files to a previously saved checkpoint"),
     ("/quit (or /exit, Ctrl+D)", "leave the chat"),
 )
 

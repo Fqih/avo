@@ -28,6 +28,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Web Cockpit Full-Duplex (`avo.web_approval`, `avo.web_dag`)**:
   - Added `WebApprovalBridge` for human-in-the-loop tool approval with `GET /api/approvals/pending` and `POST /api/approvals/{id}/decision`.
   - Added DAG trace visualizer with `GET /api/runs/{id}/dag` and Mermaid graph rendering.
+  - Integrated Mermaid.js visual execution DAG and sticky live approval banner in Web UI dashboard (`index.html`).
+- **Rootless Sandbox Fallback (`avo.app_tools.rootless_sandbox`)**:
+  - Added `RootlessSandboxExecutor` using Bubblewrap (`bwrap`) with unshared namespaces, read-only root, and ephemeral tmpfs.
+  - Added rootless isolation fallback in `SandboxExecutor` when Docker daemon is unavailable.
+- **Epistemic Memory & Fact Store (`avo.memory`)**:
+  - Added `FactStore` with BM25 keyword relevance recall across categories (`user`, `project`, `feedback`, `reference`).
+  - Added model FunctionTools: `remember` and `recall_memory`.
+  - Added REPL commands: `/remember <FACT>`, `/memories [QUERY]`, and `/forget <ID>`.
+- **Speculative Execution & Test-Driven Self-Correction (`avo.speculative`)**:
+  - Added `WorkspaceSnapshot` capturing and restoring workspace git state.
+  - Added `SpeculativeRunner` executing tasks with automated test suite verification and rollback on failure.
+  - Added model FunctionTools: `create_checkpoint` and `rollback_checkpoint`.
+  - Added REPL commands: `/fork [NAME]` and `/rollback [TAG]`.
+- **Standalone One-Line Installer (`scripts/install.sh`)**:
+  - Added curl-pipeable installer with automatic `uv`, `pipx`, and native Python 3.11+ venv detection.
 
 ## [0.7.3] - 2026-09-20
 

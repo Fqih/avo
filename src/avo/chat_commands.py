@@ -912,6 +912,114 @@ async def _manage_mcp_command(
     err.flush()
 
 
+def _remember_fact(ctx: ChatContext, text: str, out: TextIO, err: TextIO) -> None:
+    """Store a persistent fact or preference."""
+    if not text.strip():
+        err.write("usage: /remember <FACT>\n")
+        err.flush()
+        return
+    store = ctx.fact_store
+    if store is None:
+        from avo.memory import FactStore
+
+        store = FactStore(path=ctx.workspace.root / ".avo" / "memory.jsonl")
+        ctx.fact_store = store
+
+    fact = store.remember(text.strip(), category="user")
+    out.write(f"✓ Remembered [{fact.id}]: {fact.content}\n")
+    out.flush()
+
+
+def _show_memories(ctx: ChatContext, query: str | None, out: TextIO) -> None:
+    """List or search persistent memories."""
+    store = ctx.fact_store
+    if store is None:
+        from avo.memory import FactStore
+
+        store = FactStore(path=ctx.workspace.root / ".avo" / "memory.jsonl")
+        ctx.fact_store = store
+
+    if query and query.strip():
+        results = store.recall(query.strip(), k=10)
+        out.write(f"Search memories for {query.strip()!r} ({len(results)} found):\n")
+        for f in results:
+            out.write(f"  • [{f.id}] ({f.category}) {f.content}\n")
+    else:
+        all_facts = store.list_all()
+        if not all_facts:
+            out.write(
+                "No stored memories found (.avo/memory.jsonl). Use /remember <FACT> to add one.\n"
+            )
+        else:
+            out.write(f"Stored Memories ({len(all_facts)}):\n")
+            for f in all_facts:
+                out.write(f"  • [{f.id}] ({f.category}) {f.content}\n")
+    out.flush()
+
+
+def _forget_fact(ctx: ChatContext, fact_id: str, out: TextIO, err: TextIO) -> None:
+    """Delete a memory by ID."""
+    if not fact_id.strip():
+        err.write("usage: /forget <FACT_ID>\n")
+        err.flush()
+        return
+    store = ctx.fact_store
+    if store is None:
+        from avo.memory import FactStore
+
+        store = FactStore(path=ctx.workspace.root / ".avo" / "memory.jsonl")
+        ctx.fact_store = store
+
+    if store.delete(fact_id.strip()):
+        out.write(f"✓ Forgot memory {fact_id.strip()}.\n")
+    else:
+        err.write(f"Memory {fact_id.strip()} not found.\n")
+    out.flush()
+    err.flush()
+
+
+def _manage_fork_command(
+    ctx: ChatContext,
+    name: str | None,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Create an isolated workspace checkpoint for speculative edits."""
+    from avo.speculative import WorkspaceSnapshot
+
+    try:
+        snapshot = WorkspaceSnapshot(ctx.workspace.root)
+        tag = snapshot.capture(name=name)
+        out.write(f"✓ Created speculative workspace checkpoint {tag!r}.\n")
+        out.write("Use /rollback to revert to this checkpoint if tasks fail.\n")
+        out.flush()
+    except Exception as exc:
+        err.write(f"Failed to create checkpoint: {exc}\n")
+        err.flush()
+
+
+def _manage_rollback_command(
+    ctx: ChatContext,
+    tag: str | None,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Revert workspace to a previous checkpoint."""
+    from avo.speculative import WorkspaceSnapshot
+
+    try:
+        snapshot = WorkspaceSnapshot(ctx.workspace.root)
+        if snapshot.restore(tag or ""):
+            out.write("✓ Successfully rolled back workspace to clean checkpoint.\n")
+        else:
+            err.write(f"Could not rollback workspace with tag {tag!r}.\n")
+        out.flush()
+        err.flush()
+    except Exception as exc:
+        err.write(f"Failed to rollback checkpoint: {exc}\n")
+        err.flush()
+
+
 async def _run_slash(
     ctx: ChatContext,
     args: list[str],
@@ -1291,6 +1399,31 @@ async def _run_slash(
 
     if cmd == "/mcp":
         await _manage_mcp_command(ctx, args, out, err)
+        return False
+
+    if cmd == "/remember":
+        text = " ".join(args[1:]) if len(args) > 1 else ""
+        _remember_fact(ctx, text, out, err)
+        return False
+
+    if cmd in ("/memories", "/memory"):
+        query = " ".join(args[1:]) if len(args) > 1 else None
+        _show_memories(ctx, query, out)
+        return False
+
+    if cmd == "/forget":
+        fid = args[1] if len(args) > 1 else ""
+        _forget_fact(ctx, fid, out, err)
+        return False
+
+    if cmd == "/fork":
+        fork_name = args[1] if len(args) > 1 else None
+        _manage_fork_command(ctx, fork_name, out, err)
+        return False
+
+    if cmd == "/rollback":
+        tag = args[1] if len(args) > 1 else None
+        _manage_rollback_command(ctx, tag, out, err)
         return False
 
     err.write(f"unknown command: {cmd}; try /help to list slash commands\n")
