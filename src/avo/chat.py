@@ -199,6 +199,8 @@ class ChatContext:
     active_loop_task: asyncio.Task[None] | None = None
     mcp_manager: Any | None = None
     fact_store: Any | None = None
+    original_repo_root: Path | None = None
+    active_worktree_id: str | None = None
 
 
 def _position_prompt_at_bottom(out: TextIO, *, terminal_rows: int | None = None) -> None:

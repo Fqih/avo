@@ -1029,6 +1029,136 @@ def _manage_rollback_command(
         err.flush()
 
 
+def _manage_worktree_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Manage git worktree isolation within the chat session."""
+    import time
+
+    from avo.app_tools.file_tools import bind_workspace
+    from avo.app_tools.workspace import Workspace
+    from avo.app_tools.worktree import GitWorktreeError, GitWorktreeManager
+
+    if ctx.original_repo_root is None:
+        ctx.original_repo_root = ctx.workspace.root
+        ctx.active_worktree_id = None
+
+    try:
+        manager = GitWorktreeManager(repo_root=ctx.original_repo_root)
+    except GitWorktreeError as exc:
+        err.write(f"Worktree error: {exc}\n")
+        err.flush()
+        return
+
+    sub = args[1].lower() if len(args) > 1 else "status"
+
+    if sub in ("status", "list"):
+        active = manager.list_active_worktrees()
+        current_wt = ctx.active_worktree_id
+        out.write("Git Worktree Status:\n")
+        out.write(f"  Base repository: {ctx.original_repo_root}\n")
+        out.write(f"  Current active workspace: {ctx.workspace.root}\n")
+        if current_wt:
+            out.write(f"  🌿 Active isolated run_id: {current_wt}\n")
+        else:
+            out.write("  No active worktree (running on base repo)\n")
+        out.write(f"\nActive worktrees ({len(active)}):\n")
+        for wt in active:
+            out.write(f"  • {wt.get('run_id')} ({wt.get('branch')}) -> {wt.get('worktree')}\n")
+        out.flush()
+        return
+
+    if sub == "isolate":
+        name = args[2] if len(args) > 2 else f"task-{int(time.time())}"
+        try:
+            wt_path = manager.create_worktree(name)
+            ctx.active_worktree_id = name
+            ctx.workspace = Workspace(wt_path, create=False)
+            bind_workspace(ctx.workspace)
+            out.write(f"✓ Isolated worktree active at: {wt_path}\n")
+            out.write("All agent file modifications will now occur in this isolated worktree.\n")
+            out.write("Use `/worktree merge` to merge back, or `/worktree discard` to cancel.\n")
+            out.flush()
+        except GitWorktreeError as exc:
+            err.write(f"Failed to create worktree: {exc}\n")
+            err.flush()
+        return
+
+    if sub == "merge":
+        current_wt = ctx.active_worktree_id
+        if not current_wt:
+            err.write("No active worktree to merge.\n")
+            err.flush()
+            return
+        dest = args[2] if len(args) > 2 else "main"
+        try:
+            manager.cleanup_worktree(current_wt, merge=True, target_branch=dest)
+            out.write(f"✓ Merged worktree {current_wt} into {dest} and cleaned up.\n")
+            if ctx.original_repo_root is not None:
+                ctx.workspace = Workspace(ctx.original_repo_root, create=False)
+                bind_workspace(ctx.workspace)
+            ctx.active_worktree_id = None
+            out.flush()
+        except GitWorktreeError as exc:
+            err.write(f"Failed to merge worktree: {exc}\n")
+            err.flush()
+        return
+
+    if sub == "discard":
+        current_wt = ctx.active_worktree_id
+        if not current_wt:
+            err.write("No active worktree to discard.\n")
+            err.flush()
+            return
+        manager.cleanup_worktree(current_wt, merge=False)
+        out.write(f"✓ Discarded worktree {current_wt}.\n")
+        if ctx.original_repo_root is not None:
+            ctx.workspace = Workspace(ctx.original_repo_root, create=False)
+            bind_workspace(ctx.workspace)
+        ctx.active_worktree_id = None
+        out.flush()
+        return
+
+    err.write("usage: /worktree [status|list|isolate <name>|merge [branch]|discard]\n")
+    err.flush()
+
+
+async def _run_review_command(
+    ctx: ChatContext,
+    args: list[str],
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Run an automated code review on current working tree diff."""
+    import subprocess
+
+    del args
+    res = subprocess.run(  # noqa: ASYNC221
+        ["git", "diff", "HEAD"],
+        cwd=ctx.workspace.root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    diff = res.stdout.strip()
+    if not diff:
+        out.write("Working tree is clean; no uncommitted changes to review.\n")
+        out.flush()
+        return
+
+    out.write("🔍 Reviewing uncommitted changes against HEAD...\n\n")
+    out.flush()
+    prompt = (
+        "Perform a strict code review on the following git diff. "
+        "Identify bugs, security vulnerabilities, edge cases, and style issues:\n\n"
+        f"```diff\n{diff}\n```"
+    )
+    await _run_turn(ctx, prompt, out, err)
+
+
 async def _run_slash(
     ctx: ChatContext,
     args: list[str],
@@ -1113,6 +1243,14 @@ async def _run_slash(
             err.flush()
             return False
         _run_repl_shell(ctx.workspace.root, cmd_text, out, err)
+        return False
+
+    if cmd == "/worktree":
+        _manage_worktree_command(ctx, args, out, err)
+        return False
+
+    if cmd == "/review":
+        await _run_review_command(ctx, args, out, err)
         return False
 
     if cmd == "/diff":

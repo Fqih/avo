@@ -401,6 +401,8 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/lint [PATH]", "run code linter and syntax checks on workspace files"),
     ("/test [TARGET]", "run automated test suite on workspace files"),
     ("/commit [MSG]", "stage changes and create atomic git commit (auto-message if omitted)"),
+    ("/review", "run automated code review on current working tree diff"),
+    ("/worktree [CMD]", "manage isolated git worktrees (status, isolate, merge, discard)"),
     ("/branch [NAME]", "list git branches, or switch/create branch NAME"),
     ("/log [N]", "show recent N git commits in the repository"),
     ("/stash [CMD]", "manage git stash (list, save, pop, or drop)"),
