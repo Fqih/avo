@@ -239,6 +239,46 @@ def _parser() -> argparse.ArgumentParser:
         help="Manage token-saver presets (see `avo saver --help`).",
     )
 
+    run_cmd = commands.add_parser(
+        "run",
+        help="Execute an autonomous task prompt directly without starting chat.",
+    )
+    run_cmd.add_argument(
+        "prompt",
+        nargs="?",
+        default=None,
+        help="The task or instruction to execute.",
+    )
+    run_cmd.add_argument(
+        "--prompt",
+        "-p",
+        dest="prompt_flag",
+        default=None,
+        help="Alternative way to provide task prompt.",
+    )
+    run_cmd.add_argument(
+        "--worktree",
+        "-w",
+        action="store_true",
+        help="Execute task in an isolated git worktree (.avo/worktrees/<run_id>).",
+    )
+    run_cmd.add_argument(
+        "--auto-merge",
+        action="store_true",
+        help="Automatically merge worktree changes into main branch on completion.",
+    )
+    run_cmd.add_argument(
+        "--workspace-root",
+        type=Path,
+        default=None,
+        help="Workspace directory (default: current working directory).",
+    )
+    run_cmd.add_argument(
+        "--json",
+        action="store_true",
+        help="Output JSON summary.",
+    )
+
     return parser
 
 
@@ -354,6 +394,27 @@ async def _execute(
         server.run_forever()
         return 0
 
+    if args.command == "run":
+        from avo.cli_run import run_cli_task
+
+        prompt_val = args.prompt or getattr(args, "prompt_flag", None)
+        if not prompt_val and not sys.stdin.isatty():
+            prompt_val = sys.stdin.read().strip()
+        if not prompt_val:
+            raise AvoError("Task prompt is required for `avo run`. Example: avo run 'fix tests'")
+
+        workspace_root = (args.workspace_root or Path.cwd()).resolve()
+        db_path = resolve_database_path(args.database)
+        result = await run_cli_task(
+            task=prompt_val,
+            workspace_root=workspace_root,
+            database_path=db_path,
+            use_worktree=bool(args.worktree),
+            auto_merge=bool(args.auto_merge),
+            json_output=bool(args.json),
+        )
+        return 0 if result.status.value in ("green", "completed") else 1
+
     if args.command == "chat":
         workspace_root = (args.workspace_root or Path.cwd()).resolve()
         return await run_repl(
@@ -436,13 +497,42 @@ async def _execute(
         await store.close()
 
 
+_TOP_LEVEL_COMMANDS = {
+    "runs",
+    "replay",
+    "chat",
+    "resume",
+    "doctor",
+    "plugin",
+    "mcp",
+    "skill",
+    "init",
+    "setup",
+    "bench",
+    "sandbox",
+    "cost",
+    "serve-mcp",
+    "login",
+    "ui",
+    "combo",
+    "models",
+    "saver",
+    "run",
+}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the Avo CLI and return a process exit status."""
 
     parser = _parser()
     effective_argv = list(sys.argv[1:] if argv is None else argv)
     if not effective_argv:
-        effective_argv = ["chat"]
+        effective_argv = ["run"] if not sys.stdin.isatty() else ["chat"]
+    elif effective_argv[0] in ("-p", "--prompt") or (
+        effective_argv[0] not in _TOP_LEVEL_COMMANDS and not effective_argv[0].startswith("-")
+    ):
+        effective_argv = ["run", *effective_argv]
+
     args, rest = parser.parse_known_args(effective_argv)
     if rest and args.command not in {
         "login",
@@ -458,6 +548,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "combo",
         "models",
         "saver",
+        "run",
     }:
         parser.error(f"unrecognized arguments: {' '.join(rest)}")
     try:
