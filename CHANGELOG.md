@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Autonomous Test Repair Engine (`avo fix` / `/fix`)**:
+  - Automatically runs test suites, catches failing assertions and tracebacks.
+  - Isolates repair turns in ephemeral Git worktrees (`avo/fix-<run_id>`).
+  - Verifies repair with `test_runner` and automatically merges fixes if clean.
+- **Autonomous GitHub Pull Request Drafter (`avo pr` / `/pr`)**:
+  - Analyzes git branch diffs against base (`main`), generating staff-engineer quality PR descriptions.
+  - Direct creation on GitHub via `gh pr create` with `--create` flag.
+- **Real-Time Tool Execution Badges (`avo.cli_run.build_cli_progress_hooks`)**:
+  - Live ANSI badges (`⚙️ tool: edit_file (path=...)` / `✓ edit_file completed`) during autonomous runs.
 - **Direct Autonomous Prompt Execution (`avo run` / `avo "task"`)**:
   - Direct task execution without entering interactive chat REPL.
   - Automatic isolation in Git worktrees via `--worktree` / `-w` and automated `--auto-merge`.

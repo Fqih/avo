@@ -35,11 +35,20 @@ irm https://avo.faqihhakim.tech/install.ps1 | iex
 Once installed, launch Avo in any git repository:
 
 ```bash
-# 1. Connect your models (Claude, ChatGPT, Gemini, or local Ollama)
+# 1. Connect your models (Claude, ChatGPT, Gemini, or zero-config local Ollama)
 avo setup
 
-# 2. Start autonomous coding in your workspace
+# 2. Start autonomous coding in interactive chat REPL
 avo
+
+# 3. Or run autonomous tasks directly from terminal
+avo "Implement user profile editing with tests" --worktree --auto-merge
+
+# 4. Or autonomously diagnose and repair failing tests
+avo fix tests/test_auth.py
+
+# 5. Generate production-ready GitHub PR from your diff
+avo pr --base main
 ```
 
 *(Prefer Python package? Run `uv tool install avo[all]` or `pip install avo`)*
@@ -99,7 +108,7 @@ avo> Implement git worktree isolation for our test suite and run tests
 
 Prefer a visual dashboard? Launch the **Avo Web Cockpit**:
 ```bash
-avo web --port 43111
+avo ui --port 43111
 ```
 View live execution DAGs, real-time token spend ledgers, circuit breaker health, and approve tool authorizations from your browser.
 
