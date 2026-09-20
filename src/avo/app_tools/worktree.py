@@ -109,6 +109,27 @@ class GitWorktreeManager:
 
         if merge:
             dest = target_branch or "main"
+            cb_proc = subprocess.run(
+                ["git", "symbolic-ref", "--short", "HEAD"],
+                cwd=self.repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            current_branch = cb_proc.stdout.strip()
+            if dest and current_branch and dest != current_branch:
+                co_proc = subprocess.run(
+                    ["git", "checkout", dest],
+                    cwd=self.repo_root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if co_proc.returncode != 0:
+                    raise GitWorktreeError(
+                        f"Failed to switch to target branch {dest}: {co_proc.stderr.strip()}"
+                    )
+
             # Merge branch into target branch
             merge_cmd = ["git", "merge", branch_name]
             m_res = subprocess.run(

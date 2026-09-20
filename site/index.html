@@ -256,27 +256,32 @@
           <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-faint);">agent_example.py</span>
         </div>
         <div class="avo-terminal-body">
-          <pre style="margin: 0; color: #e2e8f0; font-size: 0.88rem; line-height: 1.6;"><code><span style="color: #f43f5e;">from</span> avo <span style="color: #f43f5e;">import</span> AgentRuntime, LoopPolicy, FunctionTool
-<span style="color: #f43f5e;">from</span> avo.app_tools <span style="color: #f43f5e;">import</span> GitWorktreeManager, read_file_tool, write_file_tool
+          <pre style="margin: 0; color: #e2e8f0; font-size: 0.88rem; line-height: 1.6;"><code><span style="color: #f43f5e;">from</span> pathlib <span style="color: #f43f5e;">import</span> Path
+<span style="color: #f43f5e;">from</span> avo <span style="color: #f43f5e;">import</span> AgentRuntime, LoopPolicy
+<span style="color: #f43f5e;">from</span> avo.app_tools <span style="color: #f43f5e;">import</span> GitWorktreeManager, bind_workspace, read_file_tool, write_file_tool
+<span style="color: #f43f5e;">from</span> avo.app_tools.workspace <span style="color: #f43f5e;">import</span> Workspace
 <span style="color: #f43f5e;">from</span> avo.config <span style="color: #f43f5e;">import</span> build_provider_from_env
+<span style="color: #f43f5e;">from</span> avo.storage.sqlite <span style="color: #f43f5e;">import</span> SQLiteEventStore
 
 <span style="color: #64748b;"># 1. Initialize isolated git worktree for this run</span>
 manager = GitWorktreeManager(repo_root=<span style="color: #a7f3d0;">"."</span>)
 worktree_path = manager.create_worktree(run_id=<span style="color: #a7f3d0;">"task-audit-01"</span>)
+workspace = Workspace(worktree_path)
 
 <span style="color: #64748b;"># 2. Build runtime with bounded step and token budget</span>
 runtime = AgentRuntime(
     provider=build_provider_from_env(),
-    policy=LoopPolicy(max_steps=<span style="color: #38bdf8;">15</span>, token_budget=<span style="color: #38bdf8;">50_000</span>),
-    tools=[read_file_tool, write_file_tool],
-    database_path=<span style="color: #a7f3d0;">".avo/runs.db"</span>
+    policy=LoopPolicy(max_steps=<span style="color: #38bdf8;">15</span>, max_total_tokens=<span style="color: #38bdf8;">50_000</span>),
+    tools=[read_file_tool(), write_file_tool()],
+    event_store=SQLiteEventStore(Path(<span style="color: #a7f3d0;">".avo/runs.db"</span>))
 )
 
 <span style="color: #64748b;"># 3. Execute with deterministic event logging and step checkpoints</span>
-result = await runtime.run(
-    task=<span style="color: #a7f3d0;">"Audit dependencies and apply security fixes in isolated worktree."</span>
-)
-<span style="color: #38bdf8;">print</span>(f<span style="color: #a7f3d0;">"Run completed: {result.state} (StopReason: {result.stop_reason})"</span>)</code></pre>
+<span style="color: #f43f5e;">with</span> bind_workspace(workspace):
+    result = <span style="color: #f43f5e;">await</span> runtime.run(
+        task=<span style="color: #a7f3d0;">"Audit dependencies and apply security fixes in isolated worktree."</span>
+    )
+<span style="color: #38bdf8;">print</span>(f<span style="color: #a7f3d0;">"Run completed: {result.status.value} (StopReason: {result.stop_reason.value if result.stop_reason else 'None'})"</span>)</code></pre>
         </div>
       </div>
     </section>

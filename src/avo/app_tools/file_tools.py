@@ -17,6 +17,7 @@ mutate.
 
 from __future__ import annotations
 
+import contextvars
 import os
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -48,6 +49,9 @@ class WorkspaceNotBoundError(RuntimeError):
     """Raised when a file tool is invoked without an active workspace binding."""
 
 
+_workspace_stack_var: contextvars.ContextVar[tuple[Workspace, ...]] = contextvars.ContextVar(
+    "_workspace_stack_var", default=()
+)
 _workspace_stack: list[Workspace] = []
 
 
@@ -56,19 +60,26 @@ def bind_workspace(workspace: Workspace) -> Generator[None, None, None]:
     """Push ``workspace`` onto the active binding for the duration of the block."""
 
     _workspace_stack.append(workspace)
+    stack = _workspace_stack_var.get()
+    token = _workspace_stack_var.set((*stack, workspace))
     try:
         yield
     finally:
-        _workspace_stack.pop()
+        _workspace_stack_var.reset(token)
+        if _workspace_stack:
+            _workspace_stack.pop()
 
 
 def _current_workspace() -> Workspace:
-    if not _workspace_stack:
-        raise WorkspaceNotBoundError(
-            "file tool invoked without an active workspace; wrap the run in "
-            "avo.app_tools.file_tools.bind_workspace(...)"
-        )
-    return _workspace_stack[-1]
+    stack = _workspace_stack_var.get()
+    if stack:
+        return stack[-1]
+    if _workspace_stack:
+        return _workspace_stack[-1]
+    raise WorkspaceNotBoundError(
+        "file tool invoked without an active workspace; wrap the run in "
+        "avo.app_tools.file_tools.bind_workspace(...)"
+    )
 
 
 async def _read_file(arguments: ReadFileArguments) -> dict[str, Any]:

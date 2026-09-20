@@ -161,3 +161,29 @@ async def test_chat_slash_fix_dispatches_cleanly(
     exit_flag = await _run_slash(ctx, ["/fix", "tests/test_calc.py"], out, err, {})
     assert exit_flag is False
     assert called_fix == ["tests/test_calc.py"]
+
+
+@pytest.mark.asyncio
+async def test_run_cli_fix_fails_closed_when_worktree_fails(tmp_path: Path) -> None:
+    from avo.exceptions import AvoError
+
+    non_git = tmp_path / "non_git_fix"
+    non_git.mkdir()
+    fake_provider = FakeProvider([ModelResponse(content="done")])
+
+    with patch("avo.cli_fix.run_tests") as mock_run_tests:
+        mock_run_tests.return_value = {
+            "ok": False,
+            "runner": "pytest",
+            "summary": "1 failed",
+            "failures": ["error"],
+            "output": "failed",
+        }
+
+        with pytest.raises(AvoError, match="Git worktree isolation failed"):
+            await run_cli_fix(
+                workspace_root=non_git,
+                database_path=tmp_path / "fix.db",
+                provider=fake_provider,
+                allow_in_place=False,
+            )

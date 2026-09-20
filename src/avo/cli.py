@@ -274,6 +274,11 @@ def _parser() -> argparse.ArgumentParser:
         help="Workspace directory (default: current working directory).",
     )
     run_cmd.add_argument(
+        "--allow-in-place",
+        action="store_true",
+        help="Permit running directly on workspace if git worktree isolation fails.",
+    )
+    run_cmd.add_argument(
         "--json",
         action="store_true",
         help="Output JSON summary.",
@@ -295,6 +300,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_false",
         default=True,
         help="Do not automatically merge the fix back into the repository.",
+    )
+    fix_cmd.add_argument(
+        "--allow-in-place",
+        action="store_true",
+        help="Permit running repair directly on workspace if git worktree isolation fails.",
     )
     fix_cmd.add_argument(
         "--workspace-root",
@@ -457,6 +467,7 @@ async def _execute(
             database_path=db_path,
             use_worktree=bool(args.worktree),
             auto_merge=bool(args.auto_merge),
+            allow_in_place=bool(args.allow_in_place),
             json_output=bool(args.json),
         )
         return 0 if result.status.value in ("green", "completed") else 1
@@ -471,6 +482,7 @@ async def _execute(
             database_path=db_path,
             target=args.target,
             auto_merge=bool(args.auto_merge),
+            allow_in_place=bool(args.allow_in_place),
         )
         return 0 if success else 1
 

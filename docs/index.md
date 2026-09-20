@@ -215,21 +215,15 @@ Prints resolved provider / model / endpoint without an HTTP call — cheapest sm
 
 ```python
 import asyncio
-from avo import AgentRuntime, LoopPolicy, ModelRequest, FakeProvider
+from avo import AgentRuntime, LoopPolicy, FakeProvider
 
 async def main() -> None:
     provider = FakeProvider()
     policy = LoopPolicy()
     runtime = AgentRuntime(provider=provider, policy=policy)
 
-    request = ModelRequest(
-        run_id="hello-1",
-        step=1,
-        messages=[{"role": "user", "content": "Say hello"}],
-        tools=[],
-    )
-    response = await runtime.run(request)
-    print(response.content)
+    result = await runtime.run("Say hello")
+    print(result.output)
 
 asyncio.run(main())
 ```

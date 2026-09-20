@@ -31,6 +31,7 @@ from avo.app_tools.workspace import Workspace
 from avo.app_tools.worktree import GitWorktreeManager
 from avo.config import build_provider_from_env
 from avo.config_resolver import resolve_security_config
+from avo.exceptions import AvoError
 from avo.hooks import HookContext, HookDecision, HookEvent, HookRegistry
 from avo.models import RunResult
 from avo.permissions import PermissionMode, PermissionPolicy, build_approval_callback
@@ -107,6 +108,7 @@ async def run_cli_task(
     provider: ModelProvider | None = None,
     use_worktree: bool = False,
     auto_merge: bool = False,
+    allow_in_place: bool = False,
     json_output: bool = False,
     max_steps: int = 30,
     token_budget: int = 150_000,
@@ -133,14 +135,19 @@ async def run_cli_task(
                 out.flush()
         except Exception as exc:
             _LOG.warning("Could not initialize worktree isolation: %s", exc)
+            if not allow_in_place:
+                raise AvoError(
+                    f"Git worktree isolation failed ({exc}). Aborting to prevent modifying "
+                    "workspace directly. Pass --allow-in-place to bypass isolation."
+                ) from exc
             if not json_output:
                 err.write(
-                    f"Notice: Git worktree isolation unavailable ({exc}). Running in place.\n"
+                    f"Warning: Git worktree isolation unavailable ({exc}). "
+                    "Running in-place per --allow-in-place.\n"
                 )
                 err.flush()
 
     workspace = Workspace(active_root, create=False)
-    bind_workspace(workspace)
 
     store = SQLiteEventStore(database_path.resolve())  # noqa: ASYNC240
     resolved_provider = provider if provider is not None else build_provider_from_env(env)
@@ -188,11 +195,12 @@ async def run_cli_task(
         out.flush()
 
     try:
-        result = await runtime.run(
-            task=task,
-            run_id=run_id,
-            stream_callback=stream_chunk,
-        )
+        with bind_workspace(workspace):
+            result = await runtime.run(
+                task=task,
+                run_id=run_id,
+                stream_callback=stream_chunk,
+            )
 
         if not json_output:
             out.write(f"\n\n✓ Task finished with status: {result.status.value}\n")

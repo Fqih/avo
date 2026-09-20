@@ -93,19 +93,13 @@ offline and deterministic:
 ```python
 import asyncio
 
-from avo import AgentRuntime, FakeProvider, LoopPolicy, ModelRequest
+from avo import AgentRuntime, FakeProvider, LoopPolicy
 
 
 async def main() -> None:
     runtime = AgentRuntime(provider=FakeProvider(), policy=LoopPolicy())
-    request = ModelRequest(
-        run_id="hello-1",
-        step=1,
-        messages=[{"role": "user", "content": "Say hello"}],
-        tools=[],
-    )
-    result = await runtime.run(request)
-    print(result)
+    result = await runtime.run("Say hello")
+    print(result.output)
 
 
 asyncio.run(main())

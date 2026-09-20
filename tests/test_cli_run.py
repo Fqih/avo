@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import subprocess
 from pathlib import Path
 
@@ -173,3 +174,85 @@ async def test_build_cli_progress_hooks_renders_badges() -> None:
     )
     await hooks.fire(ctx_post)
     assert "read_file completed" in out.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_run_cli_task_executes_file_tools_end_to_end(tmp_path: Path) -> None:
+    from avo.models import ToolCall
+
+    workspace = tmp_path / "ws_tools"
+    workspace.mkdir()
+    (workspace / "sample.txt").write_text("Hello Avo Workspace!", encoding="utf-8")
+
+    # Step 1: Model calls read_file
+    # Step 2: Model calls write_file
+    # Step 3: Model finishes
+    provider = FakeProvider(
+        [
+            ModelResponse(
+                tool_call=ToolCall(name="read_file", arguments={"path": "sample.txt"}),
+            ),
+            ModelResponse(
+                tool_call=ToolCall(
+                    name="write_file",
+                    arguments={"path": "out.txt", "content": "Updated content"},
+                ),
+            ),
+            ModelResponse(content="Task completed successfully."),
+        ]
+    )
+
+    db_path = tmp_path / "test_tools.db"
+    out = io.StringIO()
+    err = io.StringIO()
+
+    result = await run_cli_task(
+        task="Read sample.txt and write out.txt",
+        workspace_root=workspace,
+        database_path=db_path,
+        provider=provider,
+        stdout=out,
+        stderr=err,
+    )
+
+    assert result.status is RunState.COMPLETED
+    assert (workspace / "out.txt").exists()
+    assert (workspace / "out.txt").read_text(encoding="utf-8") == "Updated content"
+    assert "read_file" in out.getvalue()
+    assert "write_file" in out.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_run_cli_task_worktree_failure_fails_closed(tmp_path: Path) -> None:
+    from avo.exceptions import AvoError
+
+    non_git_dir = tmp_path / "not_git"
+    non_git_dir.mkdir()
+
+    fake_provider = FakeProvider([ModelResponse(content="done")])
+    db_path = tmp_path / "test.db"
+
+    # With allow_in_place=False (default), it MUST fail closed with AvoError
+    with pytest.raises(AvoError, match="Git worktree isolation failed"):
+        await run_cli_task(
+            task="do work",
+            workspace_root=non_git_dir,
+            database_path=db_path,
+            provider=fake_provider,
+            use_worktree=True,
+            allow_in_place=False,
+        )
+
+    # With allow_in_place=True, it warns and continues
+    err = io.StringIO()
+    res = await run_cli_task(
+        task="do work",
+        workspace_root=non_git_dir,
+        database_path=db_path,
+        provider=fake_provider,
+        use_worktree=True,
+        allow_in_place=True,
+        stderr=err,
+    )
+    assert res.status is RunState.COMPLETED
+    assert "Warning: Git worktree isolation unavailable" in err.getvalue()

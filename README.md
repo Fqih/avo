@@ -120,25 +120,30 @@ Avo is both a high-productivity CLI and a modular, dependency-light Python runti
 
 ```python
 import asyncio
+from pathlib import Path
 from avo import AgentRuntime, LoopPolicy
-from avo.app_tools import GitWorktreeManager, read_file_tool, write_file_tool
+from avo.app_tools import GitWorktreeManager, bind_workspace, read_file_tool, write_file_tool
+from avo.app_tools.workspace import Workspace
 from avo.config import build_provider_from_env
+from avo.storage.sqlite import SQLiteEventStore
 
 async def main():
     # 1. Isolate agent workspace in a dedicated git worktree
-    worktree = GitWorktreeManager(".").create_worktree("audit-run-01")
+    worktree_path = GitWorktreeManager(".").create_worktree("audit-run-01")
+    workspace = Workspace(worktree_path)
 
     # 2. Initialize runtime with hard step, token, and circuit breaker bounds
     runtime = AgentRuntime(
         provider=build_provider_from_env(),
-        policy=LoopPolicy(max_steps=20, token_budget=60_000),
-        tools=[read_file_tool, write_file_tool],
-        database_path=".avo/runs.db",
+        policy=LoopPolicy(max_steps=20, max_total_tokens=60_000),
+        tools=[read_file_tool(), write_file_tool()],
+        event_store=SQLiteEventStore(Path(".avo/runs.db")),
     )
 
     # 3. Execute with deterministic replay and SQLite event sourcing
-    result = await runtime.run("Refactor database connection pooling and verify tests.")
-    print(f"Outcome: {result.state} (StopReason: {result.stop_reason})")
+    with bind_workspace(workspace):
+        result = await runtime.run("Refactor database connection pooling and verify tests.")
+    print(f"Outcome: {result.status.value} (StopReason: {result.stop_reason.value if result.stop_reason else 'None'})")
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -170,9 +175,15 @@ pip install avo
 
 ---
 
-## 🗺️ Roadmap
+## 🗺️ Roadmap & Milestones
 
-<<<<<<< HEAD
+- [x] **v0.7.0**: Multi-Tier Combo Router & OAuth Subscription Auth (Claude, ChatGPT, Gemini).
+- [x] **v0.7.2**: Autonomous Loop, AST Code Intelligence, Shared Blackboard Memory.
+- [x] **v0.7.3**: Rootless Bubblewrap Sandbox (`bwrap`) & Web Cockpit Full-Duplex.
+- [x] **v0.7.4**: Zero-Python Standalone Executable, Git Worktree Isolation & Durable Webhook Approval.
+- [ ] **v0.8.0**: Distributed PostgreSQL EventStore & Celery/Redis Remote Worker Mesh.
+- [ ] **v0.9.0**: Native Headless Browser Sandbox (Playwright verification).
+
 ### 📊 1. Measurable ROI & Financial Governance
 - **Deterministic Token Reduction:** Automatically minifies tool JSON payloads, deduplicates redundant outputs, and elides verbose lines, reducing token consumption by up to **26%+** on long tool-heavy sessions (see [benchmark results](benchmark/savers/RESULTS.md)).
 - **Semantic Token Deduction:** Automatically eliminates redundant system instructions and file context, slashing recurring API overhead by up to **48%**.
@@ -191,14 +202,6 @@ pip install avo
 ### ⚡ 4. Operational Observability (Avo Web UI)
 - **Real-Time Operational Cockpit:** Visual telemetry dashboard displaying live trace timelines, model latency meters, circuit breaker triggers, and hardware resource saturation.
 - **Extensible Enterprise Plugins:** Seamless integration with company-internal ticketing systems, GitHub pull request automation, and incident alert channels via standard extension points.
-=======
-- [x] **v0.7.0**: Multi-Tier Combo Router & OAuth Subscription Auth (Claude, ChatGPT, Gemini).
-- [x] **v0.7.2**: Autonomous Loop, AST Code Intelligence, Shared Blackboard Memory.
-- [x] **v0.7.3**: Rootless Bubblewrap Sandbox (`bwrap`) & Web Cockpit Full-Duplex.
-- [x] **v0.7.4**: Zero-Python Standalone Executable, Git Worktree Isolation & Durable Webhook Approval.
-- [ ] **v0.8.0**: Distributed PostgreSQL EventStore & Celery/Redis Remote Worker Mesh.
-- [ ] **v0.9.0**: Native Headless Browser Sandbox (Playwright verification).
->>>>>>> 9faa1d4 (docs(readme): rewrite readme with dev-first focus, standalone install, and comparison matrix)
 
 ---
 

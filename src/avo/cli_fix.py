@@ -33,6 +33,7 @@ from avo.app_tools.worktree import GitWorktreeManager
 from avo.cli_run import build_cli_progress_hooks
 from avo.config import build_provider_from_env
 from avo.config_resolver import resolve_security_config
+from avo.exceptions import AvoError
 from avo.permissions import PermissionMode, PermissionPolicy, build_approval_callback
 from avo.policies import LoopPolicy
 from avo.providers.base import ModelProvider
@@ -51,6 +52,7 @@ async def run_cli_fix(
     max_steps: int = 25,
     token_budget: int = 120_000,
     auto_merge: bool = True,
+    allow_in_place: bool = False,
     provider: ModelProvider | None = None,
     environ: Mapping[str, str] | None = None,
     stdout: TextIO | None = None,
@@ -101,11 +103,18 @@ async def run_cli_fix(
         out.flush()
     except Exception as exc:
         _LOG.warning("Could not initialize worktree isolation: %s", exc)
-        err.write(f"Notice: Git worktree unavailable ({exc}). Running repair in place.\n")
+        if not allow_in_place:
+            raise AvoError(
+                f"Git worktree isolation failed ({exc}). Aborting to prevent uncommitted "
+                "changes on main workspace. Pass --allow-in-place to run repair directly."
+            ) from exc
+        err.write(
+            f"Warning: Git worktree unavailable ({exc}). "
+            "Running repair in place per --allow-in-place.\n"
+        )
         err.flush()
 
     workspace = Workspace(active_root, create=False)
-    bind_workspace(workspace)
 
     store = SQLiteEventStore(database_path.resolve())  # noqa: ASYNC240
     resolved_provider = provider if provider is not None else build_provider_from_env(env)
@@ -161,11 +170,12 @@ async def run_cli_fix(
         out.write(f"🥑 Starting repair agent turn ({run_id})...\n\n")
         out.flush()
 
-        await runtime.run(
-            task=repair_prompt,
-            run_id=run_id,
-            stream_callback=_stream_cb,
-        )
+        with bind_workspace(workspace):
+            await runtime.run(
+                task=repair_prompt,
+                run_id=run_id,
+                stream_callback=_stream_cb,
+            )
 
         out.write("\n\n🧪 Verifying test suite after repair...\n")
         out.flush()
