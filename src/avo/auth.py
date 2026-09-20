@@ -183,11 +183,13 @@ async def run_localhost_callback_server(
     """Run an ephemeral asyncio HTTP server to capture OAuth callback parameters."""
 
     future_result: asyncio.Future[dict[str, str]] = asyncio.get_running_loop().create_future()
+    active_writers: set[asyncio.StreamWriter] = set()
 
     async def _handle_client(
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
+        active_writers.add(writer)
         try:
             line = await reader.readline()
             if not line:
@@ -227,6 +229,7 @@ async def run_localhost_callback_server(
             writer.write(not_found)
             await writer.drain()
         finally:
+            active_writers.discard(writer)
             writer.close()
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
@@ -238,6 +241,10 @@ async def run_localhost_callback_server(
         raise AuthError(f"OAuth login timed out after {timeout_seconds}s") from exc
     finally:
         server.close()
+        for w in list(active_writers):
+            w.close()
+            with contextlib.suppress(Exception):
+                await w.wait_closed()
         await server.wait_closed()
 
 

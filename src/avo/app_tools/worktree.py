@@ -116,8 +116,9 @@ class GitWorktreeManager:
                 text=True,
                 check=False,
             )
-            current_branch = cb_proc.stdout.strip()
-            if dest and current_branch and dest != current_branch:
+            original_branch = cb_proc.stdout.strip()
+            need_switch = bool(dest and original_branch and dest != original_branch)
+            if need_switch:
                 co_proc = subprocess.run(
                     ["git", "checkout", dest],
                     cwd=self.repo_root,
@@ -130,15 +131,24 @@ class GitWorktreeManager:
                         f"Failed to switch to target branch {dest}: {co_proc.stderr.strip()}"
                     )
 
-            # Merge branch into target branch
-            merge_cmd = ["git", "merge", branch_name]
-            m_res = subprocess.run(
-                merge_cmd, cwd=self.repo_root, capture_output=True, text=True, check=False
-            )
-            if m_res.returncode != 0:
-                raise GitWorktreeError(
-                    f"Failed to merge branch {branch_name} into {dest}: {m_res.stderr.strip()}"
+            try:
+                # Merge branch into target branch
+                merge_cmd = ["git", "merge", branch_name]
+                m_res = subprocess.run(
+                    merge_cmd, cwd=self.repo_root, capture_output=True, text=True, check=False
                 )
+                if m_res.returncode != 0:
+                    raise GitWorktreeError(
+                        f"Failed to merge branch {branch_name} into {dest}: {m_res.stderr.strip()}"
+                    )
+            finally:
+                if need_switch and original_branch:
+                    subprocess.run(
+                        ["git", "checkout", original_branch],
+                        cwd=self.repo_root,
+                        capture_output=True,
+                        check=False,
+                    )
 
         # Remove the worktree from git
         if target.exists():

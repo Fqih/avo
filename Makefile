@@ -39,7 +39,11 @@ security-check:
 	bandit -r src/avo -c pyproject.toml --severity-level medium
 
 coverage:
-	$(PYTHON) -m pytest --cov=avo --cov-report=term-missing --cov-fail-under=90
+	@if $(PYTHON) -c "import pytest_cov" 2>/dev/null; then \
+		$(PYTHON) -m pytest --cov=avo --cov-report=term-missing --cov-fail-under=90; \
+	else \
+		$(PYTHON) -m coverage run -m pytest && $(PYTHON) -m coverage report --fail-under=90; \
+	fi
 
 smoke-test:
 	$(PYTHON) -m pytest tests/test_smoke_cli.py -v

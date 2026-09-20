@@ -83,7 +83,7 @@ def test_run_localhost_callback_server() -> None:
 
         def _call_http() -> None:
             url = f"http://127.0.0.1:{port}{callback_path}?code=secret-code-abc&state=xyz"
-            req = urllib.request.Request(url)
+            req = urllib.request.Request(url, headers={"Connection": "close"})
             with urllib.request.urlopen(req, timeout=2.0) as resp:
                 assert resp.status == 200
                 body = resp.read().decode("utf-8")
@@ -116,7 +116,7 @@ def test_login_openrouter(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
 
         def _call_callback() -> None:
             url = f"http://127.0.0.1:{port}/auth/callback?code=sk-or-oauth-token-999"
-            req = urllib.request.Request(url)
+            req = urllib.request.Request(url, headers={"Connection": "close"})
             with urllib.request.urlopen(req, timeout=2.0) as resp:
                 assert resp.status == 200
 
