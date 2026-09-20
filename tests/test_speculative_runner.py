@@ -109,3 +109,63 @@ def test_workspace_snapshot_preserves_dirty_user_changes_on_rollback(tmp_path: P
     assert (tmp_path / "README.md").read_text(encoding="utf-8") == "user wip edit"
     assert (tmp_path / "user_notes.txt").read_text(encoding="utf-8") == "my notes"
     assert not (tmp_path / "agent_trash.tmp").exists()
+
+
+def test_rollback_rejects_invalid_tag_without_resetting_workspace(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    (tmp_path / "important_work.txt").write_text("do not delete me", encoding="utf-8")
+    (tmp_path / "README.md").write_text("dirty edit", encoding="utf-8")
+
+    snapshot = WorkspaceSnapshot(tmp_path)
+    # Attempting to restore non-existent tag must fail and NOT delete or reset files
+    assert snapshot.restore("invalid-tag-123") is False
+    assert (tmp_path / "important_work.txt").read_text(encoding="utf-8") == "do not delete me"
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == "dirty edit"
+
+
+def test_snapshot_metadata_persists_across_instances(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("edit 1", encoding="utf-8")
+
+    snap1 = WorkspaceSnapshot(tmp_path)
+    tag = snap1.capture("checkpoint-1")
+
+    # Second instance representing a different command or process
+    snap2 = WorkspaceSnapshot(tmp_path)
+    meta = snap2.get(tag)
+    assert meta is not None
+    assert meta.tag == tag
+    assert len(snap2.list_snapshots()) >= 1
+
+    (tmp_path / "README.md").write_text("corrupted", encoding="utf-8")
+    assert snap2.restore(tag) is True
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == "edit 1"
+
+
+def test_rollback_with_tracked_staged_untracked_and_multiple_snapshots(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+
+    # State 1: staged file + tracked edit
+    (tmp_path / "README.md").write_text("version 1", encoding="utf-8")
+    (tmp_path / "staged.txt").write_text("staged 1", encoding="utf-8")
+    subprocess.run(["git", "add", "staged.txt"], cwd=tmp_path, check=True, capture_output=True)
+
+    snap = WorkspaceSnapshot(tmp_path)
+    tag1 = snap.capture("snap-1")
+
+    # State 2: modify staged, add untracked
+    (tmp_path / "README.md").write_text("version 2", encoding="utf-8")
+    (tmp_path / "untracked.txt").write_text("untracked 2", encoding="utf-8")
+    tag2 = snap.capture("snap-2")
+    assert snap.get(tag2) is not None
+
+    # Corrupt workspace
+    (tmp_path / "README.md").write_text("corrupted version", encoding="utf-8")
+    (tmp_path / "trash.tmp").write_text("rubbish", encoding="utf-8")
+
+    # Roll back to snap-1
+    assert snap.restore(tag1) is True
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == "version 1"
+    assert not (tmp_path / "trash.tmp").exists()
+    assert not (tmp_path / "untracked.txt").exists()
+

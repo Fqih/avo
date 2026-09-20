@@ -2,16 +2,29 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import shlex
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from avo.runtime import AgentRuntime
+
+
+@dataclass(frozen=True)
+class SnapshotMetadata:
+    """Durable metadata for a workspace git snapshot."""
+
+    tag: str
+    head_sha: str
+    created_at: str
+    stash_sha: str | None = None
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -30,11 +43,84 @@ class WorkspaceSnapshot:
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root).resolve()
-        self._snapshots: dict[str, str | None] = {}
+        self._git_dir = self._resolve_git_dir()
+        self._metadata_path = self._git_dir / "avo_snapshots.json"
 
-    def capture(self, name: str | None = None) -> str:
-        """Create a stash snapshot of the current workspace state."""
+    def _resolve_git_dir(self) -> Path:
+        try:
+            res = subprocess.run(
+                ["git", "rev-parse", "--git-dir"],
+                cwd=self.root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            raw = res.stdout.strip()
+            p = Path(raw)
+            return p if p.is_absolute() else (self.root / p).resolve()
+        except Exception:
+            return self.root / ".git"
+
+    def _load_metadata(self) -> dict[str, SnapshotMetadata]:
+        if not self._metadata_path.is_file():
+            return {}
+        try:
+            content = self._metadata_path.read_text(encoding="utf-8")
+            data = json.loads(content)
+            res: dict[str, SnapshotMetadata] = {}
+            for item in data:
+                meta = SnapshotMetadata(**item)
+                res[meta.tag] = meta
+            return res
+        except Exception:
+            return {}
+
+    def _save_metadata(self, metadata: dict[str, SnapshotMetadata]) -> None:
+        try:
+            self._metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            data = [
+                {
+                    "tag": m.tag,
+                    "head_sha": m.head_sha,
+                    "created_at": m.created_at,
+                    "stash_sha": m.stash_sha,
+                    "description": m.description,
+                }
+                for m in metadata.values()
+            ]
+            temp_path = self._metadata_path.with_suffix(f".tmp.{secrets.token_hex(4)}")
+            temp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            temp_path.replace(self._metadata_path)
+        except Exception:
+            pass
+
+    def get(self, tag: str) -> SnapshotMetadata | None:
+        """Get snapshot metadata by tag."""
+        return self._load_metadata().get(tag)
+
+    def list_snapshots(self) -> list[SnapshotMetadata]:
+        """List all captured snapshots, sorted newest first."""
+        snaps = list(self._load_metadata().values())
+        snaps.sort(key=lambda m: m.created_at, reverse=True)
+        return snaps
+
+    def capture(self, name: str | None = None, description: str | None = None) -> str:
+        """Create a stash snapshot of the current workspace state and persist metadata."""
         tag = name or f"avo-snap-{secrets.token_hex(4)}"
+
+        head_sha = ""
+        try:
+            res_head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            head_sha = res_head.stdout.strip()
+        except Exception:
+            pass
+
         status = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=self.root,
@@ -66,15 +152,42 @@ class WorkspaceSnapshot:
                 capture_output=True,
             )
 
-        self._snapshots[tag] = stash_sha
+        meta = SnapshotMetadata(
+            tag=tag,
+            head_sha=head_sha,
+            created_at=datetime.now(UTC).isoformat(),
+            stash_sha=stash_sha,
+            description=description,
+        )
+        snaps = self._load_metadata()
+        snaps[tag] = meta
+        self._save_metadata(snaps)
         return tag
 
     def restore(self, tag: str) -> bool:
-        """Roll back working directory to the exact state at capture time."""
+        """Roll back working directory to the exact state at capture time.
+
+        Refuses to run destructive commands if tag is invalid or missing.
+        """
+        meta = self.get(tag)
+        if meta is None:
+            return False
+
+        if meta.stash_sha:
+            check_stash = subprocess.run(
+                ["git", "rev-parse", "-q", "--verify", meta.stash_sha],
+                cwd=self.root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if check_stash.returncode != 0:
+                return False
+
         try:
             # 1. Discard all dirty changes and untracked files introduced by speculative run
             subprocess.run(
-                ["git", "reset", "--hard", "HEAD"],
+                ["git", "reset", "--hard", meta.head_sha or "HEAD"],
                 cwd=self.root,
                 check=True,
                 capture_output=True,
@@ -87,27 +200,44 @@ class WorkspaceSnapshot:
             )
 
             # 2. Re-apply the initial uncommitted state captured in stash
-            stash_sha = self._snapshots.get(tag)
-            if stash_sha:
+            if meta.stash_sha:
                 apply_res = subprocess.run(
-                    ["git", "stash", "apply", stash_sha],
+                    ["git", "stash", "apply", meta.stash_sha],
                     cwd=self.root,
                     check=False,
                     capture_output=True,
                     text=True,
                 )
                 if apply_res.returncode != 0:
+                    subprocess.run(
+                        ["git", "reset", "--hard", meta.head_sha or "HEAD"],
+                        cwd=self.root,
+                        check=False,
+                        capture_output=True,
+                    )
+                    subprocess.run(
+                        ["git", "clean", "-fd"],
+                        cwd=self.root,
+                        check=False,
+                        capture_output=True,
+                    )
                     return False
 
             return True
         except subprocess.CalledProcessError:
             return False
 
-    def discard(self, tag: str) -> None:
-        """Discard a snapshot stash when no longer needed (e.g. on success)."""
-        stash_sha = self._snapshots.pop(tag, None)
-        if not stash_sha:
-            return
+    def discard(self, tag: str) -> bool:
+        """Discard a snapshot stash and its metadata when no longer needed."""
+        snaps = self._load_metadata()
+        meta = snaps.pop(tag, None)
+        if meta is None:
+            return False
+        self._save_metadata(snaps)
+
+        if not meta.stash_sha:
+            return True
+
         res = subprocess.run(
             ["git", "stash", "list"],
             cwd=self.root,
@@ -125,6 +255,7 @@ class WorkspaceSnapshot:
                     capture_output=True,
                 )
                 break
+        return True
 
 
 class SpeculativeRunner:

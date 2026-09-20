@@ -1009,10 +1009,19 @@ def _manage_rollback_command(
 
     try:
         snapshot = WorkspaceSnapshot(ctx.workspace.root)
-        if snapshot.restore(tag or ""):
-            out.write("✓ Successfully rolled back workspace to clean checkpoint.\n")
+        target_tag = tag
+        if not target_tag:
+            available = snapshot.list_snapshots()
+            if not available:
+                err.write("No workspace snapshots available to rollback.\n")
+                err.flush()
+                return
+            target_tag = available[0].tag
+
+        if snapshot.restore(target_tag):
+            out.write(f"✓ Successfully rolled back workspace to checkpoint {target_tag!r}.\n")
         else:
-            err.write(f"Could not rollback workspace with tag {tag!r}.\n")
+            err.write(f"Could not rollback workspace with tag {target_tag!r}.\n")
         out.flush()
         err.flush()
     except Exception as exc:
