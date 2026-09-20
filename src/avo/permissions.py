@@ -178,10 +178,62 @@ def build_deny_by_default_callback() -> ApprovalCallback:
 ConsolePrompter = Callable[[ToolCall, TextIO, TextIO], bool | Awaitable[bool]]
 
 
-async def _default_console_prompter(call: ToolCall, stdin: TextIO, stdout: TextIO) -> bool:
-    """Print a one-line prompt and read a yes/no answer from the operator."""
+def render_tool_call_preview(call: ToolCall, color: bool = True) -> str:
+    """Render an informative preview (diff for file edits, command box for terminal)."""
+    name = call.name
+    args = call.arguments if isinstance(call.arguments, dict) else {}
 
-    stdout.write(f"\nApprove {call.name}({_summarise_args(call.arguments)})? [y/N]: ")
+    c_red = "\033[31m" if color else ""
+    c_green = "\033[32m" if color else ""
+    c_bold = "\033[1m" if color else ""
+    c_dim = "\033[2m" if color else ""
+    c_reset = "\033[0m" if color else ""
+
+    lines: list[str] = []
+    if name == "edit_file":
+        path = args.get("path", "")
+        old_text = str(args.get("old_text", ""))
+        new_text = str(args.get("new_text", ""))
+        lines.append(f"{c_bold}── edit_file: {path} ─────────────────────────────{c_reset}")
+        for o_line in old_text.splitlines():
+            lines.append(f"{c_red}- {o_line}{c_reset}")
+        for n_line in new_text.splitlines():
+            lines.append(f"{c_green}+ {n_line}{c_reset}")
+        lines.append(f"{c_dim}──────────────────────────────────────────────────{c_reset}")
+        return "\n".join(lines)
+
+    if name == "write_file":
+        path = args.get("path", "")
+        content = str(args.get("content", ""))
+        lines.append(f"{c_bold}── write_file: {path} ────────────────────────────{c_reset}")
+        content_lines = content.splitlines()
+        preview_lines = content_lines[:15]
+        for c_line in preview_lines:
+            lines.append(f"{c_green}+ {c_line}{c_reset}")
+        if len(content_lines) > 15:
+            lines.append(f"{c_dim}... ({len(content_lines) - 15} more lines){c_reset}")
+        lines.append(f"{c_dim}──────────────────────────────────────────────────{c_reset}")
+        return "\n".join(lines)
+
+    if name == "run_terminal":
+        cmd = str(args.get("command", ""))
+        lines.append(f"{c_bold}── run_terminal ──────────────────────────────────{c_reset}")
+        lines.append(f"$ {cmd}")
+        lines.append(f"{c_dim}──────────────────────────────────────────────────{c_reset}")
+        return "\n".join(lines)
+
+    return ""
+
+
+async def _default_console_prompter(call: ToolCall, stdin: TextIO, stdout: TextIO) -> bool:
+    """Print an informative preview and prompt operator for approval."""
+    color = hasattr(stdout, "isatty") and stdout.isatty()
+    preview = render_tool_call_preview(call, color=color)
+    if preview:
+        stdout.write(f"\n{preview}\n")
+    else:
+        stdout.write("\n")
+    stdout.write(f"Approve {call.name}({_summarise_args(call.arguments)})? [y/N]: ")
     stdout.flush()
     line = stdin.readline()
     if not line:
