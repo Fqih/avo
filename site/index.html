@@ -21,7 +21,8 @@
     </a>
     <ul class="avo-nav__links">
       <li><a href="#features" class="avo-nav__link">Features</a></li>
-      <li><a href="#architecture" class="avo-nav__link">Architecture</a></li>
+      <li><a href="#cli" class="avo-nav__link">CLI Showcase</a></li>
+      <li><a href="#cockpit" class="avo-nav__link">Web Cockpit</a></li>
       <li><a href="#comparison" class="avo-nav__link">Comparison</a></li>
       <li><a href="#quickstart" class="avo-nav__link">Quickstart</a></li>
       <li><a href="guides/install/" class="avo-nav__link">Install Guide</a></li>
@@ -39,7 +40,7 @@
     <section class="avo-hero-section">
       <div class="avo-pill-badge">
         <span class="dot"></span>
-        Zero-Python Standalone Executable Available • Single-File Binary
+        v1.0.0 Production Ready • Zero-Python Standalone Binaries
       </div>
       <h1 class="avo-hero__title">
         Reliable Agent Runtime for <br>
@@ -53,7 +54,7 @@
           <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
           Get Standalone Binary
         </a>
-        <a href="guides/quickstart/" class="avo-btn avo-btn--secondary">Explore Quickstart</a>
+        <a href="#cli" class="avo-btn avo-btn--secondary">Explore CLI Showcase</a>
         <a href="https://github.com/Fqih/avo" target="_blank" rel="noopener" class="avo-btn avo-btn--secondary">View Source (MIT)</a>
       </div>
 
@@ -68,7 +69,7 @@
           <div class="avo-terminal-tabs">
             <button class="avo-tab-btn active" onclick="switchTab('posix')">Linux / macOS</button>
             <button class="avo-tab-btn" onclick="switchTab('win')">Windows PowerShell</button>
-            <button class="avo-tab-btn" onclick="switchTab('source')">Python (uv tool)</button>
+            <button class="avo-tab-btn" onclick="switchTab('source')">Python (uv / pip)</button>
           </div>
         </div>
         <div class="avo-terminal-body">
@@ -79,7 +80,7 @@
             </div>
             <div class="avo-terminal-output">
               # Installs pre-built standalone binary directly to ~/.local/bin/avo<br>
-              # <span class="green">✓ Zero Python runtime or uv required</span>
+              # <span class="green">✓ Zero Python runtime required · Cryptographic SHA-256 verified</span>
             </div>
           </div>
           <div id="pane-win" class="avo-code-pane">
@@ -89,7 +90,7 @@
             </div>
             <div class="avo-terminal-output">
               # Installs standalone avo.exe to %LOCALAPPDATA%\avo\bin<br>
-              # <span class="green">✓ Zero Python or admin rights required</span>
+              # <span class="green">✓ Zero Python or admin rights required · SHA-256 verified</span>
             </div>
           </div>
           <div id="pane-source" class="avo-code-pane">
@@ -100,6 +101,174 @@
             <div class="avo-terminal-output">
               # Installs user-global Python package with all provider & sandbox extras
             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive CLI Showcase Section -->
+    <section id="cli" class="avo-section">
+      <div class="avo-section__header">
+        <div class="avo-section__eyebrow">Autonomous Engineering CLI</div>
+        <h2 class="avo-section__title">Work Safely at the Speed of Thought</h2>
+        <p class="avo-section__subtitle">
+          From autonomous test repair to automated PR generation, Avo operates with surgical precision inside ephemeral Git worktrees.
+        </p>
+      </div>
+
+      <div class="avo-terminal-card" style="margin-bottom: 2.5rem;">
+        <div class="avo-terminal-card__header">
+          <div class="avo-terminal-dots">
+            <span class="avo-dot--red"></span>
+            <span class="avo-dot--yellow"></span>
+            <span class="avo-dot--green"></span>
+          </div>
+          <div class="avo-terminal-tabs">
+            <button class="avo-tab-btn active" onclick="switchCliTab('cli-fix')">avo fix</button>
+            <button class="avo-tab-btn" onclick="switchCliTab('cli-pr')">avo pr</button>
+            <button class="avo-tab-btn" onclick="switchCliTab('cli-run')">avo run</button>
+            <button class="avo-tab-btn" onclick="switchCliTab('cli-ui')">avo ui</button>
+          </div>
+        </div>
+        <div class="avo-terminal-body">
+          <!-- Pane 1: avo fix -->
+          <div id="cli-fix" class="avo-code-pane active">
+            <div class="avo-cli-demo-box">
+              <span style="color: #38bdf8;">$</span> avo fix<br>
+              <span class="avo-cli-badge badge-plan">[PLAN]</span> Diagnosing test failures in suite...<br>
+              <span class="avo-cli-badge badge-worktree">[WORKTREE]</span> Provisioned isolated worktree: <span style="color: #a7f3d0;">.avo/worktrees/fix-8a2f</span> (branch: <span style="color: #93c5fd;">avo/fix-8a2f</span>)<br>
+              <span class="avo-cli-badge badge-tool">[TOOL]</span> test_runner("pytest tests/test_auth.py") &rarr; <span style="color: #f87171;">AssertionError: 401 != 200</span><br>
+              <span class="avo-cli-badge badge-tier">[TIER 1]</span> Anthropic Claude 3.7 Sonnet (1,840 tokens)<br>
+              <span class="avo-cli-badge badge-tool">[TOOL]</span> edit_file("src/auth.py", line 42, fix token expiry)<br>
+              <span class="avo-cli-badge badge-sandbox">[SANDBOX]</span> bwrap --ro-bind /usr /usr --unshare-net pytest tests/test_auth.py &rarr; <span style="color: #34d399;">1 passed</span><br>
+              <span class="avo-cli-badge badge-checkpoint">[CHECKPOINT]</span> Persisted checkpoint 4 to SQLite event store<br>
+              <span class="avo-cli-badge badge-merge">[MERGE]</span> Cleanly merged fix branch into main. Original branch restored.<br>
+              <span style="color: #34d399;">✓ Test repair verified and committed.</span>
+            </div>
+          </div>
+
+          <!-- Pane 2: avo pr -->
+          <div id="cli-pr" class="avo-code-pane">
+            <div class="avo-cli-demo-box">
+              <span style="color: #38bdf8;">$</span> avo pr --create<br>
+              <span class="avo-cli-badge badge-plan">[PLAN]</span> Analyzing git diff against origin/main (6 files changed)...<br>
+              <span class="avo-cli-badge badge-tool">[TOOL]</span> git_diff("origin/main...HEAD")<br>
+              <span class="avo-cli-badge badge-tier">[TIER 1]</span> Synthesizing staff-engineer PR description and test plan...<br>
+              <span class="avo-cli-badge badge-tool">[TOOL]</span> gh pr create --title "feat(security): fail-closed read auth & durable approvals"<br>
+              <span style="color: #34d399;">✓ Pull Request created: https://github.com/Fqih/avo/pull/14</span>
+            </div>
+          </div>
+
+          <!-- Pane 3: avo run -->
+          <div id="cli-run" class="avo-code-pane">
+            <div class="avo-cli-demo-box">
+              <span style="color: #38bdf8;">$</span> avo run "Audit dependencies and apply security patches" --worktree --auto-merge<br>
+              <span class="avo-cli-badge badge-worktree">[WORKTREE]</span> Created isolated branch <span style="color: #93c5fd;">avo/task-7c1b</span><br>
+              <span class="avo-cli-badge badge-tool">[TOOL]</span> read_file("pyproject.toml")<br>
+              <span class="avo-cli-badge badge-sandbox">[SANDBOX]</span> pip-audit --strict<br>
+              <span class="avo-cli-badge badge-checkpoint">[CHECKPOINT]</span> Step 3 saved to .avo/runs.db (state: COMPLETED)<br>
+              <span class="avo-cli-badge badge-merge">[MERGE]</span> Auto-merge succeeded. Zero working-tree contamination.<br>
+              <span style="color: #34d399;">✓ Autonomous run completed in 14.2s.</span>
+            </div>
+          </div>
+
+          <!-- Pane 4: avo ui -->
+          <div id="cli-ui" class="avo-code-pane">
+            <div class="avo-cli-demo-box">
+              <span style="color: #38bdf8;">$</span> avo ui --port 43111<br>
+              🥑 Avo Web Cockpit starting...<br>
+              <span style="color: #34d399;">✓ Server listening on http://127.0.0.1:43111</span><br>
+              <span style="color: #38bdf8;">→ Real-time full-duplex WebSocket stream active</span><br>
+              <span style="color: #a78bfa;">→ Fail-closed read authentication enforced</span><br>
+              <span style="color: #fbbf24;">→ Ready for durable human-in-the-loop tool approvals</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CLI Commands Reference Grid -->
+      <div class="avo-cli-grid">
+        <div class="avo-cmd-card">
+          <div class="avo-cmd-name">avo [task] / avo run</div>
+          <div class="avo-cmd-desc">Execute autonomous agent runs directly with automatic worktree isolation and token budget enforcement.</div>
+        </div>
+        <div class="avo-cmd-card">
+          <div class="avo-cmd-name">avo fix</div>
+          <div class="avo-cmd-desc">Autonomous test failure diagnostics & self-repair. Catches tracebacks, fixes code in a worktree, and merges cleanly.</div>
+        </div>
+        <div class="avo-cmd-card">
+          <div class="avo-cmd-name">avo pr</div>
+          <div class="avo-cmd-desc">Inspects full git history against base branch, drafting and publishing comprehensive pull requests via GitHub CLI.</div>
+        </div>
+        <div class="avo-cmd-card">
+          <div class="avo-cmd-name">avo ui</div>
+          <div class="avo-cmd-desc">Launches the real-time Avo Web Cockpit for visual DAG execution tracking, token ledgers, and approval reviews.</div>
+        </div>
+        <div class="avo-cmd-card">
+          <div class="avo-cmd-name">avo doctor</div>
+          <div class="avo-cmd-desc">Performs comprehensive diagnostics on providers, sandbox permissions, hardware acceleration, and token savers.</div>
+        </div>
+        <div class="avo-cmd-card">
+          <div class="avo-cmd-name">avo setup</div>
+          <div class="avo-cmd-desc">Interactive wizard for configuring subscription OAuth (Claude, ChatGPT, Gemini), API keys, and local Ollama models.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Web Cockpit Showcase Section -->
+    <section id="cockpit" class="avo-section">
+      <div class="avo-section__header">
+        <div class="avo-section__eyebrow">Real-Time Observability</div>
+        <h2 class="avo-section__title">Avo Web Cockpit</h2>
+        <p class="avo-section__subtitle">
+          Full-duplex operational telemetry dashboard for live trace inspection, token economics, and human-in-the-loop governance.
+        </p>
+      </div>
+
+      <div class="avo-cockpit-preview">
+        <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-subtle); padding-bottom: 1rem;">
+          <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <div style="width: 0.75rem; height: 0.75rem; border-radius: 50%; background: #10b981; box-shadow: 0 0 10px #10b981;"></div>
+            <span style="font-weight: 700; font-size: 0.95rem;">Live Session: run-8f12a (Autonomous SDLC)</span>
+          </div>
+          <span style="font-family: var(--font-mono); font-size: 0.8rem; color: #34d399;">STATUS: RUNNING</span>
+        </div>
+
+        <div class="avo-cockpit-grid">
+          <div class="avo-cockpit-card">
+            <div class="avo-cockpit-card__header">
+              <span class="avo-cockpit-card__title">Token Reduction</span>
+              <span style="color: #10b981; font-weight: 700;">-38.4%</span>
+            </div>
+            <div class="avo-cockpit-card__val">142,800</div>
+            <div class="avo-cockpit-card__desc">Tokens saved via JSON minification and semantic deduplication.</div>
+          </div>
+
+          <div class="avo-cockpit-card">
+            <div class="avo-cockpit-card__header">
+              <span class="avo-cockpit-card__title">Approval Gate</span>
+              <span style="color: #38bdf8; font-weight: 700;">Fail-Closed</span>
+            </div>
+            <div class="avo-cockpit-card__val">SHA-256</div>
+            <div class="avo-cockpit-card__desc">Cryptographically bound to argument hash and 300s timeout.</div>
+          </div>
+
+          <div class="avo-cockpit-card">
+            <div class="avo-cockpit-card__header">
+              <span class="avo-cockpit-card__title">Storage Engine</span>
+              <span style="color: #a78bfa; font-weight: 700;">WAL Mode</span>
+            </div>
+            <div class="avo-cockpit-card__val">SQLite v2</div>
+            <div class="avo-cockpit-card__desc">Immutable event log with automatic pre-migration snapshots.</div>
+          </div>
+
+          <div class="avo-cockpit-card">
+            <div class="avo-cockpit-card__header">
+              <span class="avo-cockpit-card__title">Circuit Breaker</span>
+              <span style="color: #10b981; font-weight: 700;">Active</span>
+            </div>
+            <div class="avo-cockpit-card__val">0 Triggers</div>
+            <div class="avo-cockpit-card__desc">Bounded step limits and repeated action detection enabled.</div>
           </div>
         </div>
       </div>
@@ -121,7 +290,7 @@
           <div class="avo-card__icon">🌿</div>
           <h3 class="avo-card__title">Git Worktree Isolation</h3>
           <p class="avo-card__desc">
-            Never corrupt the user's working directory. Code modifications and test runs execute in ephemeral <code>.avo/worktrees/&lt;run_id&gt;</code> workspaces on isolated branches, with automated merge or clean discard.
+            Never corrupt the user's working directory. Code modifications and test runs execute in ephemeral <code>.avo/worktrees/&lt;run_id&gt;</code> workspaces on isolated branches, with guaranteed branch restoration on merge or abort.
           </p>
         </div>
 
@@ -139,7 +308,7 @@
           <div class="avo-card__icon">🔔</div>
           <h3 class="avo-card__title">Durable Webhook Approval</h3>
           <p class="avo-card__desc">
-            Pending human authorizations persist in SQLite (<code>pending_approvals</code>). When a dangerous tool requires approval, the agent pauses safely and resumes via REST webhook (<code>POST /api/approvals/{id}/decision</code>) across daemon restarts.
+            Pending human authorizations persist in SQLite (<code>pending_approvals</code>) bound to canonical SHA-256 argument hashes. Resumes seamlessly via REST webhooks across process restarts.
           </p>
         </div>
 
@@ -157,7 +326,7 @@
           <div class="avo-card__icon">📜</div>
           <h3 class="avo-card__title">Event Sourcing & Replay</h3>
           <p class="avo-card__desc">
-            Every state change appends to an immutable SQLite event log. Step checkpoints allow exact crash-safe resume, deterministic replay, and post-mortem auditability.
+            Every state change appends to an immutable SQLite event log in WAL mode. Step checkpoints allow exact crash-safe resume, deterministic replay, and post-mortem auditability.
           </p>
         </div>
 
@@ -185,7 +354,7 @@
           <thead>
             <tr>
               <th>Feature</th>
-              <th class="highlight-col">Avo</th>
+              <th class="highlight-col">Avo (v1.0.0)</th>
               <th>LangGraph</th>
               <th>CrewAI</th>
               <th>Claude Code</th>
@@ -222,7 +391,7 @@
             </tr>
             <tr>
               <td><strong>Durable Webhook Approvals</strong></td>
-              <td class="highlight-col"><span class="avo-check">✓ Persistent DB + REST</span></td>
+              <td class="highlight-col"><span class="avo-check">✓ SHA-256 Hash + REST</span></td>
               <td><span class="avo-check">✓ Interrupts</span></td>
               <td><span class="avo-cross">✗ CLI input only</span></td>
               <td><span class="avo-cross">✗ Terminal prompt</span></td>
@@ -306,18 +475,29 @@ runtime = AgentRuntime(
 
   <script>
     function switchTab(tab) {
-      document.querySelectorAll('.avo-tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.avo-code-pane').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('#install .avo-tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#install .avo-code-pane').forEach(p => p.classList.remove('active'));
 
       if (tab === 'posix') {
-        document.querySelectorAll('.avo-tab-btn')[0].classList.add('active');
+        document.querySelectorAll('#install .avo-tab-btn')[0].classList.add('active');
         document.getElementById('pane-posix').classList.add('active');
       } else if (tab === 'win') {
-        document.querySelectorAll('.avo-tab-btn')[1].classList.add('active');
+        document.querySelectorAll('#install .avo-tab-btn')[1].classList.add('active');
         document.getElementById('pane-win').classList.add('active');
       } else if (tab === 'source') {
-        document.querySelectorAll('.avo-tab-btn')[2].classList.add('active');
+        document.querySelectorAll('#install .avo-tab-btn')[2].classList.add('active');
         document.getElementById('pane-source').classList.add('active');
+      }
+    }
+
+    function switchCliTab(tabId) {
+      document.querySelectorAll('#cli .avo-tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#cli .avo-code-pane').forEach(p => p.classList.remove('active'));
+
+      event.target.classList.add('active');
+      const targetPane = document.getElementById(tabId);
+      if (targetPane) {
+        targetPane.classList.add('active');
       }
     }
 
